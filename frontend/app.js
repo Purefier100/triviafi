@@ -872,14 +872,40 @@ async function connectWallet() {
   try {
     const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
     const providerInstance = await web3Modal.connect();
-    const providerInstance = await web3Modal.connect();
-
-    // ✅ SWITCH FIRST
-    await ensureCorrectNetwork();
-
     provider = new ethers.BrowserProvider(providerInstance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
+    await ensureCorrectNetwork();
+
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== 5042002) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x4CE372" }], // ✅ FIXED
+        });
+      } catch (switchErr) {
+        if (switchErr.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: "0x4CE372", // ✅ FIXED
+                chainName: "Arc Testnet",
+                rpcUrls: [
+                  "https://arc-testnet.drpc.org",
+                  "https://rpc.testnet.arc.network",
+                ], // ✅ FIXED
+                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+              },
+            ],
+          });
+        } else {
+          toast("Please switch to ARC Testnet manually", "error");
+          return;
+        }
+      }
+    }
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
@@ -1963,10 +1989,8 @@ async function tryRestoreWallet() {
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
-    await ensureCorrectNetwork(); // switch FIRST
-
-    provider = new ethers.BrowserProvider(providerInstance);
-    signer = await provider.getSigner(); // wrong chain, don't restore
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== 5042002) return; // wrong chain, don't restore
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
