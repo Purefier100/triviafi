@@ -827,7 +827,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   loadGames();
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
-  listenForChainChanges();
   initAuth();
 });
 
@@ -869,75 +868,6 @@ const providerOptions = {
   },
 };
 
-const ARC_CHAIN_ID = 5042002;
-const ARC_CHAIN_HEX = "0x4CE372";
-const ARC_RPC_URLS = [
-  "https://rpc.testnet.arc.network",
-  "https://arc-testnet.drpc.org",
-];
-
-async function ensureArcNetwork() {
-  if (!window.ethereum) throw new Error("MetaMask not found");
-
-  // Re-read chain from provider (not cached)
-  const providerNetwork = await new ethers.BrowserProvider(
-    window.ethereum,
-  ).getNetwork();
-  const currentChainId = Number(providerNetwork.chainId);
-
-  if (currentChainId === ARC_CHAIN_ID) {
-    // ✅ Already on Arc — reinitialize contracts to be safe
-    provider = new ethers.BrowserProvider(window.ethereum);
-    signer = await provider.getSigner();
-    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-    return;
-  }
-
-  // Need to switch
-  try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: ARC_CHAIN_HEX }],
-    });
-  } catch (err) {
-    if (err.code === 4902) {
-      await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: ARC_CHAIN_HEX,
-            chainName: "Arc Testnet",
-            rpcUrls: ARC_RPC_URLS,
-            nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-          },
-        ],
-      });
-    } else if (err.code === 4001) {
-      throw new Error("Please switch to Arc Testnet in MetaMask to continue.");
-    } else {
-      throw new Error("Network switch failed: " + err.message);
-    }
-  }
-
-  // Brief wait for MetaMask to apply the switch
-  await new Promise((r) => setTimeout(r, 800));
-
-  // Reinitialize with fresh provider
-  provider = new ethers.BrowserProvider(window.ethereum);
-  signer = await provider.getSigner();
-  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-  usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-
-  // Final verify
-  const newNetwork = await provider.getNetwork();
-  if (Number(newNetwork.chainId) !== ARC_CHAIN_ID) {
-    throw new Error(
-      "Still on wrong network. Please switch to Arc Testnet manually in MetaMask.",
-    );
-  }
-}
-
 async function connectWallet() {
   try {
     const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
@@ -951,7 +881,7 @@ async function connectWallet() {
       try {
         await window.ethereum.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x4CE372" }], // ✅ FIXED
+          params: [{ chainId: "0x4CE6B2" }], // ✅ FIXED
         });
       } catch (switchErr) {
         if (switchErr.code === 4902) {
@@ -959,12 +889,9 @@ async function connectWallet() {
             method: "wallet_addEthereumChain",
             params: [
               {
-                chainId: "0x4CE372", // ✅ FIXED
+                chainId: "0x4CE6B2", // ✅ FIXED
                 chainName: "Arc Testnet",
-                rpcUrls: [
-                  "https://arc-testnet.drpc.org",
-                  "https://rpc.testnet.arc.network",
-                ], // ✅ FIXED
+                rpcUrls: ["https://arc-testnet.drpc.org"], // ✅ FIXED
                 nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
               },
             ],
@@ -1021,27 +948,6 @@ async function connectWallet() {
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
   }
-}
-
-function listenForChainChanges() {
-  if (!window.ethereum) return;
-  window.ethereum.on("chainChanged", async (chainHex) => {
-    const id = parseInt(chainHex, 16);
-    if (id !== ARC_CHAIN_ID) {
-      contract = null;
-      usdcContract = null;
-      toast(
-        "⚠️ Switched away from Arc Testnet — transactions disabled",
-        "error",
-      );
-    } else if (userAddress) {
-      provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
-      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-      toast("✅ Back on Arc Testnet", "success");
-    }
-  });
 }
 
 function showScreen(id) {
@@ -1279,6 +1185,18 @@ async function loadGames() {
     }
   } catch (e) {
     el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
+  }
+}
+
+async function ensureCorrectNetwork() {
+  const chainId = await window.ethereum.request({ method: "eth_chainId" });
+
+  if (chainId !== "0x4CE6B2") {
+    // 5042002 in hex
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x4CE6B2" }],
+    });
   }
 }
 
@@ -1921,6 +1839,45 @@ async function showMyGames() {
     el.innerHTML = html;
   } catch (e) {
     el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
+  }
+}
+
+async function doJoin() {
+  if (!contract || !userAddress) {
+    return toast("Connect wallet first", "error");
+  }
+
+  try {
+    const entryFee = currentGame[6];
+
+    const allowance = await usdcContract.allowance(
+      userAddress,
+      CONTRACT_ADDRESS,
+    );
+
+    // ✅ Only approve if needed
+    if (allowance < entryFee) {
+      toast("Step 1/2: Approving USDC...", "info");
+
+      const tx1 = await usdcContract.approve(
+        CONTRACT_ADDRESS,
+        entryFee, // ✅ FIXED (not 100)
+      );
+
+      await tx1.wait();
+    }
+
+    toast("Step 2/2: Joining game...", "info");
+
+    const tx2 = await contract.joinGame(currentGameId);
+    await tx2.wait();
+
+    toast("✅ Joined successfully!", "success");
+
+    currentGame = await getGame(currentGameId);
+    await openGame(currentGameId);
+  } catch (e) {
+    toast("Failed: " + (e.reason || e.message), "error");
   }
 }
 
@@ -2607,30 +2564,19 @@ function pickDiff(d, el) {
 
 async function submitCreate() {
   if (!contract) return toast("Connect wallet first", "error");
-
   const name = document.getElementById("cName").value.trim();
   const fee = document.getElementById("cFee").value;
   const max = document.getElementById("cMax").value;
   const reg = document.getElementById("cReg").value;
   const play = document.getElementById("cPlay").value;
-
   if (!name || !fee || !max || !reg || !play)
     return toast("Fill all fields", "error");
   if (!selectedCatId) return toast("Select a category", "error");
-  if (name.length > 50)
-    return toast("Room name too long (max 50 chars)", "error");
+  if (name.length > 50) return toast("Room name too long (max 50)", "error");
   if (parseFloat(fee) < 0.01 || parseFloat(fee) > 1000)
-    return toast("Entry fee: 0.01–1000 USDC", "error");
+    return toast("Entry fee: 0.01-1000 USDC", "error");
   if (parseInt(max) < 2 || parseInt(max) > 50)
-    return toast("Max players: 2–50", "error");
-
-  // ✅ ENSURE CORRECT NETWORK BEFORE SENDING TX
-  try {
-    await ensureArcNetwork();
-  } catch (e) {
-    return toast(e.message, "error");
-  }
-
+    return toast("Max players: 2-50", "error");
   toast("Creating room on Arc...", "info");
   try {
     const feeWei = ethers.parseUnits(parseFloat(fee).toFixed(6), 6);
@@ -2648,41 +2594,6 @@ async function submitCreate() {
     toast(`✅ Room "${name}" deployed!`, "success");
     showScreen("screenLobby");
     await loadGames();
-  } catch (e) {
-    toast("Failed: " + (e.reason || e.message), "error");
-  }
-}
-
-// Also fix doJoin() to use the same network check
-async function doJoin() {
-  if (!contract || !userAddress) return toast("Connect wallet first", "error");
-
-  try {
-    await ensureArcNetwork();
-  } catch (e) {
-    return toast(e.message, "error");
-  }
-
-  try {
-    const entryFee = currentGame[6];
-    const allowance = await usdcContract.allowance(
-      userAddress,
-      CONTRACT_ADDRESS,
-    );
-
-    if (allowance < entryFee) {
-      toast("Step 1/2: Approving USDC...", "info");
-      const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
-      await tx1.wait();
-    }
-
-    toast("Step 2/2: Joining game...", "info");
-    const tx2 = await contract.joinGame(currentGameId);
-    await tx2.wait();
-
-    toast("✅ Joined successfully!", "success");
-    currentGame = await getGame(currentGameId);
-    await openGame(currentGameId);
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
   }
