@@ -871,24 +871,84 @@ const providerOptions = {
 async function connectWallet() {
   try {
     const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
-
     const providerInstance = await web3Modal.connect();
-
-    // ✅ STEP 1: switch network
-    await ensureCorrectNetwork();
-
-    // ⚠️ STEP 2: recreate provider AFTER switch
     provider = new ethers.BrowserProvider(providerInstance);
-
-    // ⚠️ STEP 3: force fresh signer
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
+    await ensureCorrectNetwork();
 
-    // ⚠️ STEP 4: recreate contracts AFTER network switch
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== 5042002) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x4CE372" }], // ✅ FIXED
+        });
+      } catch (switchErr) {
+        if (switchErr.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: "0x4CE372", // ✅ FIXED
+                chainName: "Arc Testnet",
+                rpcUrls: [
+                  "https://arc-testnet.drpc.org",
+                  "https://rpc.testnet.arc.network",
+                ], // ✅ FIXED
+                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+              },
+            ],
+          });
+        } else {
+          toast("Please switch to ARC Testnet manually", "error");
+          return;
+        }
+      }
+    }
+
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
 
+    try {
+      platformAddress = await readContract.platform();
+    } catch (_) {}
+
+    // ── Sign login message (MUST match backend) ──────────────────────────────
+    const message = "Login to Arc Trivia";
+    const signature = await signer.signMessage(message);
+
+    // ── Auth with backend ─────────────────────────────────────────────────────
+    const authRes = await fetch(`${BACKEND}/auth/wallet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress, signature }),
+    });
+    const authData = await authRes.json();
+
+    if (authData.error) {
+      toast(`⚠️ ${authData.error}`, "error");
+      // Don't update profile — connection failed
+    } else if (authData.user) {
+      currentProfile = authData.user;
+    } else if (!currentProfile) {
+      // fallback: load from session
+      const me = await fetch(`${BACKEND}/auth/me`, {
+        credentials: "include",
+      }).then((r) => r.json());
+      if (me.user) currentProfile = me.user;
+    }
+
+    renderAuthState();
     toast("✅ Wallet connected!", "success");
+    await loadGames();
+    loadMyStats();
+
+    if (window.pendingGameId) {
+      openGame(window.pendingGameId);
+      window.pendingGameId = null;
+    }
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
   }
@@ -1133,38 +1193,14 @@ async function loadGames() {
 }
 
 async function ensureCorrectNetwork() {
-  const chainId = "0x4CE372";
+  const chainId = await window.ethereum.request({ method: "eth_chainId" });
 
-  try {
+  if (chainId !== "0x4CE372") {
+    // 5042002 in hex
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId }],
+      params: [{ chainId: "0x4CE372" }],
     });
-  } catch (switchErr) {
-    // 👉 This is the key fix
-    if (switchErr.code === 4902 || switchErr.message.includes("Unrecognized")) {
-      await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: "0x4CE372",
-            chainName: "Arc Network Testnet",
-            rpcUrls: [
-              "https://arc-testnet.drpc.org",
-              "https://rpc.testnet.arc.network",
-            ],
-            nativeCurrency: {
-              name: "USDC",
-              symbol: "USDC",
-              decimals: 18,
-            },
-            blockExplorerUrls: ["https://testnet.arcscan.app"],
-          },
-        ],
-      });
-    } else {
-      throw switchErr;
-    }
   }
 }
 
