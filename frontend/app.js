@@ -846,67 +846,55 @@ async function connectWallet() {
   try {
     const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
     const providerInstance = await web3Modal.connect();
-
-    // 🔥 FORCE NETWORK SWITCH FIRST
-    try {
-      await providerInstance.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: "0x4CE6F2" }], // 5042002 in hex
-      });
-    } catch (err) {
-      if (err.code === 4902) {
-        await providerInstance.request({
-          method: "wallet_addEthereumChain",
-          params: [
-            {
-              chainId: "0x4CE6F2",
-              chainName: "Arc Network Testnet",
-              rpcUrls: ["https://rpc.testnet.arc.network"],
-              nativeCurrency: {
-                name: "ETH",
-                symbol: "ETH",
-                decimals: 18,
-              },
-              blockExplorerUrls: ["https://testnet.arcscan.app"],
-            },
-          ],
-        });
-      }
-    }
-
     provider = new ethers.BrowserProvider(providerInstance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
     const network = await provider.getNetwork();
-    console.log("CHAIN:", network.chainId);
-
     if (Number(network.chainId) !== 5042002) {
-      toast("Still wrong network — switch to ARC Testnet", "error");
+      toast("Please switch to ARC Testnet", "error");
       return;
     }
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
 
+    try {
+      platformAddress = await readContract.platform();
+    } catch (_) {}
+
+    // ── Sign login message (MUST match backend) ──────────────────────────────
     const message = "Login to Arc Trivia";
     const signature = await signer.signMessage(message);
 
+    // ── Auth with backend ─────────────────────────────────────────────────────
     const authRes = await fetch(`${BACKEND}/auth/wallet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({ wallet: userAddress, signature }),
     });
-
     const authData = await authRes.json();
-    if (authData.user) currentProfile = authData.user;
+
+    if (authData.user) {
+      currentProfile = authData.user;
+    } else if (!currentProfile) {
+      // fallback: load from session
+      const me = await fetch(`${BACKEND}/auth/me`, {
+        credentials: "include",
+      }).then((r) => r.json());
+      if (me.user) currentProfile = me.user;
+    }
 
     renderAuthState();
     toast("✅ Wallet connected!", "success");
-
     await loadGames();
     loadMyStats();
+
+    if (window.pendingGameId) {
+      openGame(window.pendingGameId);
+      window.pendingGameId = null;
+    }
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
   }
