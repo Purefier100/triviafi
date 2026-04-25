@@ -827,6 +827,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   loadGames();
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
+  listenForChainChanges();
   initAuth();
 });
 
@@ -869,47 +870,108 @@ const providerOptions = {
 };
 
 async function ensureArcNetwork() {
-  if (!provider) throw new Error("Wallet not connected");
-  const network = await provider.getNetwork();
-  if (Number(network.chainId) === 5042002) return; // already correct
+  if (!window.ethereum) throw new Error("MetaMask not found");
 
-  try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0x4CE372" }], // 5042002 in hex
-    });
-    // Reinitialize provider/signer/contract after chain switch
-    provider = new ethers.BrowserProvider(window.ethereum);
-    signer = await provider.getSigner();
-    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-  } catch (switchErr) {
-    if (switchErr.code === 4902) {
-      // Chain not added yet — add it
-      await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: "0x4CE372",
-            chainName: "Arc Testnet",
-            rpcUrls: [
-              "https://rpc.testnet.arc.network",
-              "https://arc-testnet.drpc.org",
-            ],
-            nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-          },
-        ],
-      });
-      provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
+  // Check current chain directly from ethereum object (more reliable than provider)
+  const currentChainHex = await window.ethereum.request({
+    method: "eth_chainId",
+  });
+  const currentChain = parseInt(currentChainHex, 16);
+
+  if (currentChain === ARC_CHAIN_ID) {
+    // Already on correct chain — just make sure contracts are initialized
+    if (!contract && signer) {
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
       usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-    } else {
-      throw new Error(
-        "Please switch to Arc Testnet (Chain ID: 5042002) in MetaMask",
-      );
     }
+    return;
   }
+
+  // Need to switch — wrap in a promise that waits for the chain to actually change
+  await new Promise(async (resolve, reject) => {
+    const timeout = setTimeout(() => {
+      window.ethereum.removeListener("chainChanged", onChainChanged);
+      reject(
+        new Error(
+          "Chain switch timed out. Please switch manually in MetaMask.",
+        ),
+      );
+    }, 30000);
+
+    function onChainChanged(newChainHex) {
+      clearTimeout(timeout);
+      window.ethereum.removeListener("chainChanged", onChainChanged);
+      const newChain = parseInt(newChainHex, 16);
+      if (newChain === ARC_CHAIN_ID) {
+        resolve();
+      } else {
+        reject(
+          new Error(
+            `Switched to wrong chain (${newChain}). Please switch to Arc Testnet.`,
+          ),
+        );
+      }
+    }
+
+    window.ethereum.on("chainChanged", onChainChanged);
+
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: ARC_CHAIN_HEX }],
+      });
+      // Some wallets resolve immediately without emitting chainChanged
+      // Check again after a short delay
+      await new Promise((r) => setTimeout(r, 500));
+      const afterHex = await window.ethereum.request({ method: "eth_chainId" });
+      const afterChain = parseInt(afterHex, 16);
+      if (afterChain === ARC_CHAIN_ID) {
+        clearTimeout(timeout);
+        window.ethereum.removeListener("chainChanged", onChainChanged);
+        resolve();
+      }
+      // Otherwise wait for the chainChanged event
+    } catch (switchErr) {
+      clearTimeout(timeout);
+      window.ethereum.removeListener("chainChanged", onChainChanged);
+
+      if (switchErr.code === 4902) {
+        // Chain not added — add it then retry
+        try {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: ARC_CHAIN_HEX,
+                chainName: "Arc Testnet",
+                rpcUrls: ARC_RPC_URLS,
+                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+              },
+            ],
+          });
+          resolve();
+        } catch (addErr) {
+          reject(new Error("Failed to add Arc Testnet: " + addErr.message));
+        }
+      } else if (switchErr.code === 4001) {
+        reject(
+          new Error(
+            "You rejected the network switch. Please switch to Arc Testnet manually.",
+          ),
+        );
+      } else {
+        reject(new Error("Network switch failed: " + switchErr.message));
+      }
+    }
+  });
+
+  // Reinitialize everything with the new chain
+  provider = new ethers.BrowserProvider(window.ethereum);
+  signer = await provider.getSigner();
+  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+  usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+
+  console.log("✅ Switched to Arc Testnet and reinitialized contracts");
 }
 
 async function connectWallet() {
@@ -995,6 +1057,27 @@ async function connectWallet() {
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
   }
+}
+
+function listenForChainChanges() {
+  if (!window.ethereum) return;
+  window.ethereum.on("chainChanged", async (chainHex) => {
+    const chainId = parseInt(chainHex, 16);
+    console.log("Chain changed to:", chainId);
+    if (chainId !== ARC_CHAIN_ID) {
+      toast("⚠️ Wrong network — please switch back to Arc Testnet", "error");
+      // Don't clear userAddress — just nullify write contracts
+      contract = null;
+      usdcContract = null;
+    } else if (userAddress) {
+      // Re-init write contracts on correct chain
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+      toast("✅ Back on Arc Testnet", "success");
+    }
+  });
 }
 
 function showScreen(id) {
@@ -1874,45 +1957,6 @@ async function showMyGames() {
     el.innerHTML = html;
   } catch (e) {
     el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
-  }
-}
-
-async function doJoin() {
-  if (!contract || !userAddress) {
-    return toast("Connect wallet first", "error");
-  }
-
-  try {
-    const entryFee = currentGame[6];
-
-    const allowance = await usdcContract.allowance(
-      userAddress,
-      CONTRACT_ADDRESS,
-    );
-
-    // ✅ Only approve if needed
-    if (allowance < entryFee) {
-      toast("Step 1/2: Approving USDC...", "info");
-
-      const tx1 = await usdcContract.approve(
-        CONTRACT_ADDRESS,
-        entryFee, // ✅ FIXED (not 100)
-      );
-
-      await tx1.wait();
-    }
-
-    toast("Step 2/2: Joining game...", "info");
-
-    const tx2 = await contract.joinGame(currentGameId);
-    await tx2.wait();
-
-    toast("✅ Joined successfully!", "success");
-
-    currentGame = await getGame(currentGameId);
-    await openGame(currentGameId);
-  } catch (e) {
-    toast("Failed: " + (e.reason || e.message), "error");
   }
 }
 
