@@ -868,6 +868,50 @@ const providerOptions = {
   },
 };
 
+async function ensureArcNetwork() {
+  if (!provider) throw new Error("Wallet not connected");
+  const network = await provider.getNetwork();
+  if (Number(network.chainId) === 5042002) return; // already correct
+
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x4CE372" }], // 5042002 in hex
+    });
+    // Reinitialize provider/signer/contract after chain switch
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+  } catch (switchErr) {
+    if (switchErr.code === 4902) {
+      // Chain not added yet — add it
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: "0x4CE372",
+            chainName: "Arc Testnet",
+            rpcUrls: [
+              "https://rpc.testnet.arc.network",
+              "https://arc-testnet.drpc.org",
+            ],
+            nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+          },
+        ],
+      });
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    } else {
+      throw new Error(
+        "Please switch to Arc Testnet (Chain ID: 5042002) in MetaMask",
+      );
+    }
+  }
+}
+
 async function connectWallet() {
   try {
     const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
@@ -2555,19 +2599,30 @@ function pickDiff(d, el) {
 
 async function submitCreate() {
   if (!contract) return toast("Connect wallet first", "error");
+
   const name = document.getElementById("cName").value.trim();
   const fee = document.getElementById("cFee").value;
   const max = document.getElementById("cMax").value;
   const reg = document.getElementById("cReg").value;
   const play = document.getElementById("cPlay").value;
+
   if (!name || !fee || !max || !reg || !play)
     return toast("Fill all fields", "error");
   if (!selectedCatId) return toast("Select a category", "error");
-  if (name.length > 50) return toast("Room name too long (max 50)", "error");
+  if (name.length > 50)
+    return toast("Room name too long (max 50 chars)", "error");
   if (parseFloat(fee) < 0.01 || parseFloat(fee) > 1000)
-    return toast("Entry fee: 0.01-1000 USDC", "error");
+    return toast("Entry fee: 0.01–1000 USDC", "error");
   if (parseInt(max) < 2 || parseInt(max) > 50)
-    return toast("Max players: 2-50", "error");
+    return toast("Max players: 2–50", "error");
+
+  // ✅ ENSURE CORRECT NETWORK BEFORE SENDING TX
+  try {
+    await ensureArcNetwork();
+  } catch (e) {
+    return toast(e.message, "error");
+  }
+
   toast("Creating room on Arc...", "info");
   try {
     const feeWei = ethers.parseUnits(parseFloat(fee).toFixed(6), 6);
@@ -2585,6 +2640,41 @@ async function submitCreate() {
     toast(`✅ Room "${name}" deployed!`, "success");
     showScreen("screenLobby");
     await loadGames();
+  } catch (e) {
+    toast("Failed: " + (e.reason || e.message), "error");
+  }
+}
+
+// Also fix doJoin() to use the same network check
+async function doJoin() {
+  if (!contract || !userAddress) return toast("Connect wallet first", "error");
+
+  try {
+    await ensureArcNetwork();
+  } catch (e) {
+    return toast(e.message, "error");
+  }
+
+  try {
+    const entryFee = currentGame[6];
+    const allowance = await usdcContract.allowance(
+      userAddress,
+      CONTRACT_ADDRESS,
+    );
+
+    if (allowance < entryFee) {
+      toast("Step 1/2: Approving USDC...", "info");
+      const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
+      await tx1.wait();
+    }
+
+    toast("Step 2/2: Joining game...", "info");
+    const tx2 = await contract.joinGame(currentGameId);
+    await tx2.wait();
+
+    toast("✅ Joined successfully!", "success");
+    currentGame = await getGame(currentGameId);
+    await openGame(currentGameId);
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
   }
