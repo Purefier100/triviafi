@@ -878,33 +878,31 @@ async function connectWallet() {
 
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== 5042002) {
-      // Always add the chain first — if it's already known, MetaMask ignores it
-      // Then switch to it. This handles both new and returning users.
       try {
         await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [
-            {
-              chainId: "0x4CE372",
-              chainName: "Arc Testnet",
-              rpcUrls: [
-                "https://rpc.testnet.arc.network",
-                "https://arc-testnet.drpc.org",
-              ],
-              nativeCurrency: { name: "ARC", symbol: "ARC", decimals: 18 },
-              blockExplorerUrls: ["https://explorer.testnet.arc.network"],
-            },
-          ],
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x4CE372" }], // ✅ FIXED
         });
-      } catch (addErr) {
-        console.warn("addChain:", addErr.message);
-      }
-
-      // After adding, verify we're on the right chain
-      const newNetwork = await provider.getNetwork();
-      if (Number(newNetwork.chainId) !== 5042002) {
-        toast("Please switch to ARC Testnet in MetaMask", "error");
-        return;
+      } catch (switchErr) {
+        if (switchErr.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: "0x4CE372", // ✅ FIXED
+                chainName: "Arc Testnet",
+                rpcUrls: [
+                  "https://arc-testnet.drpc.org",
+                  "https://rpc.testnet.arc.network",
+                ], // ✅ FIXED
+                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+              },
+            ],
+          });
+        } else {
+          toast("Please switch to ARC Testnet manually", "error");
+          return;
+        }
       }
     }
 
