@@ -32,6 +32,12 @@ const ENTRY_FEE_USDC = "1";
 const MAX_PLAYERS = 10;
 const REG_WINDOW_SECS = 3600; // 1 hour registration
 const PLAY_WINDOW_SECS = 1800; // 30 min play window
+const ARC_CHAIN_ID = 5042002;
+const ARC_CHAIN_HEX = "0x4CE372";
+const ARC_RPC_URLS = [
+  "https://rpc.testnet.arc.network",
+  "https://arc-testnet.drpc.org",
+];
 
 const ROOMS = [
   {
@@ -293,11 +299,12 @@ async function run() {
     process.exit(1);
   }
 
-  const provider = new ethers.JsonRpcProvider(RPC);
+  // ✅ Use ONLY one provider
+  const provider = await createProvider();
+
   const wallet = new ethers.Wallet(process.env.AGENT_KEY, provider);
   const contract = new ethers.Contract(CONTRACT, ABI, wallet);
   const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, wallet);
-  const provider = await createProvider();
 
   sep("🤖 Arc Trivia Agent — CLEAN MODE");
   log(`Wallet:   ${wallet.address}`);
