@@ -851,7 +851,11 @@ async function connectWallet() {
     userAddress = await signer.getAddress();
 
     const network = await provider.getNetwork();
-    if (Number(network.chainId) !== 5042002) {
+    const chainId = Number(network.chainId);
+
+    console.log("Detected chainId:", chainId);
+
+    if (chainId !== 5042002) {
       toast("Please switch to ARC Testnet", "error");
       return;
     }
@@ -1843,7 +1847,14 @@ async function tryRestoreWallet() {
     userAddress = await signer.getAddress();
 
     const network = await provider.getNetwork();
-    if (Number(network.chainId) !== 5042002) return; // wrong chain, don't restore
+    const chainId = Number(network.chainId);
+
+    console.log("Detected chainId:", chainId);
+
+    if (chainId !== 5042002) {
+      toast("Please switch to ARC Testnet", "error");
+      return;
+    } // wrong chain, don't restore
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
