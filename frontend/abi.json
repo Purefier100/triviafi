@@ -1,0 +1,24 @@
+{
+  "abi": [
+    "function gameCounter() view returns (uint256)",
+    "function platform() view returns (address)",
+    "function verifier() view returns (address)",
+    "function totalUSDCPaidOut() view returns (uint256)",
+    "function nonces(address) view returns (uint256)",
+    "function getNonce(address) view returns (uint256)",
+    "function createGame(string,uint8,string,uint8,uint256,uint256,uint256,uint256) external returns (uint256)",
+    "function joinGame(uint256) external payable",
+    "function submitScore(uint256,uint256,bytes) external",
+    "function triggerEnd(uint256) external",
+    "function claimPrize(uint256) external",
+    "function cancelGame(uint256,string) external",
+    "function claimRefund(uint256) external",
+    "function getGame(uint256) view returns (uint256,string,address,uint8,string,uint8,uint256,uint256,uint256,uint256,uint256,uint256,address[3],bool,uint8,uint256)",
+    "function getPlayers(uint256) view returns (address[])",
+    "function getPlayerStatus(uint256,address) view returns (bool,bool,bool,uint256)",
+    "function getPlayerStats(address) view returns (uint256,uint256,uint256)",
+    "function getLeaderboard(uint256) view returns (address[],uint256[],bool[],bool[])",
+    "function getPrizeBreakdown(uint256) view returns (uint256,uint256,uint256,uint256)",
+    "function setPlatform(address) external"
+  ]
+}
