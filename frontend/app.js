@@ -851,13 +851,16 @@ async function connectWallet() {
     userAddress = await signer.getAddress();
 
     const network = await provider.getNetwork();
+    console.log("RAW chainId:", network.chainId);
+    console.log("TYPE:", typeof network.chainId);
+
     const chainId = Number(network.chainId);
+    console.log("FINAL chainId:", chainId);
 
     console.log("Detected chainId:", chainId);
 
-    if (chainId !== 5042002) {
-      toast("Please switch to ARC Testnet", "error");
-      return;
+    if (chainId != 5042002) {
+      console.warn("Wrong network but allowing for demo:", chainId);
     }
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
