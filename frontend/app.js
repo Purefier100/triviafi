@@ -879,22 +879,22 @@ const ARC_RPC_URLS = [
 async function ensureArcNetwork() {
   if (!window.ethereum) throw new Error("MetaMask not found");
 
-  // ── Step 1: Check current chain ──────────────────────────────────────────
-  const currentHex = await window.ethereum.request({ method: "eth_chainId" });
-  if (parseInt(currentHex, 16) === ARC_CHAIN_ID) {
-    // Already correct — ensure contracts are live
-    if (!signer) {
-      provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
-    }
-    if (!contract) {
-      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-    }
-    return; // ✅ done
+  // Re-read chain from provider (not cached)
+  const providerNetwork = await new ethers.BrowserProvider(
+    window.ethereum,
+  ).getNetwork();
+  const currentChainId = Number(providerNetwork.chainId);
+
+  if (currentChainId === ARC_CHAIN_ID) {
+    // ✅ Already on Arc — reinitialize contracts to be safe
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    return;
   }
 
-  // ── Step 2: Try to switch ────────────────────────────────────────────────
+  // Need to switch
   try {
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",
@@ -902,7 +902,6 @@ async function ensureArcNetwork() {
     });
   } catch (err) {
     if (err.code === 4902) {
-      // Arc not in MetaMask yet — add it
       await window.ethereum.request({
         method: "wallet_addEthereumChain",
         params: [
@@ -915,34 +914,28 @@ async function ensureArcNetwork() {
         ],
       });
     } else if (err.code === 4001) {
-      throw new Error(
-        "Network switch rejected. Please switch to Arc Testnet in MetaMask.",
-      );
+      throw new Error("Please switch to Arc Testnet in MetaMask to continue.");
     } else {
-      throw new Error("Switch failed: " + err.message);
+      throw new Error("Network switch failed: " + err.message);
     }
   }
 
-  // ── Step 3: Poll until chain is correct (up to 10s) ─────────────────────
-  // wallet_switchEthereumChain resolves before MetaMask actually switches
-  // so we poll to confirm rather than relying on chainChanged event
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 500));
-    const nowHex = await window.ethereum.request({ method: "eth_chainId" });
-    if (parseInt(nowHex, 16) === ARC_CHAIN_ID) {
-      // ✅ Chain confirmed switched — reinitialize
-      provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
-      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-      console.log("✅ Switched to Arc Testnet");
-      return;
-    }
-  }
+  // Brief wait for MetaMask to apply the switch
+  await new Promise((r) => setTimeout(r, 800));
 
-  throw new Error(
-    "MetaMask didn't switch in time. Please switch to Arc Testnet manually and try again.",
-  );
+  // Reinitialize with fresh provider
+  provider = new ethers.BrowserProvider(window.ethereum);
+  signer = await provider.getSigner();
+  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+  usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+
+  // Final verify
+  const newNetwork = await provider.getNetwork();
+  if (Number(newNetwork.chainId) !== ARC_CHAIN_ID) {
+    throw new Error(
+      "Still on wrong network. Please switch to Arc Testnet manually in MetaMask.",
+    );
+  }
 }
 
 async function connectWallet() {
