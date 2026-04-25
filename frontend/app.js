@@ -864,7 +864,7 @@ function stopAutoRefresh() {
 const providerOptions = {
   walletconnect: {
     package: WalletConnectProvider,
-    options: { rpc: { 5042002: "https://rpc.testnet.arc.network" } },
+    options: { rpc: { 5042002: "https://arc-testnet.drpc.org" } },
   },
 };
 
