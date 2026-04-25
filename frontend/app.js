@@ -1714,21 +1714,16 @@ async function doJoin() {
   try {
     const entryFee = currentGame[6];
 
-    const allowance = await usdcContract.allowance(
-      userAddress,
-      CONTRACT_ADDRESS,
-    );
-
-    // ✅ Only approve if needed
-    if (allowance < entryFee) {
-      toast("Step 1/2: Approving USDC...", "info");
-
-      const tx1 = await usdcContract.approve(
-        CONTRACT_ADDRESS,
-        entryFee, // ✅ FIXED (not 100)
-      );
-
+    // ✅ Always approve exact amount — skip allowance check
+    // (Arc testnet USDC may not support allowance() query)
+    toast("Step 1/2: Approving USDC...", "info");
+    try {
+      const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
       await tx1.wait();
+    } catch (approveErr) {
+      // If approve also fails, the token contract may need different handling
+      console.warn("Approve failed:", approveErr.message);
+      throw approveErr;
     }
 
     toast("Step 2/2: Joining game...", "info");
@@ -1781,41 +1776,9 @@ async function doJoin_withGuestMode() {
 
   // ── WALLET MODE: normal flow with allowance check ──────────────────────────
   try {
-    const allowanceAbi = [
-      "function allowance(address,address) view returns (uint256)",
-    ];
-    const usdcRead = new ethers.Contract(
-      USDC_ADDRESS,
-      allowanceAbi,
-      readProvider,
-    );
-    const currentAllowance = await usdcRead.allowance(
-      userAddress,
-      CONTRACT_ADDRESS,
-    );
-
-    if (currentAllowance < entryFee) {
-      toast("Step 1/2: Approving USDC (one-time)...", "info");
-      const entryFee = currentGame[6]; // already correct from contract
-
-      const allowance = await usdcContract.allowance(
-        userAddress,
-        CONTRACT_ADDRESS,
-      );
-
-      if (allowance < entryFee) {
-        toast("Approving USDC...", "info");
-
-        const tx = await usdcContract.approve(
-          CONTRACT_ADDRESS,
-          entryFee, // ✅ correct amount (1 USDC)
-        );
-
-        await tx.wait();
-      }
-    } else {
-      toast("Joining room...", "info");
-    }
+    toast("Step 1/2: Approving USDC...", "info");
+    const tx0 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
+    await tx0.wait();
 
     toast("Step 2/2: Joining room...", "info");
     const tx = await contract.joinGame(currentGameId);
