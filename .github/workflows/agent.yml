@@ -18,4 +18,9 @@ jobs:
 
       - run: npm install
 
-      - run: node backend/agent.js
+      - name: Run Agent
+        run: node backend/agent.js
+        env:
+          AGENT_KEY: ${{ secrets.AGENT_KEY }}
+          RPC_URL: ${{ secrets.RPC_URL }}
+          CONTRACT_ADDRESS: ${{ secrets.CONTRACT_ADDRESS }}
