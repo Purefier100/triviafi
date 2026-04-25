@@ -879,106 +879,70 @@ const ARC_RPC_URLS = [
 async function ensureArcNetwork() {
   if (!window.ethereum) throw new Error("MetaMask not found");
 
-  // Check current chain directly from ethereum object (more reliable than provider)
-  const currentChainHex = await window.ethereum.request({
-    method: "eth_chainId",
-  });
-  const currentChain = parseInt(currentChainHex, 16);
-
-  if (currentChain === ARC_CHAIN_ID) {
-    // Already on correct chain — just make sure contracts are initialized
-    if (!contract && signer) {
+  // ── Step 1: Check current chain ──────────────────────────────────────────
+  const currentHex = await window.ethereum.request({ method: "eth_chainId" });
+  if (parseInt(currentHex, 16) === ARC_CHAIN_ID) {
+    // Already correct — ensure contracts are live
+    if (!signer) {
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+    }
+    if (!contract) {
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
       usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
     }
-    return;
+    return; // ✅ done
   }
 
-  // Need to switch — wrap in a promise that waits for the chain to actually change
-  await new Promise(async (resolve, reject) => {
-    const timeout = setTimeout(() => {
-      window.ethereum.removeListener("chainChanged", onChainChanged);
-      reject(
-        new Error(
-          "Chain switch timed out. Please switch manually in MetaMask.",
-        ),
-      );
-    }, 30000);
-
-    function onChainChanged(newChainHex) {
-      clearTimeout(timeout);
-      window.ethereum.removeListener("chainChanged", onChainChanged);
-      const newChain = parseInt(newChainHex, 16);
-      if (newChain === ARC_CHAIN_ID) {
-        resolve();
-      } else {
-        reject(
-          new Error(
-            `Switched to wrong chain (${newChain}). Please switch to Arc Testnet.`,
-          ),
-        );
-      }
-    }
-
-    window.ethereum.on("chainChanged", onChainChanged);
-
-    try {
+  // ── Step 2: Try to switch ────────────────────────────────────────────────
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: ARC_CHAIN_HEX }],
+    });
+  } catch (err) {
+    if (err.code === 4902) {
+      // Arc not in MetaMask yet — add it
       await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: ARC_CHAIN_HEX }],
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: ARC_CHAIN_HEX,
+            chainName: "Arc Testnet",
+            rpcUrls: ARC_RPC_URLS,
+            nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+          },
+        ],
       });
-      // Some wallets resolve immediately without emitting chainChanged
-      // Check again after a short delay
-      await new Promise((r) => setTimeout(r, 500));
-      const afterHex = await window.ethereum.request({ method: "eth_chainId" });
-      const afterChain = parseInt(afterHex, 16);
-      if (afterChain === ARC_CHAIN_ID) {
-        clearTimeout(timeout);
-        window.ethereum.removeListener("chainChanged", onChainChanged);
-        resolve();
-      }
-      // Otherwise wait for the chainChanged event
-    } catch (switchErr) {
-      clearTimeout(timeout);
-      window.ethereum.removeListener("chainChanged", onChainChanged);
-
-      if (switchErr.code === 4902) {
-        // Chain not added — add it then retry
-        try {
-          await window.ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: ARC_CHAIN_HEX,
-                chainName: "Arc Testnet",
-                rpcUrls: ARC_RPC_URLS,
-                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-              },
-            ],
-          });
-          resolve();
-        } catch (addErr) {
-          reject(new Error("Failed to add Arc Testnet: " + addErr.message));
-        }
-      } else if (switchErr.code === 4001) {
-        reject(
-          new Error(
-            "You rejected the network switch. Please switch to Arc Testnet manually.",
-          ),
-        );
-      } else {
-        reject(new Error("Network switch failed: " + switchErr.message));
-      }
+    } else if (err.code === 4001) {
+      throw new Error(
+        "Network switch rejected. Please switch to Arc Testnet in MetaMask.",
+      );
+    } else {
+      throw new Error("Switch failed: " + err.message);
     }
-  });
+  }
 
-  // Reinitialize everything with the new chain
-  provider = new ethers.BrowserProvider(window.ethereum);
-  signer = await provider.getSigner();
-  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-  usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+  // ── Step 3: Poll until chain is correct (up to 10s) ─────────────────────
+  // wallet_switchEthereumChain resolves before MetaMask actually switches
+  // so we poll to confirm rather than relying on chainChanged event
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    const nowHex = await window.ethereum.request({ method: "eth_chainId" });
+    if (parseInt(nowHex, 16) === ARC_CHAIN_ID) {
+      // ✅ Chain confirmed switched — reinitialize
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+      console.log("✅ Switched to Arc Testnet");
+      return;
+    }
+  }
 
-  console.log("✅ Switched to Arc Testnet and reinitialized contracts");
+  throw new Error(
+    "MetaMask didn't switch in time. Please switch to Arc Testnet manually and try again.",
+  );
 }
 
 async function connectWallet() {
@@ -1069,15 +1033,15 @@ async function connectWallet() {
 function listenForChainChanges() {
   if (!window.ethereum) return;
   window.ethereum.on("chainChanged", async (chainHex) => {
-    const chainId = parseInt(chainHex, 16);
-    console.log("Chain changed to:", chainId);
-    if (chainId !== ARC_CHAIN_ID) {
-      toast("⚠️ Wrong network — please switch back to Arc Testnet", "error");
-      // Don't clear userAddress — just nullify write contracts
+    const id = parseInt(chainHex, 16);
+    if (id !== ARC_CHAIN_ID) {
       contract = null;
       usdcContract = null;
+      toast(
+        "⚠️ Switched away from Arc Testnet — transactions disabled",
+        "error",
+      );
     } else if (userAddress) {
-      // Re-init write contracts on correct chain
       provider = new ethers.BrowserProvider(window.ethereum);
       signer = await provider.getSigner();
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
