@@ -299,7 +299,7 @@ async function run() {
     process.exit(1);
   }
 
-  // ✅ Use ONLY one provider
+  // ✅ ONLY ONE provider
   const provider = await createProvider();
 
   const wallet = new ethers.Wallet(process.env.AGENT_KEY, provider);
