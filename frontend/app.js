@@ -892,7 +892,7 @@ async function connectWallet() {
                 chainId: "0x4CE6B2", // ✅ FIXED
                 chainName: "Arc Testnet",
                 rpcUrls: ["https://arc-testnet.drpc.org"], // ✅ FIXED
-                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
               },
             ],
           });
