@@ -28,6 +28,8 @@ const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 // ── Config ───────────────────────────────────────────────────────────────────
 const MAX_AGENT_GAMES = 2; // exactly 2 agent games at a time
 const CHECK_INTERVAL_MS = 120000; // check every 2 minutes
+let lastCreationTime = 0;
+const CREATION_COOLDOWN = 600; // 10 minutes
 const ENTRY_FEE_USDC = "1";
 const MAX_PLAYERS = 10;
 const REG_WINDOW_SECS = 3600; // 1 hour registration
@@ -150,7 +152,7 @@ async function tick(contract, usdc, agentAddress, provider) {
   }
 
   // ── Scan last 50 games for agent games ──────────────────────────────────
-  const scanFrom = Math.max(1, count - 50);
+  const scanFrom = Math.max(1, count - 150);
   log(`🔍 Scanning games #${scanFrom}–#${count}...`);
 
   const fetches = [];
@@ -211,9 +213,19 @@ async function tick(contract, usdc, agentAddress, provider) {
   log(`✅ Active agent games after cleanup: ${activeAgentGames.length}`);
 
   const needed = MAX_AGENT_GAMES - activeAgentGames.length;
+
   if (needed > 0) {
+    const nowTime = Math.floor(Date.now() / 1000);
+
+    if (nowTime - lastCreationTime < CREATION_COOLDOWN) {
+      log("⏳ Cooldown active — skipping creation");
+      return;
+    }
+
     log(`➕ Need ${needed} more game(s) — creating...`);
     await createGames(contract, needed);
+
+    lastCreationTime = nowTime;
   } else {
     log(
       `👌 Already have ${activeAgentGames.length} active game(s) — no action needed.`,
