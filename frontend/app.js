@@ -1193,14 +1193,38 @@ async function loadGames() {
 }
 
 async function ensureCorrectNetwork() {
-  const chainId = await window.ethereum.request({ method: "eth_chainId" });
+  const chainId = "0x4CE372";
 
-  if (chainId !== "0x4CE372") {
-    // 5042002 in hex
+  try {
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0x4CE372" }],
+      params: [{ chainId }],
     });
+  } catch (switchErr) {
+    // 👉 This is the key fix
+    if (switchErr.code === 4902 || switchErr.message.includes("Unrecognized")) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: "0x4CE372",
+            chainName: "Arc Network Testnet",
+            rpcUrls: [
+              "https://arc-testnet.drpc.org",
+              "https://rpc.testnet.arc.network",
+            ],
+            nativeCurrency: {
+              name: "USDC",
+              symbol: "USDC",
+              decimals: 6,
+            },
+            blockExplorerUrls: ["https://testnet.arcscan.app"],
+          },
+        ],
+      });
+    } else {
+      throw switchErr;
+    }
   }
 }
 
