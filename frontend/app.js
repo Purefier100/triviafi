@@ -6,7 +6,7 @@
 // Fix: ABI uses tuple() return type + helper to normalise result to array
 // =============================================================================
 
-const BACKEND = "http://localhost:4000";
+const BACKEND = "https://name-triviafi-backend.onrender.com";
 let currentProfile = null;
 
 async function initAuth() {
