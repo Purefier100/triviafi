@@ -6,7 +6,7 @@
 // Fix: ABI uses tuple() return type + helper to normalise result to array
 // =============================================================================
 
-const BACKEND = "http://localhost:4000";
+const BACKEND = "https://name-triviafi-backend.onrender.com";
 let currentProfile = null;
 
 async function initAuth() {
@@ -881,7 +881,7 @@ async function connectWallet() {
       try {
         await window.ethereum.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x4CE372" }], // 5042002 in hex
+          params: [{ chainId: "0x4CE6B2" }], // ✅ FIXED
         });
       } catch (switchErr) {
         if (switchErr.code === 4902) {
@@ -889,9 +889,9 @@ async function connectWallet() {
             method: "wallet_addEthereumChain",
             params: [
               {
-                chainId: "0x4CE372",
+                chainId: "0x4CE6B2", // ✅ FIXED
                 chainName: "Arc Testnet",
-                rpcUrls: ["https://rpc.testnet.arc.network"],
+                rpcUrls: ["https://arc-testnet.drpc.org"], // ✅ FIXED
                 nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
               },
             ],
@@ -1185,6 +1185,18 @@ async function loadGames() {
     }
   } catch (e) {
     el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
+  }
+}
+
+async function ensureCorrectNetwork() {
+  const chainId = await window.ethereum.request({ method: "eth_chainId" });
+
+  if (chainId !== "0x4CE6B2") {
+    // 5042002 in hex
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x4CE6B2" }],
+    });
   }
 }
 
