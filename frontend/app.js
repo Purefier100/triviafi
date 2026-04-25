@@ -869,6 +869,13 @@ const providerOptions = {
   },
 };
 
+const ARC_CHAIN_ID = 5042002;
+const ARC_CHAIN_HEX = "0x4CE372";
+const ARC_RPC_URLS = [
+  "https://rpc.testnet.arc.network",
+  "https://arc-testnet.drpc.org",
+];
+
 async function ensureArcNetwork() {
   if (!window.ethereum) throw new Error("MetaMask not found");
 
