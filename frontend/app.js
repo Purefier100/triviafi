@@ -875,36 +875,36 @@ async function connectWallet() {
     provider = new ethers.BrowserProvider(providerInstance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
-    await ensureCorrectNetwork();
 
-    const network = await provider.getNetwork();
-    if (Number(network.chainId) !== 5042002) {
+    // ✅ Always add chain first (MetaMask silently ignores if already added)
+    // then verify — never call switchEthereumChain to an unadded chain
+    if (window.ethereum) {
       try {
         await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x4CE372" }], // ✅ FIXED
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: "0x4CE372",
+              chainName: "Arc Testnet",
+              rpcUrls: [
+                "https://rpc.testnet.arc.network",
+                "https://arc-testnet.drpc.org",
+              ],
+              nativeCurrency: { name: "ARC", symbol: "ARC", decimals: 18 },
+              blockExplorerUrls: ["https://explorer.testnet.arc.network"],
+            },
+          ],
         });
-      } catch (switchErr) {
-        if (switchErr.code === 4902) {
-          await window.ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: "0x4CE372", // ✅ FIXED
-                chainName: "Arc Testnet",
-                rpcUrls: [
-                  "https://arc-testnet.drpc.org",
-                  "https://rpc.testnet.arc.network",
-                ], // ✅ FIXED
-                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-              },
-            ],
-          });
-        } else {
-          toast("Please switch to ARC Testnet manually", "error");
-          return;
-        }
+      } catch (addErr) {
+        console.warn("addChain:", addErr.message);
       }
+    }
+
+    // Re-read network after add/switch
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) !== 5042002) {
+      toast("Please switch to ARC Testnet in MetaMask and try again", "error");
+      return;
     }
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
@@ -914,11 +914,9 @@ async function connectWallet() {
       platformAddress = await readContract.platform();
     } catch (_) {}
 
-    // ── Sign login message (MUST match backend) ──────────────────────────────
     const message = "Login to Arc Trivia";
     const signature = await signer.signMessage(message);
 
-    // ── Auth with backend ─────────────────────────────────────────────────────
     const authRes = await fetch(`${BACKEND}/auth/wallet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -929,11 +927,9 @@ async function connectWallet() {
 
     if (authData.error) {
       toast(`⚠️ ${authData.error}`, "error");
-      // Don't update profile — connection failed
     } else if (authData.user) {
       currentProfile = authData.user;
     } else if (!currentProfile) {
-      // fallback: load from session
       const me = await fetch(`${BACKEND}/auth/me`, {
         credentials: "include",
       }).then((r) => r.json());
@@ -1189,18 +1185,6 @@ async function loadGames() {
     }
   } catch (e) {
     el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
-  }
-}
-
-async function ensureCorrectNetwork() {
-  const chainId = await window.ethereum.request({ method: "eth_chainId" });
-
-  if (chainId !== "0x4CE372") {
-    // 5042002 in hex
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: "0x4CE372" }],
-    });
   }
 }
 
