@@ -876,35 +876,48 @@ async function connectWallet() {
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
-    // ✅ Always add chain first (MetaMask silently ignores if already added)
-    // then verify — never call switchEthereumChain to an unadded chain
-    if (window.ethereum) {
-      try {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [
-            {
-              chainId: "0x4CE372",
-              chainName: "Arc Testnet",
-              rpcUrls: [
-                "https://rpc.testnet.arc.network",
-                "https://arc-testnet.drpc.org",
-              ],
-              nativeCurrency: { name: "ARC", symbol: "ARC", decimals: 18 },
-              blockExplorerUrls: ["https://explorer.testnet.arc.network"],
-            },
-          ],
-        });
-      } catch (addErr) {
-        console.warn("addChain:", addErr.message);
-      }
-    }
-
-    // Re-read network after add/switch
+    // ✅ Check current chain first — only prompt if needed
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== 5042002) {
-      toast("Please switch to ARC Testnet in MetaMask and try again", "error");
-      return;
+      try {
+        // Try switching first (works if chain is already saved in wallet)
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x4CE372" }],
+        });
+      } catch (switchErr) {
+        if (switchErr.code === 4902 || switchErr.code === -32603) {
+          // Chain not in wallet yet — add it
+          try {
+            await window.ethereum.request({
+              method: "wallet_addEthereumChain",
+              params: [
+                {
+                  chainId: "0x4CE372",
+                  chainName: "Arc Testnet",
+                  rpcUrls: ["https://rpc.testnet.arc.network"],
+                  nativeCurrency: { name: "ARC", symbol: "ARC", decimals: 18 },
+                  blockExplorerUrls: ["https://explorer.testnet.arc.network"],
+                },
+              ],
+            });
+          } catch (addErr) {
+            toast("Please add Arc Testnet to your wallet manually", "error");
+            return;
+          }
+        } else {
+          // User rejected or other error
+          toast("Please switch to ARC Testnet in your wallet", "error");
+          return;
+        }
+      }
+
+      // Verify switch worked
+      const newNetwork = await provider.getNetwork();
+      if (Number(newNetwork.chainId) !== 5042002) {
+        toast("Still on wrong network. Please switch to Arc Testnet.", "error");
+        return;
+      }
     }
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
