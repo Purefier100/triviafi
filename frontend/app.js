@@ -881,10 +881,11 @@ async function connectWallet() {
     // ✅ Check current chain first — only prompt if needed
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== 5042002) {
+      const hexChainId = "0x" + (5042002).toString(16); // let JS do it correctly
       try {
         await window.ethereum.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x4CE552" }],
+          params: [{ chainId: hexChainId }],
         });
       } catch (switchErr) {
         if (switchErr.code === 4902 || switchErr.code === -32603) {
@@ -893,7 +894,7 @@ async function connectWallet() {
               method: "wallet_addEthereumChain",
               params: [
                 {
-                  chainId: "0x4CE552",
+                  chainId: hexChainId,
                   chainName: "Arc Testnet",
                   rpcUrls: ["https://rpc.testnet.arc.network"],
                   nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
@@ -902,20 +903,22 @@ async function connectWallet() {
               ],
             });
           } catch (addErr) {
-            toast("Please add Arc Testnet to your wallet manually", "error");
+            toast("Please add Arc Testnet manually in your wallet", "error");
             return;
           }
-        } else {
-          // User rejected or other error
-          toast("Please switch to ARC Testnet in your wallet", "error");
-          return;
+        } else if (switchErr.code !== 4001) {
+          // Not user rejection — might already be on correct chain
+          console.warn("Switch error:", switchErr.message);
         }
       }
 
-      // Verify switch worked
-      const newNetwork = await provider.getNetwork();
-      if (Number(newNetwork.chainId) !== 5042002) {
-        toast("Still on wrong network. Please switch to Arc Testnet.", "error");
+      // Final check
+      const finalNetwork = await provider.getNetwork();
+      if (Number(finalNetwork.chainId) !== 5042002) {
+        toast(
+          "Please switch to Arc Testnet (ID: 5042002) in your wallet",
+          "error",
+        );
         return;
       }
     }
