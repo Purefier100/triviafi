@@ -240,9 +240,12 @@ async function startGame() {
 // ANSWER SELECTION
 // ========================
 function selectAnswer(questionId, selected, timeLeft) {
+  const q = questions[currentIndex];
+
   answers.push({
     questionId,
     selected,
+    correct: selected === q.correct_answer,
     timeLeft,
   });
 
@@ -532,9 +535,31 @@ async function linkWalletToProfile(wallet) {
     currentProfile.wallet &&
     currentProfile.wallet.toLowerCase() !== wallet.toLowerCase()
   ) {
-    toast(`⚠️ Account linked to ${fmt(currentProfile.wallet)}`, "error");
+    toast(
+      `⚠️ This Google account is already linked to wallet ${fmt(
+        currentProfile.wallet,
+      )}. Disconnect that wallet first.`,
+      "error",
+    );
     return;
   }
+
+  // Check if this wallet is already linked to another Google account
+  try {
+    const check = await fetch(`${BACKEND}/profile/by-wallet/${wallet}`, {
+      credentials: "include",
+    });
+    const existing = await check.json();
+    if (existing && existing.google_id && existing.id !== currentProfile.id) {
+      toast(
+        `⚠️ This wallet is already linked to another Google account (@${
+          existing.username || "user"
+        }). One wallet per account only.`,
+        "error",
+      );
+      return;
+    }
+  } catch (_) {}
 
   try {
     // MUST match /profile/wallet backend message
@@ -798,6 +823,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   buildCatGrid();
   checkUrlGame();
   startTickerLoop();
+  loadGlobalStats();
   loadGames();
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
@@ -838,7 +864,7 @@ function stopAutoRefresh() {
 const providerOptions = {
   walletconnect: {
     package: WalletConnectProvider,
-    options: { rpc: { 5042002: "https://rpc.testnet.arc.network" } },
+    options: { rpc: { 5042002: "https://arc-testnet.drpc.org" } },
   },
 };
 
@@ -849,18 +875,36 @@ async function connectWallet() {
     provider = new ethers.BrowserProvider(providerInstance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
+    await ensureCorrectNetwork();
 
     const network = await provider.getNetwork();
-    console.log("RAW chainId:", network.chainId);
-    console.log("TYPE:", typeof network.chainId);
-
-    const chainId = Number(network.chainId);
-    console.log("FINAL chainId:", chainId);
-
-    console.log("Detected chainId:", chainId);
-
-    if (chainId != 5042002) {
-      console.warn("Wrong network but allowing for demo:", chainId);
+    if (Number(network.chainId) !== 5042002) {
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x4CE372" }], // ✅ FIXED
+        });
+      } catch (switchErr) {
+        if (switchErr.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: "0x4CE372", // ✅ FIXED
+                chainName: "Arc Testnet",
+                rpcUrls: [
+                  "https://arc-testnet.drpc.org",
+                  "https://rpc.testnet.arc.network",
+                ], // ✅ FIXED
+                nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+              },
+            ],
+          });
+        } else {
+          toast("Please switch to ARC Testnet manually", "error");
+          return;
+        }
+      }
     }
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
@@ -883,7 +927,10 @@ async function connectWallet() {
     });
     const authData = await authRes.json();
 
-    if (authData.user) {
+    if (authData.error) {
+      toast(`⚠️ ${authData.error}`, "error");
+      // Don't update profile — connection failed
+    } else if (authData.user) {
       currentProfile = authData.user;
     } else if (!currentProfile) {
       // fallback: load from session
@@ -1102,7 +1149,9 @@ async function loadGames() {
     for (let b = 0; b < statsIds.length; b += BATCH) {
       const batch = statsIds.slice(b, b + BATCH);
       const results = await Promise.allSettled(
-        batch.map((i) => readContract.getGame(i).then((g) => ({ i, g }))),
+        batch.map((i) =>
+          readContract.getGame(i).then((g) => ({ i, g: gameToArray(g) })),
+        ),
       );
       for (const r of results) {
         if (r.status === "fulfilled") allFetched.push(r.value);
@@ -1143,12 +1192,25 @@ async function loadGames() {
   }
 }
 
+async function ensureCorrectNetwork() {
+  const chainId = await window.ethereum.request({ method: "eth_chainId" });
+
+  if (chainId !== "0x4CE372") {
+    // 5042002 in hex
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x4CE372" }],
+    });
+  }
+}
+
 // Loads older games on demand
 async function loadMoreGames(beforeId) {
   if (!beforeId || beforeId < 1) return;
-  const btn = document.getElementById("loadMoreBtn");
-  if (btn)
-    btn.innerHTML = `<button class="btn btn-ghost btn-sm" disabled style="width:auto;padding:10px 28px">⏳ Loading...</button>`;
+  const el = document.getElementById("gamesList");
+  const oldBtn = document.getElementById("loadMoreBtn");
+  if (oldBtn)
+    oldBtn.innerHTML = `<button class="btn btn-ghost btn-sm" disabled style="width:auto;padding:10px 28px">⏳ Loading...</button>`;
 
   try {
     const LOAD = 10;
@@ -1161,7 +1223,9 @@ async function loadMoreGames(beforeId) {
     for (let b = 0; b < ids.length; b += BATCH) {
       const batch = ids.slice(b, b + BATCH);
       const results = await Promise.allSettled(
-        batch.map((i) => readContract.getGame(i).then((g) => ({ i, g }))),
+        batch.map((i) =>
+          readContract.getGame(i).then((g) => ({ i, g: gameToArray(g) })),
+        ),
       );
       for (const r of results) {
         if (r.status === "fulfilled") newGames.push(r.value);
@@ -1169,15 +1233,14 @@ async function loadMoreGames(beforeId) {
     }
     newGames.sort((a, b) => b.i - a.i);
 
+    // ✅ FIX: append to allGames regardless of current filter
     allGames = [...allGames, ...newGames];
-    renderGames(); // re-renders everything
 
-    // Update or remove load more button
-    const oldest = newGames[newGames.length - 1]?.i;
-    const el = document.getElementById("gamesList");
-    const oldBtn = document.getElementById("loadMoreBtn");
+    // Re-render preserving the load more button
     if (oldBtn) oldBtn.remove();
+    renderGames();
 
+    const oldest = newGames[newGames.length - 1]?.i;
     if (oldest && oldest > 1) {
       const moreBtn = document.createElement("div");
       moreBtn.id = "loadMoreBtn";
@@ -1186,6 +1249,8 @@ async function loadMoreGames(beforeId) {
         oldest - 1
       })" class="btn btn-ghost btn-sm" style="width:auto;padding:10px 28px">⬇ Load Older Games</button>`;
       el.appendChild(moreBtn);
+    } else {
+      toast("All games loaded", "info");
     }
   } catch (e) {
     toast("Error loading games: " + e.message, "error");
@@ -1584,6 +1649,17 @@ async function openGame(gameId) {
     gameId,
     userAddress,
   );
+  // Server-authoritative check — localStorage can be cleared
+  try {
+    const chk = await fetch(`${BACKEND}/game/status/${gameId}`, {
+      credentials: "include",
+    });
+    const chkData = await chk.json();
+    if (chkData.finished) {
+      markSubmitted(gameId); // re-sync localStorage
+    }
+  } catch (_) {}
+
   if (alreadySubmitted(gameId) && s === 0) {
     showScreen("screenResults");
     score = loadSavedScore(gameId);
@@ -1700,10 +1776,74 @@ async function openGame(gameId) {
     ${betsHtml}
     <div style="margin-top:14px">${actionHtml}</div>
      <div id="gameActions" style="margin-top:10px"></div>
-    <div class="share-box" style="margin-top:14px"><span style="font-size:1.3rem">🔗</span><div style="flex:1"><div style="font-size:.75rem;color:var(--muted);margin-bottom:3px">Share</div><div class="share-link" style="font-size:.72rem">${shareUrl}</div></div><button class="btn btn-ghost btn-sm" onclick="copyShare(\`${discordMsg}\`)">Copy</button></div>${creatorHtml}`;
+    <div class="share-box" style="margin-top:14px"><span style="font-size:1.3rem">🔗</span><div style="flex:1"><div style="font-size:.75rem;color:var(--muted);margin-bottom:3px">Share</div><div class="share-link" style="font-size:.72rem">${shareUrl}</div></div><button class="btn btn-ghost btn-sm" onclick="copyShare(\`${discordMsg}\`)">Copy</button></div>
+    <button class="btn btn-ghost btn-sm" onclick="tweetGame()">
+      𝕏 Tweet
+    </button>
+  </div>${creatorHtml}`;
   showScreen("screenJoin");
   loadGameStatus(currentGameId);
   startAutoRefresh(gameId);
+}
+
+// Add this new tab function
+async function showMyGames() {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  filterStatus = "mine";
+  document
+    .querySelectorAll(".tab")
+    .forEach((t) => t.classList.remove("active"));
+  // highlight the my games tab
+  const el = document.getElementById("gamesList");
+  el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:20px">Loading your games...</p>`;
+
+  try {
+    const count = Number(await readContract.gameCounter());
+    const myGames = [];
+    for (let i = count; i >= Math.max(1, count - 100); i--) {
+      try {
+        const [joined] = await readContract.getPlayerStatus(i, userAddress);
+        if (joined) {
+          const g = await getGame(i);
+          myGames.push({ i, g });
+        }
+      } catch (_) {}
+    }
+    if (myGames.length === 0) {
+      el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:3rem;margin-bottom:12px">🎮</div><p>No games joined yet.</p></div>`;
+      return;
+    }
+    let html = '<div class="game-grid">';
+    for (const { i, g } of myGames) {
+      const s = Number(g[14]);
+      const isWinner = Array.from(g[12]).some(
+        (p) => p?.toLowerCase() === userAddress?.toLowerCase(),
+      );
+      const fee = fmtUSDC(g[6]),
+        pool = fmtUSDC(g[8]);
+      const clickAction =
+        s === 1 || s === 2 ? `openGameReadOnly(${i})` : `openGame(${i})`;
+      html += `<div class="gcard" onclick="${clickAction}">
+        <div class="gcard-title">#${i} ${sanitizeText(
+        g[1],
+      )} <span class="badge ${STATUS_BADGE[s]}">${STATUS_LABEL[s]}</span>
+        ${
+          isWinner && s === 1
+            ? `<span style="font-size:.7rem;background:rgba(255,209,102,.15);color:var(--gold);border:1px solid rgba(255,209,102,.3);padding:1px 6px;border-radius:10px;margin-left:4px">🥇 Won</span>`
+            : ""
+        }
+        </div>
+        <div class="gmeta">💰 Entry: <strong>${fee} USDC</strong> | 🏆 Pool: <strong>${pool} USDC</strong></div>
+        <div class="gmeta">📚 ${sanitizeText(g[4])} · 👥 ${Number(
+        g[9],
+      )} players</div>
+      </div>`;
+    }
+    html += "</div>";
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
+  }
 }
 
 async function doJoin() {
@@ -1714,16 +1854,21 @@ async function doJoin() {
   try {
     const entryFee = currentGame[6];
 
-    // ✅ Always approve exact amount — skip allowance check
-    // (Arc testnet USDC may not support allowance() query)
-    toast("Step 1/2: Approving USDC...", "info");
-    try {
-      const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
+    const allowance = await usdcContract.allowance(
+      userAddress,
+      CONTRACT_ADDRESS,
+    );
+
+    // ✅ Only approve if needed
+    if (allowance < entryFee) {
+      toast("Step 1/2: Approving USDC...", "info");
+
+      const tx1 = await usdcContract.approve(
+        CONTRACT_ADDRESS,
+        entryFee, // ✅ FIXED (not 100)
+      );
+
       await tx1.wait();
-    } catch (approveErr) {
-      // If approve also fails, the token contract may need different handling
-      console.warn("Approve failed:", approveErr.message);
-      throw approveErr;
     }
 
     toast("Step 2/2: Joining game...", "info");
@@ -1776,9 +1921,41 @@ async function doJoin_withGuestMode() {
 
   // ── WALLET MODE: normal flow with allowance check ──────────────────────────
   try {
-    toast("Step 1/2: Approving USDC...", "info");
-    const tx0 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
-    await tx0.wait();
+    const allowanceAbi = [
+      "function allowance(address,address) view returns (uint256)",
+    ];
+    const usdcRead = new ethers.Contract(
+      USDC_ADDRESS,
+      allowanceAbi,
+      readProvider,
+    );
+    const currentAllowance = await usdcRead.allowance(
+      userAddress,
+      CONTRACT_ADDRESS,
+    );
+
+    if (currentAllowance < entryFee) {
+      toast("Step 1/2: Approving USDC (one-time)...", "info");
+      const entryFee = currentGame[6]; // already correct from contract
+
+      const allowance = await usdcContract.allowance(
+        userAddress,
+        CONTRACT_ADDRESS,
+      );
+
+      if (allowance < entryFee) {
+        toast("Approving USDC...", "info");
+
+        const tx = await usdcContract.approve(
+          CONTRACT_ADDRESS,
+          entryFee, // ✅ correct amount (1 USDC)
+        );
+
+        await tx.wait();
+      }
+    } else {
+      toast("Joining room...", "info");
+    }
 
     toast("Step 2/2: Joining room...", "info");
     const tx = await contract.joinGame(currentGameId);
@@ -1813,14 +1990,7 @@ async function tryRestoreWallet() {
     userAddress = await signer.getAddress();
 
     const network = await provider.getNetwork();
-    const chainId = Number(network.chainId);
-
-    console.log("Detected chainId:", chainId);
-
-    if (chainId !== 5042002) {
-      toast("Please switch to ARC Testnet", "error");
-      return;
-    } // wrong chain, don't restore
+    if (Number(network.chainId) !== 5042002) return; // wrong chain, don't restore
 
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
@@ -1966,6 +2136,21 @@ function startQTimer() {
       if (!answered) timeUp();
     }
   }, 1000);
+}
+
+function tweetGame() {
+  const text =
+    "I just joined " +
+    currentGame[1] +
+    " on Arc Trivia! 🎮 Win " +
+    fmtUSDC(currentGame[8]) +
+    " USDC. Play now: " +
+    window.location.href;
+
+  window.open(
+    "https://twitter.com/intent/tweet?text=" + encodeURIComponent(text),
+    "_blank",
+  );
 }
 
 function updateQTimer() {
@@ -2182,6 +2367,9 @@ async function submitMyScore() {
       signature,
     );
     await tx.wait();
+    if (typeof confetti === "function") {
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    }
     score = verifiedScore;
     document.getElementById("resScore").textContent = score;
     markSubmitted(currentGameId);
@@ -2442,6 +2630,87 @@ async function doCancelRoom(gameId) {
     await loadGames();
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
+  }
+}
+
+async function loadGlobalStats() {
+  try {
+    const res = await fetch(`${BACKEND}/stats/global`);
+    const data = await res.json();
+    const el = document.getElementById("globalStatsBar");
+    if (!el) return;
+    el.innerHTML = `
+      <span>👥 <strong>${data.totalPlayers}</strong> players</span>
+      <span style="color:var(--border)">·</span>
+      <span>🎮 <strong>${data.totalGamesPlayed}</strong> games played</span>
+      <span style="color:var(--border)">·</span>
+      <span>✅ <strong>${data.totalFinished}</strong> scores submitted</span>
+      <span style="color:var(--border)">·</span>
+      <button onclick="showGlobalLeaderboard()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:.8rem;font-weight:600;padding:0">🏆 View Leaderboard</button>
+    `;
+  } catch (_) {}
+}
+
+async function showGlobalLeaderboard() {
+  try {
+    const res = await fetch(`${BACKEND}/stats/global`);
+    const data = await res.json();
+    const modal = document.createElement("div");
+    modal.id = "globalLbModal";
+    modal.className = "bet-modal-overlay";
+    modal.innerHTML = `<div class="bet-modal-box" style="max-width:480px;width:95%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="margin:0">🏆 Global Leaderboard</h3>
+        <button onclick="document.getElementById('globalLbModal').remove()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">✕</button>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:14px;display:flex;gap:16px">
+        <span>👥 ${data.totalPlayers} players</span>
+        <span>🎮 ${data.totalGamesPlayed} games</span>
+      </div>
+      ${
+        data.topPlayers.length === 0
+          ? `<p style="color:var(--muted);text-align:center;padding:20px">No games played yet</p>`
+          : data.topPlayers
+              .map(
+                (p, i) => `
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:1.1rem;min-width:28px">${
+              i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`
+            }</span>
+            <div style="width:32px;height:32px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;flex-shrink:0;overflow:hidden">
+              ${
+                p.avatar
+                  ? `<img src="${sanitizeUrl(
+                      p.avatar,
+                    )}" style="width:100%;height:100%;object-fit:cover">`
+                  : (p.username || p.wallet || "?")[0].toUpperCase()
+              }
+            </div>
+            <div style="flex:1">
+              <div style="font-size:.85rem;font-weight:600">${
+                p.username ? "@" + p.username : fmt(p.wallet)
+              }</div>
+              <div style="font-size:.72rem;color:var(--muted)">${
+                p.games_finished
+              } games finished</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:.85rem;font-weight:700;color:var(--gold)">${
+                p.best_score
+              } pts</div>
+              <div style="font-size:.7rem;color:var(--muted)">best score</div>
+            </div>
+          </div>`,
+              )
+              .join("")
+      }
+    </div>`;
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) modal.remove();
+    });
+    document.body.appendChild(modal);
+  } catch (e) {
+    toast("Failed to load leaderboard", "error");
   }
 }
 
