@@ -799,7 +799,9 @@ async function getGame(id) {
 async function createProvider() {
   const rpcs = [
     "https://rpc.testnet.arc.network",
-    "https://arc-testnet.drpc.org",
+    "https://rpc.drpc.testnet.arc.network",
+    "https://rpc.quicknode.testnet.arc.network",
+    "https://rpc.blockdaemon.testnet.arc.network",
   ];
 
   for (const rpc of rpcs) {
@@ -864,7 +866,7 @@ function stopAutoRefresh() {
 const providerOptions = {
   walletconnect: {
     package: WalletConnectProvider,
-    options: { rpc: { 5042002: "https://arc-testnet.drpc.org" } },
+    options: { rpc: { 5042002: "https://rpc.testnet.arc.network" } },
   },
 };
 
@@ -880,24 +882,22 @@ async function connectWallet() {
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== 5042002) {
       try {
-        // Try switching first (works if chain is already saved in wallet)
         await window.ethereum.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: "0x4CE372" }],
+          params: [{ chainId: "0x4CE552" }],
         });
       } catch (switchErr) {
         if (switchErr.code === 4902 || switchErr.code === -32603) {
-          // Chain not in wallet yet — add it
           try {
             await window.ethereum.request({
               method: "wallet_addEthereumChain",
               params: [
                 {
-                  chainId: "0x4CE372",
+                  chainId: "0x4CE552",
                   chainName: "Arc Testnet",
                   rpcUrls: ["https://rpc.testnet.arc.network"],
-                  nativeCurrency: { name: "ARC", symbol: "ARC", decimals: 18 },
-                  blockExplorerUrls: ["https://explorer.testnet.arc.network"],
+                  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+                  blockExplorerUrls: ["https://testnet.arcscan.app"],
                 },
               ],
             });

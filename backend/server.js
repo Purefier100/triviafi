@@ -30,7 +30,9 @@ const CONTRACT_ADDRESS =
 // ✅ PROVIDER SETUP — single provider with explicit chain, no FallbackProvider
 const ARC_RPCS = [
   "https://rpc.testnet.arc.network",
-  "https://arc-testnet.drpc.org",
+  "https://rpc.drpc.testnet.arc.network",
+  "https://rpc.quicknode.testnet.arc.network",
+  "https://rpc.blockdaemon.testnet.arc.network",
 ];
 
 function makeProvider(rpcIndex = 0) {
