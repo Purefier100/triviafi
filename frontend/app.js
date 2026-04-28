@@ -881,16 +881,16 @@ async function connectWallet() {
     // ✅ Check current chain first — only prompt if needed
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== 5042002) {
-      const hexChainId = "0x" + (5042002).toString(16); // let JS do it correctly
+      const hexChainId = "0x" + (5042002).toString(16);
       try {
-        await window.ethereum.request({
+        await providerInstance.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: hexChainId }],
         });
       } catch (switchErr) {
         if (switchErr.code === 4902 || switchErr.code === -32603) {
           try {
-            await window.ethereum.request({
+            await providerInstance.request({
               method: "wallet_addEthereumChain",
               params: [
                 {
@@ -907,10 +907,14 @@ async function connectWallet() {
             return;
           }
         } else if (switchErr.code !== 4001) {
-          // Not user rejection — might already be on correct chain
           console.warn("Switch error:", switchErr.message);
         }
       }
+
+      // 🔥 Recreate provider after chain switch
+      provider = new ethers.BrowserProvider(providerInstance);
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
 
       // Final check
       const finalNetwork = await provider.getNetwork();
