@@ -755,25 +755,22 @@ app.get("/debug/rpc", async (req, res) => {
   res.json(results);
 });
 
-// ── PASTE THIS ENTIRE BLOCK after your /game/status route ──
 app.post("/game/start", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
-  const { gameId, wallet, questions } = req.body;
+  const { gameId, wallet, categoryId, difficulty } = req.body;
   if (!gameId || !wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
     return res.status(400).json({ error: "Invalid fields" });
 
   try {
-    // Re-fetch fresh user from DB to avoid stale session wallet field
+    // Re-fetch fresh user from DB
     const freshUser = await pool.query("SELECT * FROM users WHERE id=$1", [
       req.user.id,
     ]);
     const dbUser = freshUser.rows[0];
-
     if (!dbUser) return res.status(401).json({ error: "User not found" });
 
     if (!dbUser.wallet) {
-      // Auto-link wallet if not yet linked
       await pool.query("UPDATE users SET wallet=$1 WHERE id=$2", [
         wallet.toLowerCase(),
         req.user.id,
@@ -789,32 +786,89 @@ app.post("/game/start", async (req, res) => {
     );
     if (!joined) return res.status(403).json({ error: "Not joined onchain" });
 
+    // ✅ Check if already started — don't re-fetch questions
+    const existingSession = await pool.query(
+      "SELECT id, finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId],
+    );
+    if (existingSession.rows.length > 0 && existingSession.rows[0].finished) {
+      return res.status(400).json({ error: "Already finished this game" });
+    }
+
     await pool.query(
       `INSERT INTO game_sessions (user_id, wallet, game_id)
-   VALUES ($1,$2,$3) ON CONFLICT (user_id,game_id) DO NOTHING`,
+       VALUES ($1,$2,$3) ON CONFLICT (user_id,game_id) DO NOTHING`,
       [req.user.id, wallet.toLowerCase(), gameId],
     );
 
-    // ✅ Save correct answers server-side for anti-cheat verification
-    const { questions } = req.body;
-    if (Array.isArray(questions) && questions.length > 0) {
-      const sessionRow = await pool.query(
-        "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-        [req.user.id, gameId],
+    const sessionRow = await pool.query(
+      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId],
+    );
+    const sessionId = sessionRow.rows[0]?.id;
+
+    // ✅ Check if questions already stored (replay attempt)
+    const existingQs = await pool.query(
+      "SELECT COUNT(*) as cnt FROM game_questions WHERE session_id=$1",
+      [sessionId],
+    );
+    if (parseInt(existingQs.rows[0].cnt) > 0) {
+      // Questions already stored — return them without correct answers
+      const qs = await pool.query(
+        "SELECT q_index, question, options FROM game_questions WHERE session_id=$1 ORDER BY q_index",
+        [sessionId],
       );
-      const sessionId = sessionRow.rows[0]?.id;
-      if (sessionId) {
-        for (let i = 0; i < questions.slice(0, 10).length; i++) {
-          await pool.query(
-            `INSERT INTO game_questions (session_id, q_index, correct_answer)
-         VALUES ($1,$2,$3) ON CONFLICT (session_id, q_index) DO NOTHING`,
-            [sessionId, i, questions[i].correct],
-          );
-        }
-      }
+      return res.json({ ok: true, questions: qs.rows });
     }
 
-    res.json({ ok: true });
+    // ✅ Fetch questions SERVER-SIDE — correct answers never sent to client
+    const catId = categoryId || 9;
+    const diff = parseInt(difficulty) || 0;
+    const diffParam =
+      diff > 0 ? `&difficulty=${["", "easy", "medium", "hard"][diff]}` : "";
+
+    let qtData;
+    try {
+      const qtRes = await fetch(
+        `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
+      );
+      qtData = await qtRes.json();
+    } catch (e) {
+      return res.status(503).json({ error: "Failed to fetch questions" });
+    }
+
+    if (!qtData || qtData.response_code !== 0) {
+      return res.status(503).json({ error: "No questions available" });
+    }
+
+    // ✅ Store questions + correct answers server-side, shuffle options
+    const clientQuestions = [];
+    for (let i = 0; i < qtData.results.length; i++) {
+      const q = qtData.results[i];
+      const correct = decodeURIComponent(q.correct_answer);
+      const question = decodeURIComponent(q.question);
+      const incorrect = q.incorrect_answers.map((a) => decodeURIComponent(a));
+
+      // Shuffle options
+      const options = [correct, ...incorrect].sort(() => Math.random() - 0.5);
+      const optionsJson = JSON.stringify(options);
+
+      await pool.query(
+        `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
+        [sessionId, i, correct, question, optionsJson],
+      );
+
+      // Send to client WITHOUT correct answer
+      clientQuestions.push({
+        questionIndex: i,
+        question,
+        options,
+        diff: q.difficulty,
+      });
+    }
+
+    res.json({ ok: true, questions: clientQuestions });
   } catch (e) {
     console.error("Game start error:", e.message);
     res.status(500).json({ error: e.message });
