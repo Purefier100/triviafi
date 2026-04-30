@@ -592,6 +592,68 @@ app.get("/debug/nonce/:wallet", async (req, res) => {
   }
 });
 
+app.get("/debug/contract", async (req, res) => {
+  try {
+    const p = makeProvider();
+    // Try different nonce function names
+    const tests = {};
+
+    const wallet = "0xB2821e9a602C4Fab6d30c9A85D8F24a1935B1ed6";
+
+    // Test gameCounter (we know this works)
+    try {
+      const c1 = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ["function gameCounter() view returns (uint256)"],
+        p,
+      );
+      tests.gameCounter = (await c1.gameCounter()).toString();
+    } catch (e) {
+      tests.gameCounter = "FAILED: " + e.message;
+    }
+
+    // Test getNonce
+    try {
+      const c2 = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ["function getNonce(address) view returns (uint256)"],
+        p,
+      );
+      tests.getNonce = (await c2.getNonce(wallet)).toString();
+    } catch (e) {
+      tests.getNonce = "FAILED: " + e.message;
+    }
+
+    // Test nonces
+    try {
+      const c3 = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ["function nonces(address) view returns (uint256)"],
+        p,
+      );
+      tests.nonces = (await c3.nonces(wallet)).toString();
+    } catch (e) {
+      tests.nonces = "FAILED: " + e.message;
+    }
+
+    // Test playerNonces
+    try {
+      const c4 = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ["function playerNonces(address) view returns (uint256)"],
+        p,
+      );
+      tests.playerNonces = (await c4.playerNonces(wallet)).toString();
+    } catch (e) {
+      tests.playerNonces = "FAILED: " + e.message;
+    }
+
+    res.json(tests);
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 app.get("/profile/check/:username", async (req, res) => {
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(req.params.username))
     return res.json({ available: false });
