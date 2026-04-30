@@ -2053,9 +2053,20 @@ async function startPlay() {
         credentials: "include",
       });
       const chkData = await chk.json();
-      if (chkData.finished) {
+      if (chkData.onchain) {
+        // Only block replay if score is confirmed onchain
         toast("You already submitted a score for this game!", "error");
         document.getElementById("submitSection").style.display = "none";
+        await refreshResults();
+        return;
+      }
+      if (chkData.finished && !chkData.onchain) {
+        // DB finished but TX failed — go straight to submit screen
+        toast("Your score was saved. Please submit onchain.", "info");
+        showScreen("screenResults");
+        score = loadSavedScore(currentGameId);
+        document.getElementById("resScore").textContent = score;
+        document.getElementById("submitSection").style.display = "block";
         await refreshResults();
         return;
       }
@@ -2327,14 +2338,15 @@ async function submitMyScore() {
   if (!contract || !currentGameId)
     return toast("Connect wallet first", "error");
 
-  // ✅ Double-check server side before allowing resubmit
+  // ✅ Check server — but allow retry if onchain TX failed
   try {
     const statusRes = await fetch(`${BACKEND}/game/status/${currentGameId}`, {
       credentials: "include",
     });
     const statusData = await statusRes.json();
-    if (statusData.finished) {
-      toast("Score already submitted!", "error");
+    if (statusData.finished && statusData.onchain) {
+      // Only block if actually confirmed onchain
+      toast("Score already submitted onchain!", "error");
       document.getElementById("submitSection").style.display = "none";
       await refreshResults();
       return;

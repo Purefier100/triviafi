@@ -700,10 +700,25 @@ app.get("/game/status/:gameId", async (req, res) => {
       [req.user.id, gameId],
     );
 
+    // Check if actually finished onchain
+    let onchain = false;
+    try {
+      const [, alreadyFinishedOnchain] = await withRetry(
+        (c) =>
+          c.getPlayerStatus(
+            gameId,
+            req.user.wallet || "0x0000000000000000000000000000000000000000",
+          ),
+        "checkOnchain",
+      );
+      onchain = alreadyFinishedOnchain;
+    } catch (_) {}
+
     return res.json({
       status,
       played: r.rows.length > 0,
       finished: r.rows[0]?.finished || false,
+      onchain,
     });
   } catch (e) {
     console.error("Game status error:", e.message);
