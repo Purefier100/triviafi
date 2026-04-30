@@ -574,7 +574,11 @@ app.post("/profile/resolve", async (req, res) => {
 app.get("/debug/nonce/:wallet", async (req, res) => {
   const wallet = req.params.wallet;
   try {
-    const onchainNonce = await rpcCall((c) => c.getNonce(wallet), "debugNonce");
+    // Use withRetry which IS globally defined
+    const onchainNonce = await withRetry(
+      (c) => c.getNonce(wallet),
+      "debugNonce",
+    );
     const dbRow = await pool.query(
       "SELECT nonce FROM users WHERE LOWER(wallet)=$1",
       [wallet.toLowerCase()],
