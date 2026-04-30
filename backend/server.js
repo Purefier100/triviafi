@@ -821,14 +821,18 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Score already submitted" });
 
     // ✅ Get nonce with retry
-    // ✅ Read nonce from DB instead of blockchain — avoids flaky RPC
-    const nonceRow = await pool.query("SELECT nonce FROM users WHERE id=$1", [
-      req.user.id,
-    ]);
-    let nonce = BigInt(nonceRow.rows[0]?.nonce || 0);
+    let nonce;
+    try {
+      nonce = await rpcCall((c) => c.getNonce(effectiveWallet), "getNonce");
+      console.log(`Nonce for ${effectiveWallet}: ${nonce}`);
+    } catch (e) {
+      console.error("getNonce failed:", e.message);
+      return res
+        .status(503)
+        .json({ error: "Blockchain unavailable. Try again." });
+    }
 
     // ✅ Calculate score server-side
-    // ✅ Verify answers server-side against stored correct answers
     const sessionRow = await pool.query(
       "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
       [req.user.id, gameId],
@@ -878,11 +882,6 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       "UPDATE game_sessions SET finished=true, score=$1 WHERE user_id=$2 AND game_id=$3",
       [score, req.user.id, gameId],
     );
-    // ✅ Increment local nonce to stay in sync with contract
-    await pool.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
-      req.user.id,
-    ]);
-
     console.log(
       `✅ Score: game=${gameId} score=${score} wallet=${effectiveWallet}`,
     );
