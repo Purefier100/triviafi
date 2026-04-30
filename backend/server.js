@@ -571,6 +571,23 @@ app.post("/profile/resolve", async (req, res) => {
   }
 });
 
+app.get("/debug/nonce/:wallet", async (req, res) => {
+  const wallet = req.params.wallet;
+  try {
+    const onchainNonce = await rpcCall((c) => c.getNonce(wallet), "debugNonce");
+    const dbRow = await pool.query(
+      "SELECT nonce FROM users WHERE LOWER(wallet)=$1",
+      [wallet.toLowerCase()],
+    );
+    res.json({
+      onchain: onchainNonce.toString(),
+      db: dbRow.rows[0]?.nonce || 0,
+    });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 app.get("/profile/check/:username", async (req, res) => {
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(req.params.username))
     return res.json({ available: false });
@@ -817,8 +834,48 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res
         .status(400)
         .json({ error: "Game session not found — click Play first" });
-    if (sessionCheck.rows[0].finished)
+    if (sessionCheck.rows[0].finished) {
+      // ✅ Allow retry — return cached score + fresh signature
+      // so user can re-submit onchain if TX failed last time
+      const cachedScore = sessionCheck.rows[0].score;
+      if (cachedScore > 0) {
+        // Get fresh nonce for retry
+        let nonce;
+        try {
+          nonce = await rpcCall(
+            (c) => c.getNonce(effectiveWallet),
+            "getNonce-retry",
+          );
+          await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
+            nonce.toString(),
+            req.user.id,
+          ]);
+        } catch (e) {
+          const nonceRow = await pool.query(
+            "SELECT nonce FROM users WHERE id=$1",
+            [req.user.id],
+          );
+          nonce = BigInt(nonceRow.rows[0]?.nonce || 0);
+        }
+        const message = ethers.solidityPackedKeccak256(
+          ["address", "uint256", "uint256", "uint256"],
+          [effectiveWallet, gameId, cachedScore, nonce],
+        );
+        const signature = await verifierWallet.signMessage(
+          ethers.getBytes(message),
+        );
+        console.log(
+          `🔄 Retry signature: game=${gameId} score=${cachedScore} nonce=${nonce}`,
+        );
+        return res.json({
+          score: cachedScore,
+          signature,
+          nonce: nonce.toString(),
+          retry: true,
+        });
+      }
       return res.status(400).json({ error: "Score already submitted" });
+    }
 
     // ✅ Get nonce with retry
     // ✅ Try onchain nonce first, fall back to DB if RPC fails
