@@ -821,15 +821,23 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Score already submitted" });
 
     // ✅ Get nonce with retry
+    // ✅ Try onchain nonce first, fall back to DB if RPC fails
     let nonce;
     try {
       nonce = await rpcCall((c) => c.getNonce(effectiveWallet), "getNonce");
-      console.log(`Nonce for ${effectiveWallet}: ${nonce}`);
+      // Keep DB in sync with onchain nonce
+      await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
+        nonce.toString(),
+        req.user.id,
+      ]);
+      console.log(`✅ Onchain nonce for ${effectiveWallet}: ${nonce}`);
     } catch (e) {
-      console.error("getNonce failed:", e.message);
-      return res
-        .status(503)
-        .json({ error: "Blockchain unavailable. Try again." });
+      console.warn("getNonce RPC failed, falling back to DB nonce:", e.message);
+      const nonceRow = await pool.query("SELECT nonce FROM users WHERE id=$1", [
+        req.user.id,
+      ]);
+      nonce = BigInt(nonceRow.rows[0]?.nonce || 0);
+      console.log(`⚠️ Using DB nonce: ${nonce}`);
     }
 
     // ✅ Calculate score server-side
@@ -882,6 +890,10 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       "UPDATE game_sessions SET finished=true, score=$1 WHERE user_id=$2 AND game_id=$3",
       [score, req.user.id, gameId],
     );
+    // Increment DB nonce as fallback backup
+    await pool.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
+      req.user.id,
+    ]);
     console.log(
       `✅ Score: game=${gameId} score=${score} wallet=${effectiveWallet}`,
     );
