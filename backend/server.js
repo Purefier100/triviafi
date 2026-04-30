@@ -17,11 +17,10 @@ console.log("Verifier:", verifierWallet.address);
 
 const CONTRACT_ABI = [
   "function getPlayerStatus(uint256,address) view returns (bool,bool,bool,uint256)",
-  "function getNonce(address) view returns (uint256)",
+  "function nonces(address) view returns (uint256)",
   "function submitScore(uint256,uint256,bytes)",
   "function games(uint256) view returns (uint8 status)",
 ];
-
 // ── Contract ──────────────────────────────────────────────────────────────────
 const CONTRACT_ADDRESS =
   process.env.CONTRACT_ADDRESS || "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50";
@@ -909,9 +908,10 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         let nonce;
         try {
           nonce = await rpcCall(
-            (c) => c.getNonce(effectiveWallet),
-            "getNonce-retry",
+            (c) => c.nonces(effectiveWallet),
+            "nonces-retry",
           );
+
           await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
             nonce.toString(),
             req.user.id,
@@ -947,7 +947,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     // ✅ Try onchain nonce first, fall back to DB if RPC fails
     let nonce;
     try {
-      nonce = await rpcCall((c) => c.getNonce(effectiveWallet), "getNonce");
+      nonce = await rpcCall((c) => c.nonces(effectiveWallet), "nonces");
       // Keep DB in sync with onchain nonce
       await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
         nonce.toString(),
@@ -1107,7 +1107,7 @@ app.post("/admin/sync-nonce", async (req, res) => {
   const { wallet } = req.body;
   if (!wallet) return res.status(400).json({ error: "Missing wallet" });
   try {
-    const nonce = await withRetry((c) => c.getNonce(wallet), "syncNonce");
+    const nonce = await withRetry((c) => c.nonces(wallet), "syncNonce");
     await pool.query("UPDATE users SET nonce=$1 WHERE LOWER(wallet)=$2", [
       nonce.toString(),
       wallet.toLowerCase(),

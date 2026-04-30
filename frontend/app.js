@@ -680,7 +680,7 @@ const ABI = [
   "function platform() view returns (address)",
   "function verifier() view returns (address)",
   "function totalUSDCPaidOut() view returns (uint256)",
-  "function getNonce(address) view returns (uint256)",
+  "function nonces(address) view returns (uint256)",
   "function createGame(string,uint8,string,uint8,uint256,uint256,uint256,uint256) external returns (uint256)",
   "function joinGame(uint256) external payable",
   "function submitScore(uint256,uint256,bytes) external",
