@@ -440,8 +440,9 @@
       <div class="tabs">
         <button class="tab active" onclick="filterGames('all',this)">All</button>
         <button class="tab" onclick="filterGames('0',this)">🟢 Open</button>
-        <button class="tab" onclick="filterGames('1',this)">🔴 Live</button>
-        <button class="tab" onclick="filterGames('2',this)">✅ Ended</button>
+        <button class="tab" onclick="filterGames('live',this)">🔴 Live</button>
+        <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
+        <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
       </div>
       <!-- Skeleton shown until games load -->
       <div id="gamesList">

@@ -1281,34 +1281,59 @@ function disconnectWallet() {
 
 function renderGames() {
   const el = document.getElementById("gamesList");
+  const now = Math.floor(Date.now() / 1000);
 
   let filtered;
+
   if (filterStatus === "all") {
-    // DEFAULT: show only active (open, not expired)
-    const now = Math.floor(Date.now() / 1000);
+    // Default: show only truly active open games (not expired)
     filtered = allGames.filter(({ g }) => {
       const s = Number(g[14]);
-      if (s !== 0) return false; // not open
+      if (s !== 0) return false;
       const playDeadline = Number(g[11]);
-      return playDeadline > now - 60; // still within 60s grace
+      return playDeadline > now; // strictly not expired
     });
+  } else if (filterStatus === "0") {
+    // Open tab: open games still in registration phase
+    filtered = allGames.filter(({ g }) => {
+      const s = Number(g[14]);
+      if (s !== 0) return false;
+      const regEnd = Number(g[10]);
+      return regEnd > now; // still in registration
+    });
+  } else if (filterStatus === "live") {
+    // Live tab: open games past registration but still in play window
+    filtered = allGames.filter(({ g }) => {
+      const s = Number(g[14]);
+      if (s !== 0) return false;
+      const regEnd = Number(g[10]);
+      const playDeadline = Number(g[11]);
+      return regEnd <= now && playDeadline > now;
+    });
+  } else if (filterStatus === "1") {
+    // Ended tab: only status=1 (properly ended)
+    filtered = allGames.filter(({ g }) => Number(g[14]) === 1);
+  } else if (filterStatus === "2") {
+    // Cancelled tab: only status=2
+    filtered = allGames.filter(({ g }) => Number(g[14]) === 2);
   } else {
-    // Tab filter (Open=0, Ended=1, Cancelled=2)
     filtered = allGames.filter(
       ({ g }) => Number(g[14]) === parseInt(filterStatus),
     );
   }
 
   if (filtered.length === 0) {
-    const emptyMsg =
-      filterStatus === "all"
-        ? `<p style="color:var(--muted);text-align:center;padding:32px">No active games right now.<br><span style="font-size:.8rem">Agent creates new rooms automatically every hour.</span></p>`
-        : `<p style="color:var(--muted);text-align:center;padding:24px">No games here yet.</p>`;
-    el.innerHTML = emptyMsg;
+    const msgs = {
+      all: `<p style="color:var(--muted);text-align:center;padding:32px">No active games right now.<br><span style="font-size:.8rem">Agent creates new rooms automatically every hour.</span></p>`,
+      0: `<p style="color:var(--muted);text-align:center;padding:24px">No open games right now.</p>`,
+      live: `<p style="color:var(--muted);text-align:center;padding:24px">No live games right now.</p>`,
+      1: `<p style="color:var(--muted);text-align:center;padding:24px">No ended games yet.</p>`,
+      2: `<p style="color:var(--muted);text-align:center;padding:24px">No cancelled games.</p>`,
+    };
+    el.innerHTML = msgs[filterStatus] || msgs.all;
     return;
   }
 
-  const now = Math.floor(Date.now() / 1000);
   let html = '<div class="game-grid">';
   for (const { i, g } of filtered) {
     const [
