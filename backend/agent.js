@@ -27,19 +27,10 @@ const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const MAX_AGENT_GAMES = 2; // exactly 2 agent games at a time
-const CHECK_INTERVAL_MS = 120000; // check every 2 minutes
-const recentAgentGames = agentOpen.filter(
-  (g) => now - g.registrationEnd < 600, // 10 minutes window
-);
-
-if (recentAgentGames.length > 0) {
-  log("⏳ Cooldown active — recent game already created");
-  return;
-}
-const CREATION_COOLDOWN = 600; // 10 minutes
-const ENTRY_FEE_USDC = "1";
+const CHECK_INTERVAL_MS = 300000; // check every 2 minutes // 10 minutes
+const ENTRY_FEE_USDC = "2";
 const MAX_PLAYERS = 10;
-const REG_WINDOW_SECS = 3600; // 1 hour registration
+const REG_WINDOW_SECS = 1800; // 1 hour registration
 const PLAY_WINDOW_SECS = 1800; // 30 min play window
 const ARC_CHAIN_ID = 5042002;
 const ARC_CHAIN_HEX = "0x4CE372";
@@ -222,17 +213,16 @@ async function tick(contract, usdc, agentAddress, provider) {
   const needed = MAX_AGENT_GAMES - activeAgentGames.length;
 
   if (needed > 0) {
-    // 🔥 REAL COOLDOWN (ON-CHAIN BASED)
-    const recentAgentGames = agentOpen.filter(
-      (g) => now - g.registrationEnd < 600,
-    );
-
-    if (recentAgentGames.length > 0) {
-      log("⏳ Cooldown active — recent game exists");
+    // ✅ Only create if ALL agent games are gone (both ended)
+    // Don't create partial replacements — wait for both to finish
+    if (activeAgentGames.length > 0) {
+      log(
+        `⏳ Still have ${activeAgentGames.length} active game(s) — waiting for all to end before creating new ones`,
+      );
       return;
     }
 
-    log(`➕ Need ${needed} more game(s) — creating...`);
+    log(`➕ Both games ended — creating ${needed} new game(s)...`);
     await createGames(contract, needed);
   } else {
     log(

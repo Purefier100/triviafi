@@ -1178,9 +1178,12 @@ async function loadGames() {
     allFetched.sort((a, b) => b.i - a.i);
 
     // Stats from all fetched
+    // Stats from all fetched
+    const nowSec = Math.floor(Date.now() / 1000);
     for (const { g } of allFetched) {
       totalPool += g[8];
-      if (Number(g[14]) === 0) activeCount++;
+      // Only count truly active (open AND not expired)
+      if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
     }
 
     document.getElementById("gPool").textContent =
