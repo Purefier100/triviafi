@@ -50,3 +50,6 @@ logs
 coverage/
 dist/
 build/
+
+.envc
+
