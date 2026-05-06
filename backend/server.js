@@ -21,12 +21,15 @@ const CONTRACT_ABI = [
   "function submitScore(uint256,uint256,bytes)",
   "function games(uint256) view returns (uint8 status)",
 ];
-// ── Contract ──────────────────────────────────────────────────────────────────
 const CONTRACT_ADDRESS =
   process.env.CONTRACT_ADDRESS || "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50";
+const LITVM_CONTRACT_ADDRESS =
+  process.env.LITVM_CONTRACT_ADDRESS ||
+  "0xf988BBA862f8E500eb77e175be395961d221F4b0";
+const LITVM_RPC_URL =
+  process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http";
 
-// ✅ ONE provider only
-// ✅ PROVIDER SETUP — single provider with explicit chain, no FallbackProvider
+const LITVM_RPCS = [LITVM_RPC_URL];
 const ARC_RPCS = [
   "https://rpc.testnet.arc.network",
   "https://rpc.drpc.testnet.arc.network",
@@ -46,6 +49,20 @@ const arcContract = new ethers.Contract(
   CONTRACT_ADDRESS,
   CONTRACT_ABI,
   arcProvider,
+);
+
+// ── LitVM provider ────────────────────────────────────────────────────────────
+function makeLitvmProvider() {
+  return new ethers.JsonRpcProvider(LITVM_RPC_URL, {
+    chainId: 4441,
+    name: "litvm",
+  });
+}
+const litvmProvider = makeLitvmProvider();
+const litvmContract = new ethers.Contract(
+  LITVM_CONTRACT_ADDRESS,
+  CONTRACT_ABI,
+  litvmProvider,
 );
 const verifierSigner = verifierWallet.connect(arcProvider);
 const writeContract = new ethers.Contract(
@@ -93,6 +110,30 @@ async function withRetry(fn, label = "rpc", retries = 6) {
 
       const delay = 1500 * i;
       await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+async function withLitvmRetry(fn, label = "litvm", retries = 4) {
+  for (let i = 1; i <= retries; i++) {
+    try {
+      const provider = makeLitvmProvider();
+      const contract = new ethers.Contract(
+        LITVM_CONTRACT_ADDRESS,
+        CONTRACT_ABI,
+        provider,
+      );
+      const result = await Promise.race([
+        fn(contract, provider),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("LitVM timeout")), 12000),
+        ),
+      ]);
+      return result;
+    } catch (e) {
+      console.warn(`[${label}] attempt ${i}/${retries}: ${e.message}`);
+      if (i === retries) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * i));
     }
   }
 }
@@ -670,15 +711,19 @@ app.get("/profile/check/:username", async (req, res) => {
 // GAME ROUTES
 // =============================================================================
 app.get("/game/status/:gameId", async (req, res) => {
-  if (!req.user) {
-    return res.status(401).json({ error: "Not logged in" });
-  }
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
   const gameId = parseInt(req.params.gameId);
+  const chainId = parseInt(req.query.chainId || "5042002");
+  const isLitvm = chainId === 4441;
 
   try {
-    const statusProvider = makeProvider();
+    const statusProvider = isLitvm ? makeLitvmProvider() : makeProvider();
+    const statusContractAddr = isLitvm
+      ? LITVM_CONTRACT_ADDRESS
+      : CONTRACT_ADDRESS;
     const statusContract = new ethers.Contract(
+      statusContractAddr,
       CONTRACT_ADDRESS,
       [
         "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
@@ -703,7 +748,8 @@ app.get("/game/status/:gameId", async (req, res) => {
     // Check if actually finished onchain
     let onchain = false;
     try {
-      const [, alreadyFinishedOnchain] = await withRetry(
+      const retryFn = isLitvm ? withLitvmRetry : withRetry;
+      const [, alreadyFinishedOnchain] = await retryFn(
         (c) =>
           c.getPlayerStatus(
             gameId,
@@ -758,7 +804,16 @@ app.get("/debug/rpc", async (req, res) => {
 app.post("/game/start", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
-  const { gameId, wallet, categoryId, difficulty } = req.body;
+  const {
+    gameId,
+    wallet,
+    categoryId,
+    difficulty,
+    chainId: reqChainId,
+  } = req.body;
+  const chainId = parseInt(reqChainId || "5042002");
+  const isLitvm = chainId === 4441;
+  const retryFn = isLitvm ? withLitvmRetry : withRetry;
   if (!gameId || !wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
     return res.status(400).json({ error: "Invalid fields" });
 
@@ -780,7 +835,7 @@ app.post("/game/start", async (req, res) => {
     }
 
     // Check joined onchain
-    const [joined] = await withRetry(
+    const [joined] = await retryFn(
       (c) => c.getPlayerStatus(gameId, wallet),
       "getPlayerStatus",
     );
@@ -881,7 +936,9 @@ app.post("/game/start", async (req, res) => {
 app.post("/submit-score", scoreLimiter, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
-  const { gameId, wallet, answers } = req.body;
+  const { gameId, wallet, answers, chainId: reqChainId } = req.body;
+  const chainId = parseInt(reqChainId || "5042002");
+  const isLitvm = chainId === 4441;
 
   if (!gameId || !Array.isArray(answers))
     return res.status(400).json({ error: "Invalid input" });
@@ -908,6 +965,31 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     });
     return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, p);
   }
+  function makeFreshLitvmContract() {
+    const p = makeLitvmProvider();
+    return new ethers.Contract(LITVM_CONTRACT_ADDRESS, CONTRACT_ABI, p);
+  }
+
+  async function litvmCall(fn, label) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const contract = makeFreshLitvmContract();
+        const result = await Promise.race([
+          fn(contract),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LitVM timeout")), 12000),
+          ),
+        ]);
+        return result;
+      } catch (e) {
+        console.warn(`[litvm-${label}] attempt ${attempt}/4: ${e.message}`);
+        if (attempt === 4) throw e;
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+
+  const activeRpcCall = isLitvm ? litvmCall : rpcCall;
 
   async function rpcCall(fn, label) {
     for (let attempt = 1; attempt <= 6; attempt++) {
@@ -943,7 +1025,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     // ✅ Check joined onchain with retry
     let joined, alreadyFinished;
     try {
-      [joined, alreadyFinished] = await rpcCall(
+      [joined, alreadyFinished] = await activeRpcCall(
         (c) => c.getPlayerStatus(gameId, effectiveWallet),
         "getPlayerStatus",
       );
@@ -976,7 +1058,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         // Get fresh nonce for retry
         let nonce;
         try {
-          nonce = await rpcCall(
+          nonce = await activeRpcCall(
             (c) => c.nonces(effectiveWallet),
             "nonces-retry",
           );
@@ -1016,7 +1098,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     // ✅ Try onchain nonce first, fall back to DB if RPC fails
     let nonce;
     try {
-      nonce = await rpcCall((c) => c.nonces(effectiveWallet), "nonces");
+      nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
       // Keep DB in sync with onchain nonce
       await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
         nonce.toString(),

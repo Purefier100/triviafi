@@ -670,11 +670,50 @@ function displayName(wallet) {
 const Web3Modal = window.Web3Modal.default;
 const WalletConnectProvider = window.WalletConnectProvider.default;
 
-const CONTRACT_ADDRESS = "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50";
+// ── Multi-network config ──────────────────────────────────────────────────────
+const NETWORKS = {
+  5042002: {
+    name: "Arc Testnet",
+    symbol: "USDC",
+    decimals: 6,
+    isNative: false,
+    contractAddress: "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50",
+    tokenAddress: "0x3600000000000000000000000000000000000000",
+    rpc: "https://rpc.testnet.arc.network",
+    hexChainId: "0x" + (5042002).toString(16),
+    explorer: "https://testnet.arcscan.app",
+    addParams: {
+      chainName: "Arc Testnet",
+      rpcUrls: ["https://rpc.testnet.arc.network"],
+      nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
+      blockExplorerUrls: ["https://testnet.arcscan.app"],
+    },
+  },
+  4441: {
+    name: "LitVM Testnet",
+    symbol: "zkLTC",
+    decimals: 18,
+    isNative: true, // zkLTC is native gas token — no ERC20 approve needed
+    contractAddress: "0xf988BBA862f8E500eb77e175be395961d221F4b0",
+    tokenAddress: null,
+    rpc: "https://liteforge.rpc.caldera.xyz/http",
+    hexChainId: "0x" + (4441).toString(16),
+    explorer: "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz",
+    addParams: {
+      chainName: "LitVM LiteForge Testnet",
+      rpcUrls: ["https://liteforge.rpc.caldera.xyz/http"],
+      nativeCurrency: { name: "zkLTC", symbol: "zkLTC", decimals: 18 },
+      blockExplorerUrls: [
+        "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz",
+      ],
+    },
+  },
+};
 
-// ✅ THE FIX: getGame returns a STRUCT (GameView memory) not individual values.
-// Ethers v6 requires tuple() syntax for struct returns.
-// ALL other functions are unchanged.
+let activeNet = NETWORKS[5042002]; // default Arc
+let CONTRACT_ADDRESS = activeNet.contractAddress;
+let USDC_ADDRESS = activeNet.tokenAddress;
+
 const ABI = [
   "function gameCounter() view returns (uint256)",
   "function platform() view returns (address)",
@@ -697,7 +736,6 @@ const ABI = [
   "function getPrizeBreakdown(uint256) view returns (uint256,uint256,uint256,uint256)",
 ];
 
-const USDC_ADDRESS = "0x3600000000000000000000000000000000000000";
 const USDC_ABI = [
   "function approve(address,uint256) external returns (bool)",
   "function balanceOf(address) view returns (uint256)",
@@ -796,13 +834,17 @@ async function getGame(id) {
   return gameToArray(raw);
 }
 
-async function createProvider() {
-  const rpcs = [
-    "https://rpc.testnet.arc.network",
-    "https://rpc.drpc.testnet.arc.network",
-    "https://rpc.quicknode.testnet.arc.network",
-    "https://rpc.blockdaemon.testnet.arc.network",
-  ];
+async function createProvider(chainId) {
+  const net = chainId ? NETWORKS[chainId] : activeNet;
+  const rpcs =
+    net?.chainId === 4441
+      ? ["https://liteforge.rpc.caldera.xyz/http"]
+      : [
+          "https://rpc.testnet.arc.network",
+          "https://rpc.drpc.testnet.arc.network",
+          "https://rpc.quicknode.testnet.arc.network",
+          "https://rpc.blockdaemon.testnet.arc.network",
+        ];
 
   for (const rpc of rpcs) {
     try {
@@ -870,6 +912,43 @@ const providerOptions = {
   },
 };
 
+function showNetworkPicker() {
+  return new Promise((resolve) => {
+    const modal = document.createElement("div");
+    modal.className = "bet-modal-overlay";
+    modal.innerHTML = `
+      <div class="bet-modal-box" style="text-align:center;max-width:360px">
+        <div style="font-size:2rem;margin-bottom:12px">🌐</div>
+        <h3 style="margin-bottom:6px">Choose Network</h3>
+        <p style="color:var(--muted);font-size:.83rem;margin-bottom:20px">Select which network to play on</p>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-primary" id="pickArc">
+            ⚡ Arc Testnet — Play with USDC
+          </button>
+          <button class="btn btn-ghost" id="pickLitvm">
+            🔷 LitVM LiteForge — Play with zkLTC
+          </button>
+          <button class="btn btn-ghost btn-sm" id="pickCancel" style="margin-top:4px">
+            Cancel
+          </button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector("#pickArc").onclick = () => {
+      modal.remove();
+      resolve(5042002);
+    };
+    modal.querySelector("#pickLitvm").onclick = () => {
+      modal.remove();
+      resolve(4441);
+    };
+    modal.querySelector("#pickCancel").onclick = () => {
+      modal.remove();
+      resolve(null);
+    };
+  });
+}
+
 async function connectWallet() {
   try {
     const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
@@ -878,14 +957,22 @@ async function connectWallet() {
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
-    // ✅ Check current chain first — only prompt if needed
     const network = await provider.getNetwork();
-    if (Number(network.chainId) !== 5042002) {
-      const hexChainId = "0x" + (5042002).toString(16);
+    const chainId = Number(network.chainId);
+
+    if (NETWORKS[chainId]) {
+      // ✅ Supported network — use it
+      activeNet = NETWORKS[chainId];
+    } else {
+      // ❌ Unknown network — show picker
+      const chosen = await showNetworkPicker();
+      if (!chosen) return;
+      activeNet = NETWORKS[chosen];
+
       try {
         await providerInstance.request({
           method: "wallet_switchEthereumChain",
-          params: [{ chainId: hexChainId }],
+          params: [{ chainId: activeNet.hexChainId }],
         });
       } catch (switchErr) {
         if (switchErr.code === 4902 || switchErr.code === -32603) {
@@ -893,42 +980,42 @@ async function connectWallet() {
             await providerInstance.request({
               method: "wallet_addEthereumChain",
               params: [
-                {
-                  chainId: hexChainId,
-                  chainName: "Arc Testnet",
-                  rpcUrls: ["https://rpc.testnet.arc.network"],
-                  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-                  blockExplorerUrls: ["https://testnet.arcscan.app"],
-                },
+                { chainId: activeNet.hexChainId, ...activeNet.addParams },
               ],
             });
           } catch (addErr) {
-            toast("Please add Arc Testnet manually in your wallet", "error");
+            toast(
+              "Please add " + activeNet.name + " manually in MetaMask",
+              "error",
+            );
             return;
           }
-        } else if (switchErr.code !== 4001) {
-          console.warn("Switch error:", switchErr.message);
         }
       }
 
-      // 🔥 Recreate provider after chain switch
+      // Recreate provider after switch
       provider = new ethers.BrowserProvider(providerInstance);
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
-
-      // Final check
-      const finalNetwork = await provider.getNetwork();
-      if (Number(finalNetwork.chainId) !== 5042002) {
-        toast(
-          "Please switch to Arc Testnet (ID: 5042002) in your wallet",
-          "error",
-        );
+      const finalNet = await provider.getNetwork();
+      if (Number(finalNet.chainId) !== chosen) {
+        toast("Please switch to " + activeNet.name, "error");
         return;
       }
     }
 
+    CONTRACT_ADDRESS = activeNet.contractAddress;
+    USDC_ADDRESS = activeNet.tokenAddress;
+
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    if (!activeNet.isNative) {
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    }
+
+    // Update network badge in header
+    const netBadge = document.querySelector(".pd-online");
+    if (netBadge)
+      netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
 
     try {
       platformAddress = await readContract.platform();
@@ -1758,7 +1845,9 @@ async function openGame(gameId) {
           .join("");
   let actionHtml = "";
   if (inRegPhase && !joined && n < Number(maxPlayers))
-    actionHtml = `<button class="btn btn-primary" onclick="doJoin()">💰 Pay ${fee} USDC & Reserve Spot</button><p style="text-align:center;color:var(--muted);font-size:.77rem;margin-top:8px">${fmtTime(
+    actionHtml = `<button class="btn btn-primary" onclick="doJoin()">💰 Pay ${fee} ${
+      activeNet.symbol
+    } & Reserve Spot</button><p style="text-align:center;color:var(--muted);font-size:.77rem;margin-top:8px">${fmtTime(
       regSecs,
     )} left to join</p>`;
   else if (inRegPhase && joined)
@@ -1879,37 +1968,32 @@ async function showMyGames() {
 }
 
 async function doJoin() {
-  if (!contract || !userAddress) {
-    return toast("Connect wallet first", "error");
-  }
-
+  if (!contract || !userAddress) return toast("Connect wallet first", "error");
   try {
     const entryFee = currentGame[6];
 
-    const allowance = await usdcContract.allowance(
-      userAddress,
-      CONTRACT_ADDRESS,
-    );
-
-    // ✅ Only approve if needed
-    if (allowance < entryFee) {
-      toast("Step 1/2: Approving USDC...", "info");
-
-      const tx1 = await usdcContract.approve(
+    if (activeNet.isNative) {
+      // ✅ LitVM — send zkLTC as native token value
+      toast("Joining with zkLTC...", "info");
+      const tx = await contract.joinGame(currentGameId, { value: entryFee });
+      await tx.wait();
+    } else {
+      // ✅ Arc — ERC20 USDC approve + join
+      const allowance = await usdcContract.allowance(
+        userAddress,
         CONTRACT_ADDRESS,
-        entryFee, // ✅ FIXED (not 100)
       );
-
-      await tx1.wait();
+      if (allowance < entryFee) {
+        toast("Step 1/2: Approving USDC...", "info");
+        const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
+        await tx1.wait();
+      }
+      toast("Step 2/2: Joining game...", "info");
+      const tx2 = await contract.joinGame(currentGameId);
+      await tx2.wait();
     }
 
-    toast("Step 2/2: Joining game...", "info");
-
-    const tx2 = await contract.joinGame(currentGameId);
-    await tx2.wait();
-
     toast("✅ Joined successfully!", "success");
-
     currentGame = await getGame(currentGameId);
     await openGame(currentGameId);
   } catch (e) {
@@ -2110,7 +2194,8 @@ async function startPlay() {
         body: JSON.stringify({
           gameId: currentGameId,
           wallet: userAddress,
-          questions: questions.map((q) => ({ correct: q.correct })), // ✅ send correct answers
+          chainId: activeNet.decimals === 18 ? 4441 : 5042002,
+          questions: questions.map((q) => ({ correct: q.correct })),
         }),
       });
     } catch (_) {}
@@ -2393,6 +2478,7 @@ async function submitMyScore() {
         gameId: currentGameId,
         wallet: userAddress,
         answers,
+        chainId: activeNet.decimals === 18 ? 4441 : 5042002,
       }),
     });
     const data = await res.json();
@@ -2901,9 +2987,14 @@ function fmtTime(secs) {
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
+
 function fmtUSDC(val) {
-  return parseFloat(ethers.formatUnits(val, 6)).toFixed(2);
+  return parseFloat(ethers.formatUnits(val, activeNet.decimals)).toFixed(2);
 }
+function fmtToken(val) {
+  return parseFloat(ethers.formatUnits(val, activeNet.decimals)).toFixed(4);
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
