@@ -182,99 +182,133 @@ async function retry(fn, retries = 3) {
 }
 
 async function initDB() {
-  // ✅ Schema that supports: Google-only, Wallet-only, and linked accounts
-  // google_id and email are nullable so wallet-only users can exist
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id           SERIAL PRIMARY KEY,
-      google_id    TEXT UNIQUE,
-      email        TEXT UNIQUE,
-      display_name TEXT,
-      avatar       TEXT,
-      username     TEXT UNIQUE,
-      wallet       TEXT UNIQUE,
-      created_at   TIMESTAMPTZ DEFAULT NOW()
-    );
+  try {
+    // =========================================================================
+    // USERS
+    // =========================================================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id              SERIAL PRIMARY KEY,
+        google_id       TEXT UNIQUE,
+        email           TEXT UNIQUE,
+        display_name    TEXT,
+        avatar          TEXT,
+        username        TEXT UNIQUE,
+        wallet          TEXT UNIQUE,
+        nonce           INT DEFAULT 0,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
 
-    CREATE TABLE IF NOT EXISTS game_sessions (
-      id         SERIAL PRIMARY KEY,
-      user_id    INT REFERENCES users(id),
-      wallet     TEXT NOT NULL,
-      game_id    INT NOT NULL,
-      started_at TIMESTAMPTZ DEFAULT NOW(),
-      finished   BOOLEAN DEFAULT FALSE,
-      score      INT DEFAULT 0,
-      UNIQUE(user_id, game_id)
-    );
+    // =========================================================================
+    // GAME SESSIONS
+    // =========================================================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_sessions (
+        id              SERIAL PRIMARY KEY,
+        user_id         INT REFERENCES users(id) ON DELETE CASCADE,
+        wallet          TEXT NOT NULL,
+        game_id         INT NOT NULL,
+        chain_id        INT DEFAULT 5042002,
+        started_at      TIMESTAMPTZ DEFAULT NOW(),
+        finished        BOOLEAN DEFAULT FALSE,
+        score           INT DEFAULT 0,
+        UNIQUE(user_id, game_id, chain_id)
+      );
+    `);
 
-    CREATE TABLE IF NOT EXISTS bets (
-      id               SERIAL PRIMARY KEY,
-      user_id          INT REFERENCES users(id),
-      game_id          INT NOT NULL,
-      predicted_winner TEXT NOT NULL,
-      amount           NUMERIC(12,6) NOT NULL,
-      settled          BOOLEAN DEFAULT FALSE,
-      won              BOOLEAN,
-      created_at       TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
+    // =========================================================================
+    // BETS
+    // =========================================================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS bets (
+        id                  SERIAL PRIMARY KEY,
+        user_id             INT REFERENCES users(id) ON DELETE CASCADE,
+        game_id             INT NOT NULL,
+        chain_id            INT DEFAULT 5042002,
+        predicted_winner    TEXT NOT NULL,
+        amount              NUMERIC(18,6) NOT NULL,
+        settled             BOOLEAN DEFAULT FALSE,
+        won                 BOOLEAN,
+        created_at          TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
 
-  // ✅ Migration: make google_id and email nullable if they weren't before
-  await pool
-    .query(
-      `
-    ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL;
-  `,
-    )
-    .catch(() => {}); // ignore if already nullable
+    // =========================================================================
+    // GAMES (MULTICHAIN READY)
+    // =========================================================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS games (
+        id                  SERIAL PRIMARY KEY,
+        chain_id            INT NOT NULL,
+        contract_game_id    INT NOT NULL,
+        creator             TEXT NOT NULL,
+        name                TEXT NOT NULL,
+        category            TEXT,
+        difficulty          INT,
+        entry_fee           NUMERIC(36,18),
+        token_symbol        TEXT,
+        max_players         INT,
+        tx_hash             TEXT,
+        status              INT DEFAULT 0,
+        created_at          TIMESTAMPTZ DEFAULT NOW(),
 
-  await pool
-    .query(
-      `
-  CREATE TABLE IF NOT EXISTS game_questions (
-    id             SERIAL PRIMARY KEY,
-    session_id     INT REFERENCES game_sessions(id),
-    q_index        INT NOT NULL,
-    correct_answer TEXT NOT NULL,
-    UNIQUE(session_id, q_index)
-  );
-  `,
-    )
-    .catch(() => {});
+        UNIQUE(chain_id, contract_game_id)
+      );
+    `);
 
-  // Add constraint to existing table if it was already created without it
-  await pool
-    .query(
-      `
-  ALTER TABLE game_questions 
-  ADD CONSTRAINT IF NOT EXISTS game_questions_session_q_unique 
-  UNIQUE (session_id, q_index);
-  `,
-    )
-    .catch(() => {});
+    // =========================================================================
+    // GAME QUESTIONS
+    // =========================================================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_questions (
+        id                  SERIAL PRIMARY KEY,
+        session_id          INT REFERENCES game_sessions(id) ON DELETE CASCADE,
+        q_index             INT NOT NULL,
+        correct_answer      TEXT NOT NULL,
 
-  await pool
-    .query(
-      `
-    ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
-  `,
-    )
-    .catch(() => {}); // ignore if already nullable
+        UNIQUE(session_id, q_index)
+      );
+    `);
 
-  await pool
-    .query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS nonce INT DEFAULT 0;`)
-    .catch(() => {});
+    // =========================================================================
+    // MIGRATIONS
+    // =========================================================================
 
-  // ✅ Add wallet unique constraint if not there
-  await pool
-    .query(
-      `
-    ALTER TABLE users ADD CONSTRAINT users_wallet_unique UNIQUE (wallet);
-  `,
-    )
-    .catch(() => {}); // ignore if already exists
+    // Make google_id nullable
+    await pool
+      .query(
+        `
+      ALTER TABLE users
+      ALTER COLUMN google_id DROP NOT NULL;
+    `,
+      )
+      .catch(() => {});
 
-  console.log("DB ready");
+    // Make email nullable
+    await pool
+      .query(
+        `
+      ALTER TABLE users
+      ALTER COLUMN email DROP NOT NULL;
+    `,
+      )
+      .catch(() => {});
+
+    // Add nonce column safely
+    await pool
+      .query(
+        `
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS nonce INT DEFAULT 0;
+    `,
+      )
+      .catch(() => {});
+
+    console.log("✅ Database ready");
+  } catch (e) {
+    console.error("❌ DB INIT ERROR:", e);
+  }
 }
 initDB().catch(console.error);
 
@@ -413,6 +447,102 @@ app.get(
   passport.authenticate("google", { scope: ["profile", "email"] }),
 );
 
+app.get("/games", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT *
+      FROM games
+      ORDER BY created_at DESC
+      LIMIT 100
+    `);
+
+    res.json(result.rows);
+  } catch (e) {
+    console.error(e);
+
+    res.status(500).json({
+      error: e.message,
+    });
+  }
+});
+
+app.post("/games/save", async (req, res) => {
+  try {
+    const {
+      chainId,
+      contractGameId,
+      creator,
+      name,
+      category,
+      difficulty,
+      entryFee,
+      tokenSymbol,
+      maxPlayers,
+      txHash,
+    } = req.body;
+
+    await pool.query(
+      `
+      INSERT INTO games (
+        chain_id,
+        contract_game_id,
+        creator,
+        name,
+        category,
+        difficulty,
+        entry_fee,
+        token_symbol,
+        max_players,
+        tx_hash
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    `,
+      [
+        chainId,
+        contractGameId,
+        creator,
+        name,
+        category,
+        difficulty,
+        entryFee,
+        tokenSymbol,
+        maxPlayers,
+        txHash,
+      ],
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+
+    res.status(500).json({
+      error: e.message,
+    });
+  }
+});
+
+app.get("/history/:wallet", async (req, res) => {
+  try {
+    const wallet = req.params.wallet.toLowerCase();
+
+    const result = await pool.query(
+      `
+      SELECT *
+      FROM games
+      WHERE LOWER(creator)=$1
+      ORDER BY created_at DESC
+    `,
+      [wallet],
+    );
+
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message,
+    });
+  }
+});
+
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", {
@@ -446,7 +576,7 @@ app.post("/auth/wallet", async (req, res) => {
 
   try {
     // Verify signature
-    const message = "Login to Arc Trivia";
+    const message = `Login to ${req.body.networkName || "TriviaFi"}`;
     const recovered = ethers.verifyMessage(message, signature);
     if (recovered.toLowerCase() !== wallet.toLowerCase())
       return res.status(403).json({ error: "Invalid signature" });
@@ -551,7 +681,9 @@ app.post("/profile/wallet", async (req, res) => {
   if (!signature) return res.status(400).json({ error: "Signature required" });
 
   try {
-    const message = "Link wallet to Arc Trivia account";
+    const message = `Link wallet to ${
+      req.body.networkName || "TriviaFi"
+    } account`;
     const recovered = ethers.verifyMessage(message, signature);
     if (recovered.toLowerCase() !== wallet.toLowerCase())
       return res.status(403).json({ error: "Invalid signature" });

@@ -405,54 +405,109 @@ async function showMyHistory() {
 
 async function loadHistoryScreen() {
   const el = document.getElementById("historyList");
+
   if (!el) return;
-  el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:20px">Loading your games...</p>`;
+
+  el.innerHTML = `
+    <p style="
+      color:var(--muted);
+      text-align:center;
+      padding:20px
+    ">
+      Loading your games...
+    </p>
+  `;
+
   try {
-    const count = Number(await readContract.gameCounter());
-    const myGames = [];
-    for (let i = count; i >= 1; i--) {
-      try {
-        const [joined] = await readContract.getPlayerStatus(i, userAddress);
-        if (joined) {
-          const g = await getGame(i);
-          myGames.push({ i, g });
-        }
-      } catch (_) {}
-    }
-    if (myGames.length === 0) {
-      el.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:3rem;margin-bottom:12px">🎮</div><p>No games played yet.</p></div>`;
+    const res = await fetch(`${BACKEND}/history/${userAddress}`);
+
+    const myGames = await res.json();
+
+    if (!Array.isArray(myGames) || myGames.length === 0) {
+      el.innerHTML = `
+        <div style="
+          text-align:center;
+          padding:40px;
+          color:var(--muted)
+        ">
+          <div style="
+            font-size:3rem;
+            margin-bottom:12px
+          ">
+            🎮
+          </div>
+
+          <p>No games played yet.</p>
+        </div>
+      `;
       return;
     }
+
     let html = "";
-    for (const { i, g } of myGames) {
-      const s = Number(g[14]),
-        isWinner = Array.from(g[12]).some(
-          (p) => p?.toLowerCase() === userAddress?.toLowerCase(),
-        );
-      html += `<div onclick="openGame(${i})" style="background:var(--surface);border:1px solid ${
-        isWinner ? "rgba(255,209,102,.4)" : "var(--border)"
-      };border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="font-weight:700;font-size:.92rem">#${i} ${sanitizeText(
-        g[1],
-      )}</span>
-          <span class="badge ${["b-wait", "b-ended", "b-cancel"][s]}">${
-        ["Open", "Ended", "Cancelled"][s]
-      }</span>
+
+    for (const g of myGames) {
+      const chainIcon = g.chain_id === 4441 ? "🔷" : "⚡";
+
+      html += `
+        <div
+          onclick="openGame(${g.contract_game_id})"
+          style="
+            background:var(--surface);
+            border:1px solid var(--border);
+            border-radius:12px;
+            padding:14px 16px;
+            margin-bottom:10px;
+            cursor:pointer
+          "
+        >
+          <div style="
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            margin-bottom:6px
+          ">
+            <span style="
+              font-weight:700;
+              font-size:.92rem
+            ">
+              ${chainIcon}
+              #${g.contract_game_id}
+              ${sanitizeText(g.name)}
+            </span>
+
+            <span class="badge b-wait">
+              ${
+                g.status === 1 ? "Ended" : g.status === 2 ? "Cancelled" : "Open"
+              }
+            </span>
+          </div>
+
+          <div style="
+            font-size:.78rem;
+            color:var(--muted)
+          ">
+            ${sanitizeText(g.category || "Trivia")}
+            · 👥 ${g.max_players || 0} players
+            · 🏆 ${g.entry_fee || 0}
+            ${g.token_symbol || ""}
+          </div>
         </div>
-        <div style="font-size:.78rem;color:var(--muted)">${sanitizeText(
-          g[4],
-        )} · 👥 ${Number(g[9])} players · 🏆 ${fmtUSDC(g[8])} USDC pool</div>
-        ${
-          isWinner && s === 1
-            ? `<div style="color:var(--gold);font-size:.78rem;font-weight:700;margin-top:5px">🥇 You won this game!</div>`
-            : ""
-        }
-      </div>`;
+      `;
     }
+
     el.innerHTML = html;
   } catch (e) {
-    el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
+    console.error(e);
+
+    el.innerHTML = `
+      <p style="
+        color:var(--red);
+        text-align:center;
+        padding:20px
+      ">
+        Error: ${e.message}
+      </p>
+    `;
   }
 }
 
@@ -587,14 +642,18 @@ async function linkWalletToProfile(wallet) {
 
   try {
     // MUST match /profile/wallet backend message
-    const message = "Link wallet to Arc Trivia account";
+    const message = `Link wallet to ${activeNet.name} account`;
     const signature = await signer.signMessage(message);
 
     const res = await fetch(`${BACKEND}/profile/wallet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ wallet, signature }),
+      body: JSON.stringify({
+        wallet,
+        signature,
+        networkName: activeNet.name,
+      }),
     });
     const data = await res.json();
     if (data.error) {
@@ -987,9 +1046,9 @@ function showNetworkPicker() {
 }
 
 async function switchToNetwork(chainId) {
-  try {
-    const net = NETWORKS[chainId];
+  const net = NETWORKS[chainId];
 
+  try {
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: net.hexChainId }],
@@ -1112,14 +1171,18 @@ async function connectWallet() {
       platformAddress = await readContract.platform();
     } catch (_) {}
 
-    const message = "Login to Arc Trivia";
+    const message = `Login to ${activeNet.name}`;
     const signature = await signer.signMessage(message);
 
     const authRes = await fetch(`${BACKEND}/auth/wallet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ wallet: userAddress, signature }),
+      body: JSON.stringify({
+        wallet: userAddress,
+        signature,
+        networkName: activeNet.name,
+      }),
     });
     const authData = await authRes.json();
 
@@ -1231,76 +1294,74 @@ async function startTickerLoop() {
 
 async function updateTicker() {
   try {
-    const count = Number(await readContract.gameCounter());
-    if (count === 0) {
-      setTickerText("Arc Trivia is live — Create the first game and win USDC!");
+    // ✅ Unified multichain games
+    const res = await fetch(`${BACKEND}/games`);
+
+    const games = await res.json();
+
+    if (!Array.isArray(games) || games.length === 0) {
+      setTickerText(
+        `TriviaFi is live — Create the first game and play on ${activeNet.name}`,
+      );
       return;
     }
-    let items = [],
-      totalPool = 0n,
-      activeCount = 0;
-    for (let i = Math.max(1, count - 8); i <= count; i++) {
-      const g = await getGame(i);
-      const s = Number(g[14]);
-      totalPool += g[8];
-      if (s === 0) activeCount++;
-      if (s === 0 && Number(g[9]) > 0) {
-        try {
-          const [addrs, scoreList] = await readContract.getLeaderboard(i);
-          let top = 0,
-            topAddr = "";
-          for (let j = 0; j < addrs.length; j++) {
-            if (Number(scoreList[j]) > top) {
-              top = Number(scoreList[j]);
-              topAddr = addrs[j];
-            }
-          }
-          if (top > 0)
-            items.push(
-              `LIVE <span class='tick-gold'>${g[4]}</span> · ${fmt(
-                topAddr,
-              )} leads <span class='tick-cyan'>${top} pts</span>`,
-            );
-          else
-            items.push(
-              `OPEN <span class='tick-gold'>${g[4]}</span> · ${
-                g[9]
-              } joined · <span class='tick-cyan'>${fmtUSDC(g[8])} USDC</span>`,
-            );
-        } catch (_) {
-          items.push(
-            `OPEN <span class='tick-gold'>${
-              g[4]
-            }</span> · Entry: <span class='tick-cyan'>${fmtUSDC(
-              g[6],
-            )} USDC</span>`,
-          );
-        }
-      } else if (
-        s === 1 &&
-        g[12][0] !== "0x0000000000000000000000000000000000000000"
-      ) {
-        items.push(
-          `ENDED <span class='tick-gold'>${g[4]}</span> · Winner: ${fmt(
-            g[12][0],
-          )}`,
-        );
+
+    const latest = games.slice(0, 8);
+
+    let items = [];
+    let totalPool = 0;
+    let activeCount = 0;
+
+    for (const g of latest) {
+      const chainIcon = g.chain_id === 4441 ? "🔷" : "⚡";
+
+      totalPool += Number(g.entry_fee || 0);
+
+      if (Number(g.status) === 0) {
+        activeCount++;
+
+        items.push(`
+          ${chainIcon}
+          <span class='tick-gold'>
+            ${g.category || "Trivia"}
+          </span>
+          · ${g.max_players || 0} slots
+          · <span class='tick-cyan'>
+            ${g.entry_fee || 0} ${g.token_symbol}
+          </span>
+        `);
+      } else {
+        items.push(`
+          ${chainIcon}
+          ENDED
+          <span class='tick-gold'>
+            ${g.category || "Trivia"}
+          </span>
+        `);
       }
     }
-    try {
-      const paid = await readContract.totalUSDCPaidOut();
-      items.push(
-        `Total paid out: <span class='tick-gold'>${fmtUSDC(
-          paid,
-        )} USDC</span> · ${count} games · ${activeCount} active`,
-      );
-    } catch (_) {}
-    if (items.length === 0)
-      items.push("Arc Trivia — Answer fast, win USDC · Powered by Arc Network");
+
+    items.push(`
+      Total Games:
+      <span class='tick-gold'>
+        ${games.length}
+      </span>
+      · Active:
+      <span class='tick-cyan'>
+        ${activeCount}
+      </span>
+      · Pool:
+      <span class='tick-gold'>
+        ${totalPool.toFixed(2)}
+      </span>
+    `);
+
     setTickerText(items.join(` <span class='tick-sep'>·</span> `));
-  } catch (_) {
+  } catch (e) {
+    console.error(e);
+
     setTickerText(
-      "Arc Trivia — Play trivia · Win USDC · Onchain scores · Trustless payouts",
+      `TriviaFi — Multichain trivia gaming powered by ${activeNet.name}`,
     );
   }
 }
@@ -1311,81 +1372,77 @@ function setTickerText(html) {
 
 async function loadGames() {
   const el = document.getElementById("gamesList");
-  el.innerHTML = `<div class="game-grid">${Array(6)
-    .fill('<div class="skeleton skeleton-card"></div>')
-    .join("")}</div>`;
-  try {
-    const count = Number(await readContract.gameCounter());
-    document.getElementById("gTotal").textContent = count;
 
-    if (count === 0) {
-      el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet!</p>`;
-      document.getElementById("gPool").textContent = "$0";
-      document.getElementById("gActive").textContent = "0";
-      return;
+  el.innerHTML = `
+    <div class="game-grid">
+      ${Array(6).fill('<div class="skeleton skeleton-card"></div>').join("")}
+    </div>
+  `;
+
+  try {
+    // ✅ Load unified games from backend DB
+    const res = await fetch(`${BACKEND}/games`);
+
+    const games = await res.json();
+
+    if (!Array.isArray(games)) {
+      throw new Error("Invalid games response");
     }
 
-    // ── Fetch latest 10 for display, scan latest 50 for stats ──
-    const DISPLAY_LIMIT = 10;
-    const STATS_LIMIT = 50;
+    allGames = games;
 
-    allGames = [];
-    let totalPool = 0n,
-      activeCount = 0;
+    // =========================
+    // GLOBAL STATS
+    // =========================
+    document.getElementById("gTotal").textContent = games.length;
 
-    const statsEnd = Math.max(1, count - STATS_LIMIT + 1);
-    const statsIds = [];
-    for (let i = count; i >= statsEnd; i--) statsIds.push(i);
+    let totalPool = 0;
+    let activeCount = 0;
 
-    // Fetch in parallel batches of 5
-    const BATCH = 5;
-    const allFetched = [];
-    for (let b = 0; b < statsIds.length; b += BATCH) {
-      const batch = statsIds.slice(b, b + BATCH);
-      const results = await Promise.allSettled(
-        batch.map((i) =>
-          readContract.getGame(i).then((g) => ({ i, g: gameToArray(g) })),
-        ),
-      );
-      for (const r of results) {
-        if (r.status === "fulfilled") allFetched.push(r.value);
+    for (const g of games) {
+      totalPool += Number(g.entry_fee || 0);
+
+      if (Number(g.status) === 0) {
+        activeCount++;
       }
     }
 
-    // Sort newest first
-    allFetched.sort((a, b) => b.i - a.i);
+    document.getElementById("gPool").textContent = "$" + totalPool.toFixed(2);
 
-    // Stats from all fetched
-    // Stats from all fetched
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (const { g } of allFetched) {
-      totalPool += g[8];
-      // Only count truly active (open AND not expired)
-      if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
-    }
-
-    document.getElementById("gPool").textContent =
-      "$" + parseFloat(ethers.formatUnits(totalPool, 6)).toFixed(2);
     document.getElementById("gActive").textContent = activeCount;
 
-    // Only keep latest 10 for display
-    allGames = allFetched.slice(0, DISPLAY_LIMIT);
-
-    renderGames();
-    updateTicker();
-
-    // "Load More" button if there are older games
-    if (count > DISPLAY_LIMIT) {
-      const moreBtn = document.createElement("div");
-      moreBtn.id = "loadMoreBtn";
-      moreBtn.style.cssText = "text-align:center;padding:16px 0";
-      moreBtn.innerHTML = `<button onclick="loadMoreGames(${
-        allFetched[allFetched.length - 1]?.i - 1
-      })" class="btn btn-ghost btn-sm" style="width:auto;padding:10px 28px">⬇ Load Older Games</button>`;
-      el.appendChild(moreBtn);
+    // =========================
+    // EMPTY STATE
+    // =========================
+    if (games.length === 0) {
+      el.innerHTML = `
+        <p style="
+          color:var(--muted);
+          text-align:center;
+          padding:30px
+        ">
+          No games yet!
+        </p>
+      `;
+      return;
     }
+
+    // =========================
+    // RENDER
+    // =========================
+    renderGames();
   } catch (e) {
-    el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
+    console.error(e);
+
+    el.innerHTML = `
+      <p style="
+        color:var(--red);
+        text-align:center;
+        padding:20px
+      ">
+        Error: ${e.message}
+      </p>
+    `;
   }
 }
 
@@ -1967,7 +2024,7 @@ async function openGame(gameId) {
   if (creator.toLowerCase() === userAddress.toLowerCase())
     creatorHtml = `<hr/><div style="color:var(--accent);font-size:.82rem;font-weight:600;margin-bottom:10px">👑 Your Room — Creator earns 2.5%</div><div style="display:flex;gap:10px"><button class="btn btn-ghost btn-sm" style="flex:1" onclick="doTriggerEnd(${gameId})">🏁 Force End</button><button class="btn btn-danger btn-sm" style="flex:1" onclick="doCancelRoom(${gameId})">✕ Cancel & Refund All</button></div>`;
   const shareUrl = `${location.origin}${location.pathname}?game=${gameId}`;
-  const discordMsg = `Join "${name}" on Arc Trivia!\nCategory: ${catName} | Entry: ${fee} USDC | Pool: ${pool} USDC\n${n}/${maxPlayers} players\n${shareUrl}`;
+  const discordMsg = `Join "${name}" activeNet.name\nCategory: ${catName} | Entry: ${fee} USDC | Pool: ${pool} USDC\n${n}/${maxPlayers} players\n${shareUrl}`;
   document.getElementById("joinContent").innerHTML = `
     <div style="margin-bottom:16px"><h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">#${gameId} — ${sanitizeText(
     name,
@@ -1987,7 +2044,9 @@ async function openGame(gameId) {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
     </div>
-    <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">🔥</span><div><div style="font-size:.82rem;font-weight:600;color:var(--gold)">Streak Nanopayments Active</div><div style="font-size:.75rem;color:var(--muted);margin-top:2px">${STREAK_THRESHOLD}+ correct in a row → <strong style="color:var(--gold)">${STREAK_BONUS_USDC} USDC</strong> onchain via Circle · Arc Network</div></div></div>
+    <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">🔥</span><div><div style="font-size:.82rem;font-weight:600;color:var(--gold)">Streak Nanopayments Active</div><div style="font-size:.75rem;color:var(--muted);margin-top:2px">${STREAK_THRESHOLD}+ correct in a row → <strong style="color:var(--gold)">${STREAK_BONUS_USDC} USDC</strong> onchain via Circle · ${
+    activeNet.name
+  }</div></div></div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px"><div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Breakdown</div>${breakdownHtml}</div>
     <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Players (${n}/${maxPlayers})</div>
     <div style="margin-bottom:14px">${playerRows}</div>
@@ -2373,7 +2432,7 @@ function tweetGame() {
   const text =
     "I just joined " +
     currentGame[1] +
-    " on Arc Trivia! 🎮 Win " +
+    " on activeNet.name 🎮 Win " +
     fmtUSDC(currentGame[8]) +
     " USDC. Play now: " +
     window.location.href;
@@ -2834,6 +2893,25 @@ async function submitCreate() {
       play,
     );
     await tx.wait();
+    await fetch(`${BACKEND}/games/save`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        chainId: parseInt(activeNet.hexChainId, 16),
+        contractGameId: gameId,
+        creator: userAddress,
+        name,
+        category: selectedCatName,
+        difficulty: selectedDiff,
+        entryFee,
+        tokenSymbol: activeNet.symbol,
+        maxPlayers,
+        txHash: tx.hash,
+      }),
+    });
     toast(`✅ Room "${name}" deployed!`, "success");
     showScreen("screenLobby");
     await loadGames();
