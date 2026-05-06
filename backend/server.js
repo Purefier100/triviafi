@@ -44,6 +44,25 @@ function makeProvider(rpcIndex = 0) {
   });
 }
 
+function calculateScore(serverAnswers, submittedAnswers) {
+  let score = 0;
+
+  for (let i = 0; i < serverAnswers.length; i++) {
+    const real = serverAnswers[i];
+    const user = submittedAnswers.find(
+      (a) => Number(a.questionId) === Number(real.question_id),
+    );
+
+    if (!user) continue;
+
+    if (user.selected === real.correct_answer) {
+      score++;
+    }
+  }
+
+  return score;
+}
+
 const arcProvider = makeProvider();
 const arcContract = new ethers.Contract(
   CONTRACT_ADDRESS,
@@ -59,10 +78,11 @@ function makeLitvmProvider() {
   });
 }
 const litvmProvider = makeLitvmProvider();
-const litvmContract = new ethers.Contract(
+const litvmVerifierSigner = verifierWallet.connect(litvmProvider);
+const litvmWriteContract = new ethers.Contract(
   LITVM_CONTRACT_ADDRESS,
   CONTRACT_ABI,
-  litvmProvider,
+  litvmVerifierSigner,
 );
 const verifierSigner = verifierWallet.connect(arcProvider);
 const writeContract = new ethers.Contract(
@@ -724,7 +744,6 @@ app.get("/game/status/:gameId", async (req, res) => {
       : CONTRACT_ADDRESS;
     const statusContract = new ethers.Contract(
       statusContractAddr,
-      CONTRACT_ADDRESS,
       [
         "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
       ],
@@ -1121,6 +1140,23 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     );
     const sessionId = sessionRow.rows[0]?.id;
 
+    const sessionData = await pool.query(
+      "SELECT started_at FROM game_sessions WHERE id=$1",
+      [sessionId],
+    );
+
+    const startedAt = sessionData.rows[0]?.started_at;
+
+    const sessionAge = (Date.now() - new Date(startedAt).getTime()) / 1000;
+
+    const minPossibleTime = answers.length * 1.5;
+
+    if (sessionAge < minPossibleTime) {
+      return res.status(400).json({
+        error: "Impossible completion time detected",
+      });
+    }
+
     const storedQs = await pool.query(
       "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
       [sessionId],
@@ -1140,14 +1176,13 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         }
       }
     } else {
-      // ✅ Fallback if questions weren't stored (old sessions)
-      for (const a of answers.slice(0, 10)) {
-        if (a.correct === true) {
-          const tl = Math.max(0, Math.min(15, a.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-        }
-      }
+      console.warn("⚠️ Missing stored questions for session. Rejecting score.");
+
+      return res.status(400).json({
+        error: "Session verification failed",
+      });
     }
+
     score = Math.min(score, 1500);
 
     // ✅ Sign the score

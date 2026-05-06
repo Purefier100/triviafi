@@ -187,9 +187,15 @@ async function startGame() {
 
   // 🔒 BLOCK REPLAY
   try {
-    const res = await fetch(`${BACKEND}/game/status/${currentGameId}`, {
-      credentials: "include",
-    });
+    const res = await fetch(
+      `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
+        activeNet.hexChainId,
+        16,
+      )}`,
+      {
+        credentials: "include",
+      },
+    );
 
     if (!res.ok) {
       alert("You must login first");
@@ -217,6 +223,7 @@ async function startGame() {
       body: JSON.stringify({
         gameId: currentGameId,
         wallet: userAddress,
+        chainId: parseInt(activeNet.hexChainId, 16),
       }),
     });
 
@@ -245,8 +252,8 @@ function selectAnswer(questionId, selected, timeLeft) {
   answers.push({
     questionId,
     selected,
-    correct: selected === q.correct_answer,
     timeLeft,
+    answeredAt: Date.now(),
   });
 
   currentIndex++;
@@ -300,7 +307,8 @@ async function submitScore() {
       body: JSON.stringify({
         gameId: currentGameId,
         wallet: userAddress,
-        answers, // ✅ THIS IS THE FIX
+        answers,
+        chainId: parseInt(activeNet.hexChainId, 16),
       }),
     });
 
@@ -311,7 +319,17 @@ async function submitScore() {
       return;
     }
 
-    toast("✅ Score submitted!", "success");
+    const tx = await contract.submitScore(
+      currentGameId,
+      data.score,
+      data.signature,
+    );
+
+    toast("⛓️ Waiting for blockchain confirmation...", "info");
+
+    await tx.wait();
+
+    toast("✅ Score submitted onchain!", "success");
   } catch (e) {
     console.error(e);
     toast("Submit failed", "error");
@@ -331,9 +349,15 @@ async function claimRefund(gameId) {
 
 async function loadGameStatus(gameId) {
   try {
-    const res = await fetch(`${BACKEND}/game/status/${gameId}`, {
-      credentials: "include",
-    });
+    const res = await fetch(
+      `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
+        activeNet.hexChainId,
+        16,
+      )}`,
+      {
+        credentials: "include",
+      },
+    );
 
     const data = await res.json();
 
@@ -908,7 +932,12 @@ function stopAutoRefresh() {
 const providerOptions = {
   walletconnect: {
     package: WalletConnectProvider,
-    options: { rpc: { 5042002: "https://rpc.testnet.arc.network" } },
+    options: {
+      rpc: {
+        5042002: "https://rpc.testnet.arc.network",
+        4441: "https://liteforge.rpc.caldera.xyz/http",
+      },
+    },
   },
 };
 
@@ -947,6 +976,60 @@ function showNetworkPicker() {
       resolve(null);
     };
   });
+}
+
+async function switchToNetwork(chainId) {
+  try {
+    const net = NETWORKS[chainId];
+
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: net.hexChainId }],
+    });
+
+    activeNet = net;
+
+    CONTRACT_ADDRESS = net.contractAddress;
+    USDC_ADDRESS = net.tokenAddress;
+
+    await reconnectContracts();
+
+    toast(`✅ Switched to ${net.name}`, "success");
+  } catch (e) {
+    console.error(e);
+
+    if (e.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: net.hexChainId,
+            ...net.addParams,
+          },
+        ],
+      });
+    }
+  }
+}
+
+async function reconnectContracts() {
+  readProvider = await createProvider(Number(activeNet.hexChainId));
+
+  readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
+
+  if (provider) {
+    signer = await provider.getSigner();
+
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+
+    if (!activeNet.isNative) {
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    } else {
+      usdcContract = null;
+    }
+  }
+
+  loadGames();
 }
 
 async function connectWallet() {
@@ -1770,9 +1853,15 @@ async function openGame(gameId) {
   );
   // Server-authoritative check — localStorage can be cleared
   try {
-    const chk = await fetch(`${BACKEND}/game/status/${gameId}`, {
-      credentials: "include",
-    });
+    const chk = await fetch(
+      `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
+        activeNet.hexChainId,
+        16,
+      )}`,
+      {
+        credentials: "include",
+      },
+    );
     const chkData = await chk.json();
     if (chkData.finished) {
       markSubmitted(gameId); // re-sync localStorage
@@ -2161,9 +2250,15 @@ async function startPlay() {
     }));
     // ✅ Block replay — check server before starting
     try {
-      const chk = await fetch(`${BACKEND}/game/status/${currentGameId}`, {
-        credentials: "include",
-      });
+      const chk = await fetch(
+        `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
+          activeNet.hexChainId,
+          16,
+        )}`,
+        {
+          credentials: "include",
+        },
+      );
       const chkData = await chk.json();
       if (chkData.onchain) {
         // Only block replay if score is confirmed onchain
@@ -2453,9 +2548,15 @@ async function submitMyScore() {
 
   // ✅ Check server — but allow retry if onchain TX failed
   try {
-    const statusRes = await fetch(`${BACKEND}/game/status/${currentGameId}`, {
-      credentials: "include",
-    });
+    const statusRes = await fetch(
+      `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
+        activeNet.hexChainId,
+        16,
+      )}`,
+      {
+        credentials: "include",
+      },
+    );
     const statusData = await statusRes.json();
     if (statusData.finished && statusData.onchain) {
       // Only block if actually confirmed onchain

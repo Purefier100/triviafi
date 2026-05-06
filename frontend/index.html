@@ -278,6 +278,29 @@
       50%  { opacity: 0.6; transform: scale(1.05); }
       100% { opacity: 1; transform: scale(1); }
     }
+
+    .network-switchers{
+      display:flex;
+      gap:6px;
+      align-items:center;
+    }
+    
+    .network-switchers button{
+      background:var(--surface);
+      border:1px solid var(--border);
+      color:var(--text);
+      padding:7px 12px;
+      border-radius:8px;
+      cursor:pointer;
+      font-size:.75rem;
+      font-weight:600;
+      transition:all .18s;
+    }
+    
+    .network-switchers button:hover{
+      border-color:var(--accent);
+      color:var(--accent);
+    }
   
   </style>
 </head>
@@ -289,6 +312,8 @@
   <div class="logo">⚡</em>TRIVIA</div>
   <div class="hdr-r">
     <div class="notif-btn" title="Notifications" onclick="toast('No new notifications','info')">🔔</div>
+
+    <div class="network-switchers"> <button onclick="switchToNetwork(5042002)"> ⚡ Arc </button> <button onclick="switchToNetwork(4441)"> 🔷 LitVM </button> </div>
 
     <button id="googleLoginBtn" onclick="loginWithGoogle()"
       style="font-weight:600;font-size:.82rem;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;display:none;align-items:center;gap:7px">
