@@ -859,9 +859,13 @@ async function getGame(id) {
 }
 
 async function createProvider(chainId) {
-  const net = chainId ? NETWORKS[chainId] : activeNet;
+  const numericChainId =
+    typeof chainId === "string"
+      ? parseInt(chainId, 16)
+      : Number(chainId || 5042002);
+
   const rpcs =
-    net?.chainId === 4441
+    numericChainId === 4441
       ? ["https://liteforge.rpc.caldera.xyz/http"]
       : [
           "https://rpc.testnet.arc.network",
@@ -873,8 +877,11 @@ async function createProvider(chainId) {
   for (const rpc of rpcs) {
     try {
       const p = new ethers.JsonRpcProvider(rpc);
+
       await p.getBlockNumber();
+
       console.log("✅ Using RPC:", rpc);
+
       return p;
     } catch (e) {
       console.warn("❌ RPC failed:", rpc);
@@ -882,6 +889,7 @@ async function createProvider(chainId) {
   }
 
   console.warn("⚠️ Falling back to default RPC");
+
   return new ethers.JsonRpcProvider(rpcs[0]);
 }
 
@@ -1013,7 +1021,7 @@ async function switchToNetwork(chainId) {
 }
 
 async function reconnectContracts() {
-  readProvider = await createProvider(Number(activeNet.hexChainId));
+  readProvider = await createProvider(parseInt(activeNet.hexChainId, 16));
 
   readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
 
