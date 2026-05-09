@@ -1326,6 +1326,7 @@ async function updateTicker() {
       litvmActive = 0;
     const now = Math.floor(Date.now() / 1000);
     for (const { g, chainId: cid } of allGames) {
+      if (!g) continue;
       const net = NETWORKS[cid] || NETWORKS[5042002];
       const s = Number(g[14]);
       const icon = cid === 4441 ? "🔷" : "⚡";
@@ -1340,6 +1341,7 @@ async function updateTicker() {
         );
       } else if (
         s === 1 &&
+        g[12] &&
         g[12][0] !== "0x0000000000000000000000000000000000000000"
       ) {
         items.push(
@@ -1352,74 +1354,14 @@ async function updateTicker() {
     items.push(
       `⚡ Arc: <span class='tick-cyan'>${arcActive} active</span> <span class='tick-sep'>·</span> 🔷 LitVM: <span class='tick-cyan'>${litvmActive} active</span>`,
     );
-    setTickerText(items.join(` <span class='tick-sep'>·</span> `));
-
-    const games = await res.json();
-
-    if (!Array.isArray(games) || games.length === 0) {
+    if (items.length > 1)
+      setTickerText(items.join(` <span class='tick-sep'>·</span> `));
+    else
       setTickerText(
-        `TriviaFi is live — Create the first game and play on ${activeNet.name}`,
+        "TriviaFi — Multichain trivia · Win USDC on Arc · Win zkLTC on LitVM",
       );
-      return;
-    }
-
-    const latest = games.slice(0, 8);
-
-    let items = [];
-    let totalPool = 0;
-    let activeCount = 0;
-
-    for (const g of latest) {
-      const chainIcon = g.chain_id === 4441 ? "🔷" : "⚡";
-
-      totalPool += Number(g.entry_fee || 0);
-
-      if (Number(g.status) === 0) {
-        activeCount++;
-
-        items.push(`
-          ${chainIcon}
-          <span class='tick-gold'>
-            ${g.category || "Trivia"}
-          </span>
-          · ${g.max_players || 0} slots
-          · <span class='tick-cyan'>
-            ${g.entry_fee || 0} ${g.token_symbol}
-          </span>
-        `);
-      } else {
-        items.push(`
-          ${chainIcon}
-          ENDED
-          <span class='tick-gold'>
-            ${g.category || "Trivia"}
-          </span>
-        `);
-      }
-    }
-
-    items.push(`
-      Total Games:
-      <span class='tick-gold'>
-        ${games.length}
-      </span>
-      · Active:
-      <span class='tick-cyan'>
-        ${activeCount}
-      </span>
-      · Pool:
-      <span class='tick-gold'>
-        ${totalPool.toFixed(2)}
-      </span>
-    `);
-
-    setTickerText(items.join(` <span class='tick-sep'>·</span> `));
   } catch (e) {
-    console.error(e);
-
-    setTickerText(
-      `TriviaFi — Multichain trivia gaming powered by ${activeNet.name}`,
-    );
+    setTickerText("TriviaFi — Multichain trivia gaming");
   }
 }
 
@@ -1723,9 +1665,21 @@ function renderGames() {
       status,
       finishedCount,
     ] = g;
+    // ── chain info (use itemChainId already destructured above) ──
+    const chainBadge =
+      itemChainId === 4441
+        ? `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);margin-left:5px">🔷 LitVM</span>`
+        : `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25);margin-left:5px">⚡ Arc</span>`;
+    const tokenSymbol = net.symbol;
+    const dp = net.decimals === 18 ? 4 : 2;
+    const feeFormatted = parseFloat(
+      ethers.formatUnits(entryFee, net.decimals),
+    ).toFixed(dp);
+    const poolFormatted = parseFloat(
+      ethers.formatUnits(prizePool, net.decimals),
+    ).toFixed(dp);
+
     const s = Number(status),
-      fee = fmtUSDC(entryFee),
-      pool = fmtUSDC(prizePool),
       n = Number(playerCount),
       diff = Number(g[5]);
     const regSecs = Number(regEnd) - now,
@@ -1752,9 +1706,8 @@ function renderGames() {
       phaseColor = "var(--red)";
     }
 
-    const dist = parseFloat(pool) * 0.95;
+    const dist = parseFloat(poolFormatted) * 0.95;
     let prizeHtml = "";
-    const dp = net.decimals === 18 ? 4 : 2;
     if (n >= 3)
       prizeHtml = `<div style="font-size:.73rem;color:var(--muted);margin-top:4px">🥇${(
         dist * 0.6
@@ -1796,20 +1749,6 @@ function renderGames() {
       s === 1 || s === 2
         ? `openGameReadOnly(${i},${itemChainId})`
         : `openGame(${i},${itemChainId})`;
-
-    const chainId = item.chainId || 5042002;
-    const net = NETWORKS[chainId];
-    const chainBadge =
-      chainId === 4441
-        ? `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);margin-left:5px">🔷 LitVM</span>`
-        : `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25);margin-left:5px">⚡ Arc</span>`;
-    const tokenSymbol = net.symbol;
-    const feeFormatted = parseFloat(
-      ethers.formatUnits(entryFee, net.decimals),
-    ).toFixed(net.decimals === 18 ? 4 : 2);
-    const poolFormatted = parseFloat(
-      ethers.formatUnits(prizePool, net.decimals),
-    ).toFixed(net.decimals === 18 ? 4 : 2);
 
     html += `<div class="gcard" onclick="${clickAction}">
       <div class="gcard-title">#${i} ${sanitizeText(name)} <span class="badge ${
