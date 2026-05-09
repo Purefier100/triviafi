@@ -1315,8 +1315,44 @@ async function startTickerLoop() {
 
 async function updateTicker() {
   try {
-    // ✅ Unified multichain games
-    const res = await fetch(`${BACKEND}/games`);
+    if (allGames.length === 0) {
+      setTickerText(
+        "TriviaFi — Multichain trivia · Win USDC on Arc · Win zkLTC on LitVM",
+      );
+      return;
+    }
+    const items = [];
+    let arcActive = 0,
+      litvmActive = 0;
+    const now = Math.floor(Date.now() / 1000);
+    for (const { g, chainId: cid } of allGames) {
+      const net = NETWORKS[cid] || NETWORKS[5042002];
+      const s = Number(g[14]);
+      const icon = cid === 4441 ? "🔷" : "⚡";
+      if (s === 0 && Number(g[11]) > now) {
+        if (cid === 4441) litvmActive++;
+        else arcActive++;
+        const pool = parseFloat(ethers.formatUnits(g[8], net.decimals)).toFixed(
+          net.decimals === 18 ? 4 : 2,
+        );
+        items.push(
+          `${icon} <span class='tick-gold'>${g[4]}</span> · <span class='tick-cyan'>${pool} ${net.symbol}</span>`,
+        );
+      } else if (
+        s === 1 &&
+        g[12][0] !== "0x0000000000000000000000000000000000000000"
+      ) {
+        items.push(
+          `${icon} ENDED <span class='tick-gold'>${g[4]}</span> · Winner: ${fmt(
+            g[12][0],
+          )}`,
+        );
+      }
+    }
+    items.push(
+      `⚡ Arc: <span class='tick-cyan'>${arcActive} active</span> <span class='tick-sep'>·</span> 🔷 LitVM: <span class='tick-cyan'>${litvmActive} active</span>`,
+    );
+    setTickerText(items.join(` <span class='tick-sep'>·</span> `));
 
     const games = await res.json();
 
@@ -1398,67 +1434,117 @@ async function loadGames() {
     .join("")}</div>`;
 
   try {
-    const count = Number(await readContract.gameCounter());
-    document.getElementById("gTotal").textContent = count;
+    // ── Fetch from BOTH chains in parallel ───────────────────────────────────
+    const arcProvider = new ethers.JsonRpcProvider(
+      "https://rpc.testnet.arc.network",
+    );
+    const litvmProvider = new ethers.JsonRpcProvider(
+      "https://liteforge.rpc.caldera.xyz/http",
+    );
+    const arcRC = new ethers.Contract(
+      NETWORKS[5042002].contractAddress,
+      ABI,
+      arcProvider,
+    );
+    const litvmRC = new ethers.Contract(
+      NETWORKS[4441].contractAddress,
+      ABI,
+      litvmProvider,
+    );
 
-    if (count === 0) {
-      el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet!</p>`;
+    const [arcCount, litvmCount] = await Promise.all([
+      arcRC
+        .gameCounter()
+        .then(Number)
+        .catch(() => 0),
+      litvmRC
+        .gameCounter()
+        .then(Number)
+        .catch(() => 0),
+    ]);
+
+    const totalCount = arcCount + litvmCount;
+    document.getElementById("gTotal").textContent = totalCount;
+
+    if (totalCount === 0) {
+      el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet! Create the first one.</p>`;
       document.getElementById("gPool").textContent = "$0";
       document.getElementById("gActive").textContent = "0";
       return;
     }
 
-    const DISPLAY_LIMIT = 10;
-    const STATS_LIMIT = 50;
+    const LIMIT = 8;
+    const BATCH = 5;
     allGames = [];
     let totalPool = 0n,
+      arcPool = 0n,
+      litvmPool = 0n,
       activeCount = 0;
+    const nowSec = Math.floor(Date.now() / 1000);
 
-    const statsEnd = Math.max(1, count - STATS_LIMIT + 1);
-    const statsIds = [];
-    for (let i = count; i >= statsEnd; i--) statsIds.push(i);
-
-    const BATCH = 5;
-    const allFetched = [];
-    for (let b = 0; b < statsIds.length; b += BATCH) {
-      const batch = statsIds.slice(b, b + BATCH);
+    // Fetch Arc games
+    const arcIds = [];
+    for (let i = arcCount; i >= Math.max(1, arcCount - LIMIT + 1); i--)
+      arcIds.push(i);
+    for (let b = 0; b < arcIds.length; b += BATCH) {
+      const batch = arcIds.slice(b, b + BATCH);
       const results = await Promise.allSettled(
         batch.map((i) =>
-          readContract.getGame(i).then((g) => ({ i, g: gameToArray(g) })),
+          arcRC.getGame(i).then((g) => ({
+            i,
+            g: gameToArray(g),
+            chainId: 5042002,
+            net: NETWORKS[5042002],
+          })),
         ),
       );
-      for (const r of results) {
-        if (r.status === "fulfilled") allFetched.push(r.value);
-      }
+      for (const r of results)
+        if (r.status === "fulfilled") allGames.push(r.value);
     }
 
-    allFetched.sort((a, b) => b.i - a.i);
+    // Fetch LitVM games
+    const litvmIds = [];
+    for (let i = litvmCount; i >= Math.max(1, litvmCount - LIMIT + 1); i--)
+      litvmIds.push(i);
+    for (let b = 0; b < litvmIds.length; b += BATCH) {
+      const batch = litvmIds.slice(b, b + BATCH);
+      const results = await Promise.allSettled(
+        batch.map((i) =>
+          litvmRC.getGame(i).then((g) => ({
+            i,
+            g: gameToArray(g),
+            chainId: 4441,
+            net: NETWORKS[4441],
+          })),
+        ),
+      );
+      for (const r of results)
+        if (r.status === "fulfilled") allGames.push(r.value);
+    }
 
-    const nowSec = Math.floor(Date.now() / 1000);
-    for (const { g } of allFetched) {
-      totalPool += g[8];
+    // Sort newest first (by game id desc, arc first for ties)
+    allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
+
+    // Stats
+    for (const { g, net } of allGames) {
+      arcPool += net.decimals === 6 ? g[8] : 0n;
+      litvmPool += net.decimals === 18 ? g[8] : 0n;
       if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
     }
 
-    document.getElementById("gPool").textContent =
-      "$" +
-      parseFloat(ethers.formatUnits(totalPool, activeNet.decimals)).toFixed(2);
+    // Show combined pool
+    const arcPoolFmt = parseFloat(ethers.formatUnits(arcPool, 6)).toFixed(2);
+    const litvmPoolFmt = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(
+      4,
+    );
+    document.getElementById("gPool").innerHTML = `
+      <span style="color:var(--accent)">$${arcPoolFmt} USDC</span>
+      <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span>
+      <span style="color:var(--purple)">${litvmPoolFmt} zkLTC</span>`;
     document.getElementById("gActive").textContent = activeCount;
-
-    allGames = allFetched.slice(0, DISPLAY_LIMIT);
 
     renderGames();
     updateTicker();
-
-    if (count > DISPLAY_LIMIT) {
-      const moreBtn = document.createElement("div");
-      moreBtn.id = "loadMoreBtn";
-      moreBtn.style.cssText = "text-align:center;padding:16px 0";
-      moreBtn.innerHTML = `<button onclick="loadMoreGames(${
-        allFetched[allFetched.length - 1]?.i - 1
-      })" class="btn btn-ghost btn-sm" style="width:auto;padding:10px 28px">⬇ Load Older Games</button>`;
-      el.appendChild(moreBtn);
-    }
   } catch (e) {
     el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
   }
@@ -1672,20 +1758,21 @@ function renderGames() {
 
     const dist = parseFloat(pool) * 0.95;
     let prizeHtml = "";
+    const dp = net.decimals === 18 ? 4 : 2;
     if (n >= 3)
       prizeHtml = `<div style="font-size:.73rem;color:var(--muted);margin-top:4px">🥇${(
         dist * 0.6
-      ).toFixed(2)} · 🥈${(dist * 0.25).toFixed(2)} · 🥉${(dist * 0.15).toFixed(
-        2,
-      )} USDC</div>`;
+      ).toFixed(dp)} · 🥈${(dist * 0.25).toFixed(dp)} · 🥉${(
+        dist * 0.15
+      ).toFixed(dp)} ${tokenSymbol}</div>`;
     else if (n === 2)
       prizeHtml = `<div style="font-size:.73rem;color:var(--muted);margin-top:4px">🥇${(
         dist * 0.7
-      ).toFixed(2)} · 🥈${(dist * 0.3).toFixed(2)} USDC</div>`;
+      ).toFixed(dp)} · 🥈${(dist * 0.3).toFixed(dp)} ${tokenSymbol}</div>`;
     else if (n === 1)
       prizeHtml = `<div style="font-size:.73rem;color:var(--green);margin-top:4px">🥇 Winner: ${dist.toFixed(
-        2,
-      )} USDC</div>`;
+        dp,
+      )} ${tokenSymbol}</div>`;
 
     let timerHtml = "";
     if (s === 0 && regSecs > 0)
@@ -1710,14 +1797,30 @@ function renderGames() {
       ? `<span style="font-size:.68rem;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);padding:1px 6px;border-radius:10px;margin-left:6px">🤖 AI Room</span>`
       : "";
     const clickAction =
-      s === 1 || s === 2 ? `openGameReadOnly(${i})` : `openGame(${i})`;
+      s === 1 || s === 2
+        ? `openGameReadOnly(${i},${chainId})`
+        : `openGame(${i},${chainId})`;
+
+    const chainId = item.chainId || 5042002;
+    const net = NETWORKS[chainId];
+    const chainBadge =
+      chainId === 4441
+        ? `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);margin-left:5px">🔷 LitVM</span>`
+        : `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25);margin-left:5px">⚡ Arc</span>`;
+    const tokenSymbol = net.symbol;
+    const feeFormatted = parseFloat(
+      ethers.formatUnits(entryFee, net.decimals),
+    ).toFixed(net.decimals === 18 ? 4 : 2);
+    const poolFormatted = parseFloat(
+      ethers.formatUnits(prizePool, net.decimals),
+    ).toFixed(net.decimals === 18 ? 4 : 2);
 
     html += `<div class="gcard" onclick="${clickAction}">
       <div class="gcard-title">#${i} ${sanitizeText(name)} <span class="badge ${
       STATUS_BADGE[s]
-    }">${STATUS_LABEL[s]}</span>${agentBadge}</div>
+    }">${STATUS_LABEL[s]}</span>${agentBadge}${chainBadge}</div>
       <div style="font-size:.75rem;color:${phaseColor};margin-bottom:8px;font-weight:600">${phase}</div>
-      <div class="gmeta">💰 Entry: <strong>${fee} USDC</strong> | 🏆 Pool: <strong>${pool} USDC</strong></div>
+      <div class="gmeta">💰 Entry: <strong>${feeFormatted} ${tokenSymbol}</strong> | 🏆 Pool: <strong>${poolFormatted} ${tokenSymbol}</strong></div>
       <div class="gmeta">👥 <strong>${n}/${maxPlayers}</strong> joined | ✅ <strong>${finishedCount}</strong> done</div>
       <div class="gmeta">By: <span style="color:var(--purple)">${fmt(
         creator,
@@ -1916,8 +2019,38 @@ async function openGameReadOnly(gameId) {
   }
 }
 
-async function openGame(gameId) {
+async function openGame(gameId, gameChainId) {
+  // Set active network to match this game's chain
+  const targetChainId =
+    gameChainId || currentGameChainId || activeNet.decimals === 18
+      ? 4441
+      : 5042002;
+  if (
+    NETWORKS[targetChainId] &&
+    targetChainId !== parseInt(activeNet.hexChainId, 16)
+  ) {
+    // Silently switch read contract for this game
+    const targetNet = NETWORKS[targetChainId];
+    const tempProvider = new ethers.JsonRpcProvider(targetNet.rpc);
+    readContract = new ethers.Contract(
+      targetNet.contractAddress,
+      ABI,
+      tempProvider,
+    );
+  }
+  currentGameChainId =
+    gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   if (!userAddress) {
+    const gameNet = NETWORKS[currentGameChainId];
+    if (
+      userAddress &&
+      parseInt(activeNet.hexChainId, 16) !== currentGameChainId
+    ) {
+      toast(
+        `⚠️ This game is on ${gameNet.name}. Switch network to join.`,
+        "info",
+      );
+    }
     try {
       const g = await getGame(gameId);
       const s = Number(g[14]);
