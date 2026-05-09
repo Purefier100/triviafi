@@ -766,7 +766,7 @@ const NETWORKS = {
     symbol: "USDC",
     decimals: 6,
     isNative: false,
-    contractAddress: "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765",
+    contractAddress: "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50",
     tokenAddress: "0x3600000000000000000000000000000000000000",
     rpc: "https://rpc.testnet.arc.network",
     hexChainId: "0x" + (5042002).toString(16),
@@ -3186,7 +3186,10 @@ async function loadMyStats() {
     const vals = {
       myPlayed: played.toString(),
       myWon: won.toString(),
-      myEarned: "$" + parseFloat(ethers.formatUnits(earned, 6)).toFixed(2),
+      myEarned:
+        parseFloat(ethers.formatUnits(earned, activeNet.decimals)).toFixed(2) +
+        " " +
+        activeNet.symbol,
     };
     Object.entries(vals).forEach(([id, v]) => {
       const el = document.getElementById(id);
