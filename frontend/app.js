@@ -1658,40 +1658,34 @@ function renderGames() {
     };
   }
 
+  const getG = (item) => item.g || item;
+
   if (filterStatus === "all") {
     filtered = allGames.filter((item) => {
-      const g = norm(item);
-      const s = g._db ? g.status : Number(g[14]);
+      const g = getG(item);
+      const s = Number(g[14]);
       if (s !== 0) return false;
-      const playDeadline = Number(g[11]);
-      return playDeadline > now; // strictly not expired
+      return Number(g[11]) > now;
     });
   } else if (filterStatus === "0") {
-    // Open tab: open games still in registration phase
-    filtered = allGames.filter(({ g }) => {
-      const s = Number(g[14]);
-      if (s !== 0) return false;
-      const regEnd = Number(g[10]);
-      return regEnd > now; // still in registration
+    filtered = allGames.filter((item) => {
+      const g = getG(item);
+      if (Number(g[14]) !== 0) return false;
+      return Number(g[10]) > now;
     });
   } else if (filterStatus === "live") {
-    // Live tab: open games past registration but still in play window
-    filtered = allGames.filter(({ g }) => {
-      const s = Number(g[14]);
-      if (s !== 0) return false;
-      const regEnd = Number(g[10]);
-      const playDeadline = Number(g[11]);
-      return regEnd <= now && playDeadline > now;
+    filtered = allGames.filter((item) => {
+      const g = getG(item);
+      if (Number(g[14]) !== 0) return false;
+      return Number(g[10]) <= now && Number(g[11]) > now;
     });
   } else if (filterStatus === "1") {
-    // Ended tab: only status=1 (properly ended)
-    filtered = allGames.filter(({ g }) => Number(g[14]) === 1);
+    filtered = allGames.filter((item) => Number(getG(item)[14]) === 1);
   } else if (filterStatus === "2") {
-    // Cancelled tab: only status=2
-    filtered = allGames.filter(({ g }) => Number(g[14]) === 2);
+    filtered = allGames.filter((item) => Number(getG(item)[14]) === 2);
   } else {
     filtered = allGames.filter(
-      ({ g }) => Number(g[14]) === parseInt(filterStatus),
+      (item) => Number(getG(item)[14]) === parseInt(filterStatus),
     );
   }
 
@@ -1708,7 +1702,9 @@ function renderGames() {
   }
 
   let html = '<div class="game-grid">';
-  for (const { i, g } of filtered) {
+  for (const item of filtered) {
+    const { i, g, chainId: itemChainId } = item;
+    const net = NETWORKS[itemChainId] || NETWORKS[5042002];
     const [
       ,
       name,
@@ -1798,8 +1794,8 @@ function renderGames() {
       : "";
     const clickAction =
       s === 1 || s === 2
-        ? `openGameReadOnly(${i},${chainId})`
-        : `openGame(${i},${chainId})`;
+        ? `openGameReadOnly(${i},${itemChainId})`
+        : `openGame(${i},${itemChainId})`;
 
     const chainId = item.chainId || 5042002;
     const net = NETWORKS[chainId];
