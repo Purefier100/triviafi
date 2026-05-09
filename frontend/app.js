@@ -766,7 +766,7 @@ const NETWORKS = {
     symbol: "USDC",
     decimals: 6,
     isNative: false,
-    contractAddress: "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50",
+    contractAddress: "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765",
     tokenAddress: "0x3600000000000000000000000000000000000000",
     rpc: "https://rpc.testnet.arc.network",
     hexChainId: "0x" + (5042002).toString(16),
@@ -783,7 +783,7 @@ const NETWORKS = {
     symbol: "zkLTC",
     decimals: 18,
     isNative: true, // zkLTC is native gas token — no ERC20 approve needed
-    contractAddress: "0xf988BBA862f8E500eb77e175be395961d221F4b0",
+    contractAddress: "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765",
     tokenAddress: null,
     rpc: "https://liteforge.rpc.caldera.xyz/http",
     hexChainId: "0x" + (4441).toString(16),

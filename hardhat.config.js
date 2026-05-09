@@ -16,10 +16,12 @@ module.exports = {
       accounts: [process.env.PRIVATE_KEY],
     },
     litvm: {
-      url: "https://liteforge.rpc.caldera.xyz/http",
+      url: process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http",
       chainId: 4441,
       accounts: [process.env.PRIVATE_KEY],
       gasPrice: "auto",
+      timeout: 60000,
+      httpHeaders: { "Content-Type": "application/json" },
     }
   }
 };

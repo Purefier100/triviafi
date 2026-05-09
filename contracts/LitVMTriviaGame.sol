@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 contract LitVMTriviaGame {
-    uint256 public constant MIN_ENTRY_FEE = 1e18; // 1 zkLTC (18 decimals)
+    uint256 public constant MIN_ENTRY_FEE = 1e16; // 0.01 zkLTC (18 decimals)
     uint256 public constant PLATFORM_BPS = 250;
     uint256 public constant CREATOR_BPS = 250;
 
