@@ -313,7 +313,16 @@
   <div class="hdr-r">
     <div class="notif-btn" title="Notifications" onclick="toast('No new notifications','info')">🔔</div>
 
-    <div class="network-switchers"> <button onclick="switchToNetwork(5042002)"> ⚡ Arc </button> <button onclick="switchToNetwork(4441)"> 🔷 LitVM </button> </div>
+    <div id="netBar" style="display:flex;gap:6px;align-items:center">
+      <button id="netArc" onclick="switchToNetwork(5042002)"
+        style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(0,229,255,.4);background:rgba(0,229,255,.1);color:#00e5ff;font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s">
+        ⚡ Arc · USDC
+      </button>
+      <button id="netLitvm" onclick="switchToNetwork(4441)"
+        style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s">
+        🔷 LitVM · zkLTC
+      </button>
+    </div>
 
     <button id="googleLoginBtn" onclick="loginWithGoogle()"
       style="font-weight:600;font-size:.82rem;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;display:none;align-items:center;gap:7px">
@@ -436,12 +445,12 @@
   <div class="screen active" id="screenLobby">
     <div class="hero">
       <h1>PLAY TRIVIA.<br/>WIN USDC.</h1>
-      <p>Create or join trivia rooms. Answer questions faster than everyone else. Claim real USDC prizes — all onchain on Arc Network.</p>
+      <p>Multichain trivia gaming. Win USDC on Arc or zkLTC on LitVM — all onchain, all trustless.</p>
       <div class="hero-badges">
-        <span class="hbadge hb-gold">🏆 USDC Prize Pools</span>
-        <span class="hbadge hb-cyan">⚡ Arc Network</span>
+        <span class="hbadge hb-gold">🏆 USDC & zkLTC Prizes</span>
+        <span class="hbadge hb-cyan">⚡ Arc + LitVM</span>
         <span class="hbadge hb-green">🔒 Trustless Payouts</span>
-        <span class="hbadge" style="background:rgba(123,97,255,.1);color:var(--purple);border:1px solid rgba(123,97,255,.3)">🎲 Prediction Bets</span>
+        <span class="hbadge" style="background:rgba(123,97,255,.1);color:var(--purple);border:1px solid rgba(123,97,255,.3)">🎮 Multichain</span>
       </div>
     </div>
 

@@ -385,10 +385,16 @@ async function loadDropdownStats() {
     const map = {
       dpPlayed: played,
       dpWon: won,
-      dpEarned: "$" + parseFloat(ethers.formatUnits(earned, 6)).toFixed(2),
+      dpEarned:
+        parseFloat(ethers.formatUnits(earned, activeNet.decimals)).toFixed(2) +
+        " " +
+        activeNet.symbol,
       myPlayed: played,
       myWon: won,
-      myEarned: "$" + parseFloat(ethers.formatUnits(earned, 6)).toFixed(2),
+      myEarned:
+        parseFloat(ethers.formatUnits(earned, activeNet.decimals)).toFixed(2) +
+        " " +
+        activeNet.symbol,
     };
     Object.entries(map).forEach(([id, v]) => {
       const el = document.getElementById(id);
@@ -1096,6 +1102,7 @@ async function reconnectContracts() {
     }
   }
 
+  updateNetBar();
   loadGames();
 }
 
@@ -1206,9 +1213,23 @@ async function connectWallet() {
       openGame(window.pendingGameId);
       window.pendingGameId = null;
     }
+    updateNetBar();
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
   }
+}
+
+function updateNetBar() {
+  const arcBtn = document.getElementById("netArc");
+  const litvmBtn = document.getElementById("netLitvm");
+  if (!arcBtn || !litvmBtn) return;
+  const isArc = activeNet.decimals === 6;
+  arcBtn.style.cssText = isArc
+    ? "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(0,229,255,.5);background:rgba(0,229,255,.12);color:#00e5ff;font-size:.75rem;font-weight:700;cursor:pointer"
+    : "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer";
+  litvmBtn.style.cssText = !isArc
+    ? "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(123,97,255,.5);background:rgba(123,97,255,.12);color:#7b61ff;font-size:.75rem;font-weight:700;cursor:pointer"
+    : "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer";
 }
 
 function showScreen(id) {
@@ -1372,77 +1393,74 @@ function setTickerText(html) {
 
 async function loadGames() {
   const el = document.getElementById("gamesList");
-
-  el.innerHTML = `
-    <div class="game-grid">
-      ${Array(6).fill('<div class="skeleton skeleton-card"></div>').join("")}
-    </div>
-  `;
+  el.innerHTML = `<div class="game-grid">${Array(6)
+    .fill('<div class="skeleton skeleton-card"></div>')
+    .join("")}</div>`;
 
   try {
-    // ✅ Load unified games from backend DB
-    const res = await fetch(`${BACKEND}/games`);
+    const count = Number(await readContract.gameCounter());
+    document.getElementById("gTotal").textContent = count;
 
-    const games = await res.json();
-
-    if (!Array.isArray(games)) {
-      throw new Error("Invalid games response");
-    }
-
-    allGames = games;
-
-    // =========================
-    // GLOBAL STATS
-    // =========================
-    document.getElementById("gTotal").textContent = games.length;
-
-    let totalPool = 0;
-    let activeCount = 0;
-
-    for (const g of games) {
-      totalPool += Number(g.entry_fee || 0);
-
-      if (Number(g.status) === 0) {
-        activeCount++;
-      }
-    }
-
-    document.getElementById("gPool").textContent = "$" + totalPool.toFixed(2);
-
-    document.getElementById("gActive").textContent = activeCount;
-
-    // =========================
-    // EMPTY STATE
-    // =========================
-    if (games.length === 0) {
-      el.innerHTML = `
-        <p style="
-          color:var(--muted);
-          text-align:center;
-          padding:30px
-        ">
-          No games yet!
-        </p>
-      `;
+    if (count === 0) {
+      el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet!</p>`;
+      document.getElementById("gPool").textContent = "$0";
+      document.getElementById("gActive").textContent = "0";
       return;
     }
 
-    // =========================
-    // RENDER
-    // =========================
-    renderGames();
-  } catch (e) {
-    console.error(e);
+    const DISPLAY_LIMIT = 10;
+    const STATS_LIMIT = 50;
+    allGames = [];
+    let totalPool = 0n,
+      activeCount = 0;
 
-    el.innerHTML = `
-      <p style="
-        color:var(--red);
-        text-align:center;
-        padding:20px
-      ">
-        Error: ${e.message}
-      </p>
-    `;
+    const statsEnd = Math.max(1, count - STATS_LIMIT + 1);
+    const statsIds = [];
+    for (let i = count; i >= statsEnd; i--) statsIds.push(i);
+
+    const BATCH = 5;
+    const allFetched = [];
+    for (let b = 0; b < statsIds.length; b += BATCH) {
+      const batch = statsIds.slice(b, b + BATCH);
+      const results = await Promise.allSettled(
+        batch.map((i) =>
+          readContract.getGame(i).then((g) => ({ i, g: gameToArray(g) })),
+        ),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled") allFetched.push(r.value);
+      }
+    }
+
+    allFetched.sort((a, b) => b.i - a.i);
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const { g } of allFetched) {
+      totalPool += g[8];
+      if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
+    }
+
+    document.getElementById("gPool").textContent =
+      "$" +
+      parseFloat(ethers.formatUnits(totalPool, activeNet.decimals)).toFixed(2);
+    document.getElementById("gActive").textContent = activeCount;
+
+    allGames = allFetched.slice(0, DISPLAY_LIMIT);
+
+    renderGames();
+    updateTicker();
+
+    if (count > DISPLAY_LIMIT) {
+      const moreBtn = document.createElement("div");
+      moreBtn.id = "loadMoreBtn";
+      moreBtn.style.cssText = "text-align:center;padding:16px 0";
+      moreBtn.innerHTML = `<button onclick="loadMoreGames(${
+        allFetched[allFetched.length - 1]?.i - 1
+      })" class="btn btn-ghost btn-sm" style="width:auto;padding:10px 28px">⬇ Load Older Games</button>`;
+      el.appendChild(moreBtn);
+    }
+  } catch (e) {
+    el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
   }
 }
 
@@ -1523,10 +1541,41 @@ function renderGames() {
 
   let filtered;
 
+  // helper: normalize DB row OR onchain array into consistent shape
+  function norm(item) {
+    if (item && item.g) return item.g; // old {i,g} shape
+    // DB row shape — map to array positions
+    return {
+      _db: true,
+      id: item.contract_game_id,
+      name: item.name,
+      creator: item.creator,
+      categoryId: 0,
+      categoryName: item.category || "",
+      difficulty: item.difficulty || 0,
+      entryFee: BigInt(Math.round(parseFloat(item.entry_fee || 0) * 1e6)),
+      maxPlayers: item.max_players || 0,
+      prizePool: 0n,
+      playerCount: 0,
+      registrationEnd: 0,
+      playDeadline: 0,
+      topPlayers: [
+        "0x0000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000",
+      ],
+      prizeClaimed: false,
+      status: item.status || 0,
+      finishedCount: 0,
+      chainId: item.chain_id || 5042002,
+      tokenSymbol: item.token_symbol || "USDC",
+    };
+  }
+
   if (filterStatus === "all") {
-    // Default: show only truly active open games (not expired)
-    filtered = allGames.filter(({ g }) => {
-      const s = Number(g[14]);
+    filtered = allGames.filter((item) => {
+      const g = norm(item);
+      const s = g._db ? g.status : Number(g[14]);
       if (s !== 0) return false;
       const playDeadline = Number(g[11]);
       return playDeadline > now; // strictly not expired
@@ -2875,13 +2924,18 @@ async function submitCreate() {
     return toast("Fill all fields", "error");
   if (!selectedCatId) return toast("Select a category", "error");
   if (name.length > 50) return toast("Room name too long (max 50)", "error");
-  if (parseFloat(fee) < 0.01 || parseFloat(fee) > 1000)
-    return toast("Entry fee: 0.01-1000 USDC", "error");
+  const minFee = activeNet.isNative ? 0.01 : 1;
+  const symbol = activeNet.symbol;
+  if (parseFloat(fee) < minFee || parseFloat(fee) > 1000)
+    return toast(`Entry fee: ${minFee}-1000 ${symbol}`, "error");
   if (parseInt(max) < 2 || parseInt(max) > 50)
     return toast("Max players: 2-50", "error");
   toast("Creating room on Arc...", "info");
   try {
-    const feeWei = ethers.parseUnits(parseFloat(fee).toFixed(6), 6);
+    const feeWei = ethers.parseUnits(
+      parseFloat(fee).toFixed(activeNet.decimals === 18 ? 18 : 6),
+      activeNet.decimals,
+    );
     const tx = await contract.createGame(
       name,
       selectedCatId,

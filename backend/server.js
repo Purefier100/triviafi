@@ -270,10 +270,20 @@ async function initDB() {
         UNIQUE(session_id, q_index)
       );
     `);
-
-    // =========================================================================
-    // MIGRATIONS
-    // =========================================================================
+    await pool
+      .query(
+        `
+      ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_user_id_game_id_key;
+    `,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `
+      ALTER TABLE game_sessions ADD CONSTRAINT IF NOT EXISTS gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
+    `,
+      )
+      .catch(() => {});
 
     // Make google_id nullable
     await pool
