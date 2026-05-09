@@ -521,7 +521,7 @@
       <p style="color:var(--muted);font-size:.85rem;margin-bottom:18px">You earn <strong style="color:var(--gold)">2.5%</strong> of the prize pool as room creator.</p>
       <div class="form-grid form-grid-2">
         <div class="ig"><label class="il">Room Name</label><input id="cName" placeholder="e.g. Crypto Masters #1"/></div>
-        <div class="ig"><label class="il">Entry Fee (USDC)</label><input id="cFee" type="number" min="1" placeholder="e.g. 2"/></div>
+        <div class="ig"><label class="il" id="entryFeeLabel">Entry Fee (USDC)</label><input id="cFee" type="number" min="0.01" step="0.001" placeholder="e.g. 1"/></div>
         <div class="ig"><label class="il">Max Players (2–50)</label><input id="cMax" type="number" min="2" max="50" placeholder="e.g. 10"/></div>
         <div class="ig"><label class="il">Reg Window (seconds)</label><input id="cReg" type="number" min="60" placeholder="e.g. 3600"/></div>
         <div class="ig" style="grid-column:1/-1"><label class="il">Play Deadline after reg closes (seconds)</label><input id="cPlay" type="number" min="60" placeholder="e.g. 1800"/></div>

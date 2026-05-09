@@ -1223,6 +1223,16 @@ function updateNetBar() {
   const arcBtn = document.getElementById("netArc");
   const litvmBtn = document.getElementById("netLitvm");
   if (!arcBtn || !litvmBtn) return;
+
+  // Update entry fee label and placeholder dynamically
+  const feeLabel = document.getElementById("entryFeeLabel");
+  const feeInput = document.getElementById("cFee");
+  if (feeLabel) feeLabel.textContent = `Entry Fee (${activeNet.symbol})`;
+  if (feeInput) {
+    feeInput.placeholder = activeNet.isNative ? "e.g. 0.01" : "e.g. 1";
+    feeInput.min = activeNet.isNative ? "0.01" : "1";
+    feeInput.step = activeNet.isNative ? "0.001" : "0.01";
+  }
   const isArc = activeNet.decimals === 6;
   arcBtn.style.cssText = isArc
     ? "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(0,229,255,.5);background:rgba(0,229,255,.12);color:#00e5ff;font-size:.75rem;font-weight:700;cursor:pointer"
@@ -2998,7 +3008,7 @@ async function submitCreate() {
     return toast(`Entry fee: ${minFee}-1000 ${symbol}`, "error");
   if (parseInt(max) < 2 || parseInt(max) > 50)
     return toast("Max players: 2-50", "error");
-  toast("Creating room on Arc...", "info");
+  toast(`Creating room on ${activeNet.name}...`, "info");
   try {
     const feeWei = ethers.parseUnits(
       parseFloat(fee).toFixed(activeNet.decimals === 18 ? 18 : 6),
@@ -3014,27 +3024,41 @@ async function submitCreate() {
       reg,
       play,
     );
-    await tx.wait();
-    await fetch(`${BACKEND}/games/save`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({
-        chainId: parseInt(activeNet.hexChainId, 16),
-        contractGameId: gameId,
-        creator: userAddress,
-        name,
-        category: selectedCatName,
-        difficulty: selectedDiff,
-        entryFee,
-        tokenSymbol: activeNet.symbol,
-        maxPlayers,
-        txHash: tx.hash,
-      }),
-    });
-    toast(`✅ Room "${name}" deployed!`, "success");
+    const receipt = await tx.wait();
+
+    // Get the new game ID from contract
+    let newGameId = 0;
+    try {
+      const counter = new ethers.Contract(
+        CONTRACT_ADDRESS,
+        ["function gameCounter() view returns (uint256)"],
+        contract.runner,
+      );
+      newGameId = Number(await counter.gameCounter());
+    } catch (_) {}
+
+    // Save to DB for multichain display
+    try {
+      await fetch(`${BACKEND}/games/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          chainId: parseInt(activeNet.hexChainId, 16),
+          contractGameId: newGameId,
+          creator: userAddress,
+          name,
+          category: selectedCatName,
+          difficulty: selectedDiff,
+          entryFee: parseFloat(fee),
+          tokenSymbol: activeNet.symbol,
+          maxPlayers: parseInt(max),
+          txHash: receipt.hash,
+        }),
+      });
+    } catch (_) {}
+
+    toast(`✅ Room "${name}" deployed on ${activeNet.name}!`, "success");
     showScreen("screenLobby");
     await loadGames();
   } catch (e) {
