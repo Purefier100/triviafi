@@ -198,39 +198,6 @@ async function createArcGame(arcContract) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Create one game on LitVM (zkLTC native fee)
-// ─────────────────────────────────────────────────────────────────────────────
-async function createLitvmGame(litvmContract) {
-  const room   = ROOMS[roomIndex % ROOMS.length];
-  const feeWei = ethers.parseEther(LITVM_ENTRY_FEE); // native 18 decimals
-  log(`🎮 [LitVM] Creating: "${room.name}"`);
-
-  let retries = 3;
-  while (retries > 0) {
-    try {
-      const tx = await litvmContract.createGame(
-        room.name, room.catId, room.catName, room.diff,
-        feeWei, MAX_PLAYERS, REG_WINDOW_SECS, PLAY_WINDOW_SECS,
-      );
-      const receipt = await tx.wait();
-      log(`✅ [LitVM] Created — tx: ${receipt.hash.slice(0, 20)}...`);
-      roomIndex++;
-      return true;
-    } catch (e) {
-      retries--;
-      if (e.message?.includes("txpool is full")) {
-        log(`⏳ [LitVM] Network busy, retrying...`);
-        await sleep(5000);
-      } else {
-        log(`❌ [LitVM] Create failed: ${e.reason || e.message}`);
-        return false;
-      }
-    }
-  }
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main tick — checks both chains
 // ─────────────────────────────────────────────────────────────────────────────
 async function tick(arcContract, litvmContract, agentAddress) {
@@ -272,7 +239,7 @@ async function tick(arcContract, litvmContract, agentAddress) {
 
     arcOk   = await createArcGame(arcContract);
     await sleep(3000);
-    litvmOk = await createLitvmGame(litvmContract);
+    litvmOk = await createLitvmGame(litvmContract, litvmProvider, wallet.address);
 
     if (arcOk || litvmOk) {
       lastCycleTime = now;
@@ -285,6 +252,45 @@ async function tick(arcContract, litvmContract, agentAddress) {
     const hoursLeft = CYCLE_COOLDOWN_HRS - hoursSinceLast;
     log(`⏳ Cooldown active — next cycle in ${hoursLeft.toFixed(1)}hrs`);
   }
+}
+
+async function createLitvmGame(litvmContract, provider, walletAddress) {
+  const room   = ROOMS[roomIndex % ROOMS.length];
+  const feeWei = ethers.parseEther(LITVM_ENTRY_FEE);
+  const gasBuffer = ethers.parseEther("0.005");
+
+  // Balance check first
+  const bal = await provider.getBalance(walletAddress);
+  if (bal < feeWei + gasBuffer) {
+    log(`❌ [LitVM] Insufficient zkLTC: have ${ethers.formatEther(bal)}, need ~${LITVM_ENTRY_FEE} + gas`);
+    return false;
+  }
+
+  log(`🎮 [LitVM] Creating: "${room.name}"`);
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      const tx = await litvmContract.createGame(
+        room.name, room.catId, room.catName, room.diff,
+        feeWei, MAX_PLAYERS, REG_WINDOW_SECS, PLAY_WINDOW_SECS,
+        { value: feeWei }
+      );
+      const receipt = await tx.wait();
+      log(`✅ [LitVM] Created — tx: ${receipt.hash.slice(0, 20)}...`);
+      roomIndex++;
+      return true;
+    } catch (e) {
+      retries--;
+      if (e.message?.includes("txpool is full")) {
+        log(`⏳ [LitVM] Network busy, retrying...`);
+        await sleep(5000);
+      } else {
+        log(`❌ [LitVM] Create failed: ${e.reason || e.message}`);
+        return false;
+      }
+    }
+  }
+  return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
