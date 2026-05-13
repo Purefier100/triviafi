@@ -1813,10 +1813,14 @@ async function openGameReadOnly(gameId, gameChainId) {
       ,
       status,
     ] = g;
-    const s = Number(status),
-      fee = fmtUSDC(entryFee),
-      pool = fmtUSDC(prizePool),
-      n = Number(playerCount);
+    const gameNet = NETWORKS[gameChainId] || activeNet;
+  const gameDecimals = gameNet.decimals;
+  const gameSymbol = gameNet.symbol;
+  const dp = gameDecimals === 18 ? 4 : 2;
+  const s = Number(status);
+  const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(dp);
+  const pool = parseFloat(ethers.formatUnits(prizePool, gameDecimals)).toFixed(dp);
+  const n = Number(playerCount);
     const dist = parseFloat(pool) * 0.95;
     const prizes =
       n === 1
@@ -1971,34 +1975,23 @@ async function openGameReadOnly(gameId, gameChainId) {
 }
 
 async function openGame(gameId, gameChainId) {
-  // Set active network to match this game's chain
-const targetChainId =
-  gameChainId || currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
-  if (
-    NETWORKS[targetChainId] &&
-    targetChainId !== parseInt(activeNet.hexChainId, 16)
-  ) {
-    // Silently switch read contract for this game
-    const targetNet = NETWORKS[targetChainId];
+  const targetChainId = gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+  currentGameChainId = targetChainId;
+
+  const targetNet = NETWORKS[targetChainId];
+  if (targetNet) {
     const tempProvider = new ethers.JsonRpcProvider(targetNet.rpc);
-    readContract = new ethers.Contract(
-      targetNet.contractAddress,
-      ABI,
-      tempProvider,
-    );
+    readContract = new ethers.Contract(targetNet.contractAddress, ABI, tempProvider);
   }
-  currentGameChainId =
-    gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+
   if (!userAddress) {
-  try {
-    const g = await getGame(gameId);
-    const s = Number(g[14]);
-    // show read-only for all statuses when not connected
-    await openGameReadOnly(gameId, gameChainId);
+    try {
+      await openGameReadOnly(gameId, targetChainId);
+    } catch (_) {
+      toast("Connect wallet first", "error");
+    }
     return;
-  } catch (_) {}
-  return toast("Connect wallet first", "error");
-}
+  }
   currentGameId = gameId;
   const g = await getGame(gameId);
   currentGame = g;
@@ -2067,9 +2060,13 @@ const targetChainId =
     startAutoRefresh(gameId);
     return;
   }
-  const fee = fmtUSDC(entryFee),
-    pool = fmtUSDC(prizePool),
-    n = Number(playerCount);
+  const gameNet = NETWORKS[currentGameChainId] || activeNet;
+  const gameDecimals = gameNet.decimals;
+  const gameSymbol = gameNet.symbol;
+  const dp = gameDecimals === 18 ? 4 : 2;
+  const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(dp);
+  const pool = parseFloat(ethers.formatUnits(prizePool, gameDecimals)).toFixed(dp);
+  const n = Number(playerCount);
   const regSecs = Number(regEnd) - now,
     playSecs = Number(playDeadline) - now;
   const inRegPhase = regSecs > 0,
