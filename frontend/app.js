@@ -1785,7 +1785,13 @@ function renderGames() {
   el.innerHTML = html;
 }
 
-async function openGameReadOnly(gameId) {
+async function openGameReadOnly(gameId, gameChainId) {
+  // Switch readContract to correct chain
+  if (gameChainId && NETWORKS[gameChainId]) {
+    const net = NETWORKS[gameChainId];
+    const tempProvider = new ethers.JsonRpcProvider(net.rpc);
+    readContract = new ethers.Contract(net.contractAddress, ABI, tempProvider);
+  }
   currentGameId = gameId;
   try {
     const g = await getGame(gameId);
@@ -1966,10 +1972,8 @@ async function openGameReadOnly(gameId) {
 
 async function openGame(gameId, gameChainId) {
   // Set active network to match this game's chain
-  const targetChainId =
-    gameChainId || currentGameChainId || activeNet.decimals === 18
-      ? 4441
-      : 5042002;
+const targetChainId =
+  gameChainId || currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   if (
     NETWORKS[targetChainId] &&
     targetChainId !== parseInt(activeNet.hexChainId, 16)
@@ -1986,26 +1990,15 @@ async function openGame(gameId, gameChainId) {
   currentGameChainId =
     gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   if (!userAddress) {
-    const gameNet = NETWORKS[currentGameChainId];
-    if (
-      userAddress &&
-      parseInt(activeNet.hexChainId, 16) !== currentGameChainId
-    ) {
-      toast(
-        `⚠️ This game is on ${gameNet.name}. Switch network to join.`,
-        "info",
-      );
-    }
-    try {
-      const g = await getGame(gameId);
-      const s = Number(g[14]);
-      if (s === 1 || s === 2) {
-        openGameReadOnly(gameId);
-        return;
-      }
-    } catch (_) {}
-    return toast("Connect wallet first", "error");
-  }
+  try {
+    const g = await getGame(gameId);
+    const s = Number(g[14]);
+    // show read-only for all statuses when not connected
+    await openGameReadOnly(gameId, gameChainId);
+    return;
+  } catch (_) {}
+  return toast("Connect wallet first", "error");
+}
   currentGameId = gameId;
   const g = await getGame(gameId);
   currentGame = g;
