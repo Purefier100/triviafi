@@ -200,7 +200,7 @@ async function createArcGame(arcContract) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Main tick — checks both chains
 // ─────────────────────────────────────────────────────────────────────────────
-async function tick(arcContract, litvmContract, agentAddress) {
+async function tick(arcContract, litvmContract, agentAddress, litvmProvider, litvmWallet) {
   sep("🤖 Agent Tick — Multichain");
   const now = Math.floor(Date.now() / 1000);
 
@@ -239,7 +239,7 @@ async function tick(arcContract, litvmContract, agentAddress) {
 
     arcOk   = await createArcGame(arcContract);
     await sleep(3000);
-    litvmOk = await createLitvmGame(litvmContract, litvmProvider, wallet.address);
+    litvmOk = await createLitvmGame(litvmContract, litvmProvider, agentAddress);
 
     if (arcOk || litvmOk) {
       lastCycleTime = now;
@@ -331,11 +331,11 @@ async function run() {
     log(`LitVM balance: ${ethers.formatEther(litvmBal)} zkLTC`);
   } catch (_) {}
 
-  await tick(arcContract, litvmContract, wallet.address);
+  await tick(arcContract, litvmContract, wallet.address, litvmProvider, litvmWallet);
 
   setInterval(async () => {
     try {
-      await tick(arcContract, litvmContract, wallet.address);
+      await tick(arcContract, litvmContract, wallet.address, litvmProvider, litvmWallet);
     } catch (e) {
       log(`❌ Tick error: ${e.message}`);
     }
