@@ -186,7 +186,7 @@ async function createArcGame(arcContract, arcProvider, agentAddress) {
 // ── Create LitVM game ─────────────────────────────────────────────────────
 async function createLitvmGame(litvmContract, litvmProvider, agentAddress) {
   const feeWei    = ethers.parseEther(LITVM_ENTRY_FEE);
-  const gasBuffer = ethers.parseEther("0.005");
+  const gasBuffer = ethers.parseEther("0.001");
   const bal       = await litvmProvider.getBalance(agentAddress);
 
   if (bal < feeWei + gasBuffer) {
