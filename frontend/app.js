@@ -1874,7 +1874,7 @@ async function openGameReadOnly(gameId, gameChainId) {
           i < 3 && prizes[i] > 0
             ? `<span style="color:var(--gold);font-size:.73rem">${prizes[
                 i
-              ].toFixed(2)} USDC</span>`
+              ].toFixed(dp)} ${gameSymbol}</span>`
             : ""
         }
         <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
@@ -1957,7 +1957,7 @@ async function openGameReadOnly(gameId, gameChainId) {
       catName,
     )}</span></div></div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (USDC)</div></div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (${gameSymbol})</div></div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
       </div>
