@@ -185,12 +185,14 @@ async function createArcGame(arcContract, arcProvider, agentAddress) {
 
 // ── Create LitVM game ─────────────────────────────────────────────────────
 async function createLitvmGame(litvmContract, litvmProvider, agentAddress) {
+  const feeWei    = ethers.parseEther(LITVM_ENTRY_FEE);  // ← keep this
   const gasBuffer = ethers.parseEther("0.002");
-const bal       = await litvmProvider.getBalance(agentAddress);
-if (bal < gasBuffer) {
-  log(`❌ [LitVM] Insufficient zkLTC for gas: have ${ethers.formatEther(bal)}`);
-  return false;
-}
+  const bal       = await litvmProvider.getBalance(agentAddress);
+
+  if (bal < gasBuffer) {
+    log(`❌ [LitVM] Insufficient zkLTC for gas: have ${ethers.formatEther(bal)}`);
+    return false;
+  }
 
   const room = ROOMS[litvmRoomIndex % ROOMS.length];
   log(`🎮 [LitVM] Creating: "${room.name}"`);
@@ -199,9 +201,9 @@ if (bal < gasBuffer) {
   while (retries > 0) {
     try {
       const tx = await litvmContract.createGame(
-  room.name, room.catId, room.catName, room.diff,
-  feeWei, MAX_PLAYERS, REG_WINDOW_SECS, PLAY_WINDOW_SECS,
-);
+        room.name, room.catId, room.catName, room.diff,
+        feeWei, MAX_PLAYERS, REG_WINDOW_SECS, PLAY_WINDOW_SECS,
+      );
       const receipt = await tx.wait();
       log(`✅ [LitVM] Created — tx: ${receipt.hash.slice(0, 20)}...`);
       litvmRoomIndex++;
