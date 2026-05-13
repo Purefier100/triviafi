@@ -969,6 +969,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
   initAuth();
+  setInterval(() => {
+  const screen = document.querySelector(".screen.active");
+  if (screen?.id === "screenLobby") loadGames();
+}, 30000);
 });
 
 function checkUrlGame() {
@@ -1479,8 +1483,8 @@ async function loadGames() {
 
     // Stats
     for (const { g, net } of allGames) {
-      arcPool += net.decimals === 6 ? g[8] : 0n;
-      litvmPool += net.decimals === 18 ? g[8] : 0n;
+  if (net.decimals === 6) arcPool += BigInt(g[8]);
+  else litvmPool += BigInt(g[8]);
       if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
     }
 
@@ -2029,6 +2033,18 @@ async function openGame(gameId, gameChainId) {
     gameId,
     userAddress,
   );
+
+  if (finished || alreadySubmitted(gameId)) {
+  showScreen("screenResults");
+  score = loadSavedScore(gameId);
+  document.getElementById("resScore").textContent = score || "—";
+  document.getElementById("resIcon").textContent = score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+  document.getElementById("resSub").textContent = `You already played this game · ${score} pts`;
+  document.getElementById("submitSection").style.display = score > 0 ? "block" : "none";
+  await refreshResults();
+  startAutoRefresh(gameId);
+  return;
+}
   // Server-authoritative check — localStorage can be cleared
   try {
     const chk = await fetch(
@@ -2086,7 +2102,7 @@ async function openGame(gameId, gameChainId) {
       dist * 0.3
     ).toFixed(
       2,
-    )}</strong></span><span style="color:var(--muted)">USDC</span></div>`;
+    )}</strong></span><span style="color:var(--muted)">${gameSymbol}</span></div>`;
   else
     breakdownHtml = `<div style="display:flex;gap:12px;flex-wrap:wrap"><span>🥇 <strong style="color:var(--gold)">${(
       dist * 0.6
@@ -2096,7 +2112,8 @@ async function openGame(gameId, gameChainId) {
       dist * 0.15
     ).toFixed(
       2,
-    )}</strong></span><span style="color:var(--muted)">USDC</span></div>`;
+    )}</strong></span><span style="color:var(--muted)">${gameSymbol}</span>
+</div>`;
   const players = await readContract.getPlayers(gameId);
   const betsHtml = await showPredictionBets(gameId, players);
   const playerRows =
@@ -2157,7 +2174,8 @@ async function openGame(gameId, gameChainId) {
       : ""
   }</div></div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (USDC)</div></div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (${gameSymbol})</div>
+</div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
     </div>
@@ -2272,6 +2290,7 @@ async function doJoin() {
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
   }
+  await loadGames();
 }
 
 async function doJoin_withGuestMode() {
@@ -2402,82 +2421,50 @@ async function startPlay() {
     showScreen("screenResults");
     score = loadSavedScore(currentGameId);
     document.getElementById("resScore").textContent = score;
-    document.getElementById("resIcon").textContent =
-      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById(
-      "resSub",
-    ).textContent = `Score already submitted · ${score} pts`;
+    document.getElementById("resIcon").textContent = score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+    document.getElementById("resSub").textContent = `Score already submitted · ${score} pts`;
     document.getElementById("submitSection").style.display = "none";
     await refreshResults();
     return;
   }
+
   const g = currentGame || (await getGame(currentGameId));
-  const catId = Number(g[3]),
-    diff = Number(g[5]);
+  const catId = Number(g[3]), diff = Number(g[5]);
   toast("Loading questions...", "info");
+
   try {
-    const diffParam =
-      diff === 0 ? "" : `&difficulty=${DIFF_LABELS[diff].toLowerCase()}`;
-    const res = await fetch(
-      `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
-    );
+    // ✅ Get questions FROM SERVER (not OpenTDB directly)
+    const res = await fetch(`${BACKEND}/game/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        gameId: currentGameId,
+        wallet: userAddress,
+        chainId: currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002),
+        categoryId: catId,
+        difficulty: diff,
+      }),
+    });
+
     const data = await res.json();
-    if (data.response_code !== 0) throw new Error("No questions available.");
-    questions = data.results.map((q) => ({
-      question: decodeURIComponent(q.question),
-      correct: decodeURIComponent(q.correct_answer),
-      answers: shuffle([
-        decodeURIComponent(q.correct_answer),
-        ...q.incorrect_answers.map((a) => decodeURIComponent(a)),
-      ]),
-      diff: q.difficulty,
+    if (!res.ok) {
+      toast(data.error || "Failed to start game", "error");
+      return;
+    }
+
+    // Server returns questions without correct answers
+    questions = data.questions.map((q) => ({
+      question: q.question,
+      correct: null, // server holds this
+      answers: q.options,
+      diff: ["easy","medium","hard"][diff - 1] || "easy",
+      id: q.questionIndex,
     }));
-    // ✅ Block replay — check server before starting
-    try {
-      const chk = await fetch(
-        `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
-          activeNet.hexChainId,
-          16,
-        )}`,
-        {
-          credentials: "include",
-        },
-      );
-      const chkData = await chk.json();
-      if (chkData.onchain) {
-        // Only block replay if score is confirmed onchain
-        toast("You already submitted a score for this game!", "error");
-        document.getElementById("submitSection").style.display = "none";
-        await refreshResults();
-        return;
-      }
-      if (chkData.finished && !chkData.onchain) {
-        // DB finished but TX failed — go straight to submit screen
-        toast("Your score was saved. Please submit onchain.", "info");
-        showScreen("screenResults");
-        score = loadSavedScore(currentGameId);
-        document.getElementById("resScore").textContent = score;
-        document.getElementById("submitSection").style.display = "block";
-        await refreshResults();
-        return;
-      }
-    } catch (_) {}
+
     currentQ = 0;
     score = 0;
     answers = [];
-    try {
-      await fetch(`${BACKEND}/game/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          gameId: currentGameId,
-          wallet: userAddress,
-          chainId: activeNet.decimals === 18 ? 4441 : 5042002,
-          questions: questions.map((q) => ({ correct: q.correct })),
-        }),
-      });
-    } catch (_) {}
     streakCount = 0;
     answered = false;
     buildDots();
@@ -2577,53 +2564,23 @@ function pickAnswer(idx) {
   answered = true;
   clearInterval(timerInt);
   const q = questions[currentQ];
-  const correct = q.answers[idx] === q.correct;
-  const speed = correct ? Math.floor((timeLeft / 15) * 50) : 0;
-  const pts = correct ? 100 + speed : 0;
-  score += pts;
+
   answers.push({
     questionIndex: currentQ,
-    correct,
     selected: q.answers[idx],
     timeLeft,
   });
-  if (correct) {
-    streakCount++;
-    if (streakCount >= STREAK_THRESHOLD) payStreakBonus();
-  } else {
-    streakCount = 0;
-  }
-  document.querySelectorAll(".ans-btn").forEach((b, i) => {
-    b.disabled = true;
-    if (q.answers[i] === q.correct) b.classList.add("correct");
-    else if (i === idx && !correct) b.classList.add("wrong");
-  });
-  document.getElementById("qPts").textContent =
-    streakCount >= STREAK_THRESHOLD
-      ? `⭐ ${score} 🔥x${streakCount}`
-      : `⭐ ${score}`;
+
+  // Show neutral feedback (server will score)
+  document.querySelectorAll(".ans-btn").forEach((b) => b.disabled = true);
   const fb = document.getElementById("qFeedback");
   fb.style.display = "block";
-  if (correct) {
-    fb.style.cssText =
-      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
-    fb.textContent = `✓ Correct! +${pts} pts${
-      speed > 0 ? " (⚡ speed bonus!)" : ""
-    }${
-      streakCount >= STREAK_THRESHOLD
-        ? ` 🔥 Streak x${streakCount} — ${STREAK_BONUS_USDC} USDC`
-        : ""
-    }`;
-  } else {
-    fb.style.cssText =
-      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
-    fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
-  }
-  setTimeout(() => {
-    currentQ++;
-    loadQ();
-  }, 1500);
+  fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
+  fb.textContent = `Answer recorded ✓`;
+
+  setTimeout(() => { currentQ++; loadQ(); }, 1000);
 }
+
 
 function timeUp() {
   answered = true;
@@ -2841,6 +2798,7 @@ async function doTriggerEnd(gameId) {
     const tx = await contract.triggerEnd(gameId);
     await tx.wait();
     toast("🏁 Game ended!", "success");
+    await loadGames();
     await refreshResults();
   } catch (e) {
     console.log("triggerEnd:", e.reason || e.message);
