@@ -2078,7 +2078,7 @@ async function openGame(gameId, gameChainId) {
   else if (n === 1)
     breakdownHtml = `<div>🥇 <strong style="color:var(--gold)">${dist.toFixed(
       2,
-    )} USDC</strong> (solo wins all)</div>`;
+    )} ${gameSymbol}</strong> (solo wins all)</div>`;
   else if (n === 2)
     breakdownHtml = `<div style="display:flex;gap:14px"><span>🥇 <strong style="color:var(--gold)">${(
       dist * 0.7
@@ -2929,7 +2929,7 @@ async function refreshResults() {
         i < 3 && s === 1 && prizes[i] > 0
           ? `<span style="color:var(--gold);font-size:.73rem">${prizes[
               i
-            ].toFixed(2)} USDC</span>`
+            ].toFixed(dp)} ${gameSymbol}</span>`
           : ""
       }
       <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
