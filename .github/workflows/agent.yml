@@ -1,26 +1,23 @@
 name: Run TriviaFi Agent
-
 on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
-
 jobs:
   run-agent:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
-
       - uses: actions/setup-node@v3
         with:
           node-version: 18
-
       - run: npm install
-
       - name: Run Agent
         run: node backend/agent.js
         env:
           AGENT_KEY: ${{ secrets.AGENT_KEY }}
           RPC_URL: ${{ secrets.RPC_URL }}
           CONTRACT_ADDRESS: ${{ secrets.CONTRACT_ADDRESS }}
+          LITVM_AGENT_KEY: ${{ secrets.LITVM_AGENT_KEY }}
+          LITVM_CONTRACT_ADDRESS: ${{ secrets.LITVM_CONTRACT_ADDRESS }}
+          LITVM_RPC_URL: ${{ secrets.LITVM_RPC_URL }}
