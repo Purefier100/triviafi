@@ -1,34 +1,23 @@
 require("dotenv").config();
-
-// =============================================================================
-// TriviaFi — Multichain AI Agent
-// Rules:
-//   1. Create exactly 1 game on Arc + 1 game on LitVM every cycle
-//   2. Only create new games when BOTH previous games have ended/expired
-//   3. Minimum 24hr gap between creation cycles
-//   4. Auto-end expired games every tick
-// =============================================================================
-
 const { ethers } = require("ethers");
 
-// ── Arc config ────────────────────────────────────────────────────────────────
-const ARC_CONTRACT  = process.env.CONTRACT_ADDRESS  || "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50";
+// ── Arc config ────────────────────────────────────────────────────────────
+const ARC_CONTRACT  = process.env.CONTRACT_ADDRESS || "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50";
 const ARC_RPCS      = ["https://rpc.testnet.arc.network", "https://arc-testnet.drpc.org"];
-const ARC_ENTRY_FEE = "2"; // USDC (6 decimals)
+const ARC_ENTRY_FEE = "2";       // USDC (6 decimals)
 const ARC_CHAIN_ID  = 5042002;
 
-// ── LitVM config ─────────────────────────────────────────────────────────────
+// ── LitVM config ──────────────────────────────────────────────────────────
 const LITVM_CONTRACT  = process.env.LITVM_CONTRACT_ADDRESS || "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765";
 const LITVM_RPC       = process.env.LITVM_RPC_URL          || "https://liteforge.rpc.caldera.xyz/http";
-const LITVM_ENTRY_FEE = "0.01"; // zkLTC (18 decimals)
+const LITVM_ENTRY_FEE = "0.01";  // zkLTC (18 decimals)
 
-// ── Shared config ─────────────────────────────────────────────────────────────
-const MAX_AGENT_GAMES   = 1;    // 1 per chain
-const CHECK_INTERVAL_MS = 300000; // check every 5 min
-const CYCLE_COOLDOWN_HRS = 24;   // min hours between creation cycles
-const REG_WINDOW_SECS   = 3600;  // 1hr registration
-const PLAY_WINDOW_SECS  = 3600;  // 1hr play window
-const MAX_PLAYERS       = 10;
+// ── Shared config ─────────────────────────────────────────────────────────
+const CHECK_INTERVAL_MS  = 300000; // 5 min
+const CYCLE_COOLDOWN_HRS = 5;
+const REG_WINDOW_SECS    = 3600;   // 1hr registration
+const PLAY_WINDOW_SECS   = 3600;  // 23hrs play (~24hr total)
+const MAX_PLAYERS        = 10;
 
 const ABI = [
   "function gameCounter() view returns (uint256)",
@@ -38,32 +27,29 @@ const ABI = [
 ];
 
 const ROOMS = [
-  { name: "🤖 General Knowledge Blitz",  catId: 9,  catName: "General Knowledge", diff: 1 },
-  { name: "🤖 Science & Nature Challenge",catId: 17, catName: "Science & Nature",  diff: 2 },
-  { name: "🤖 History Showdown",          catId: 23, catName: "History",            diff: 2 },
-  { name: "🤖 Video Games Gauntlet",      catId: 15, catName: "Video Games",        diff: 1 },
-  { name: "🤖 Geography Speed Round",     catId: 22, catName: "Geography",          diff: 1 },
-  { name: "🤖 Computer Science Arena",    catId: 18, catName: "Computers",          diff: 2 },
-  { name: "🤖 Mixed Trivia Open",         catId: 9,  catName: "General Knowledge",  diff: 0 },
-  { name: "🤖 Sports & Recreation Cup",   catId: 21, catName: "Sports",             diff: 1 },
+  { name: "🤖 General Knowledge Blitz",   catId: 9,  catName: "General Knowledge", diff: 1 },
+  { name: "🤖 Science & Nature Challenge", catId: 17, catName: "Science & Nature",  diff: 2 },
+  { name: "🤖 History Showdown",           catId: 23, catName: "History",            diff: 2 },
+  { name: "🤖 Video Games Gauntlet",       catId: 15, catName: "Video Games",        diff: 1 },
+  { name: "🤖 Geography Speed Round",      catId: 22, catName: "Geography",          diff: 1 },
+  { name: "🤖 Computer Science Arena",     catId: 18, catName: "Computers",          diff: 2 },
+  { name: "🤖 Mixed Trivia Open",          catId: 9,  catName: "General Knowledge",  diff: 0 },
+  { name: "🤖 Sports & Recreation Cup",    catId: 21, catName: "Sports",             diff: 1 },
 ];
 
-let roomIndex = 0;
-// Track last creation time to enforce 24hr cooldown
-let lastCycleTime = 0;
+let arcRoomIndex   = 0;
+let litvmRoomIndex = 0;
+let arcLastCycle   = 0;
+let litvmLastCycle = 0;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
 function log(msg) {
   console.log(`[${new Date().toLocaleTimeString("en-US", { hour12: false })}] ${msg}`);
 }
 function sep(t) {
   console.log(`\n${"─".repeat(55)}\n  ${t}\n${"─".repeat(55)}`);
 }
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function fmtTime(secs) {
   if (secs <= 0) return "expired";
   const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
@@ -92,40 +78,37 @@ async function safeGetGame(contract, id) {
     const g = await contract.getGame(id);
     return {
       id,
-      name: g.name || g[1],
-      status: Number(g.status ?? g[14]),
-      playerCount: Number(g.playerCount ?? g[9]),
-      finishedCount: Number(g.finishedCount ?? g[15]),
+      name:          g.name          || g[1],
+      status:        Number(g.status         ?? g[14]),
+      playerCount:   Number(g.playerCount    ?? g[9]),
+      finishedCount: Number(g.finishedCount  ?? g[15]),
       registrationEnd: Number(g.registrationEnd ?? g[10]),
-      playDeadline: Number(g.playDeadline ?? g[11]),
-      creator: (g.creator || g[2]).toLowerCase(),
+      playDeadline:  Number(g.playDeadline   ?? g[11]),
+      creator:       (g.creator || g[2]).toLowerCase(),
     };
-  } catch (_) { return null; }
+  } catch { return null; }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Scan a chain for agent games
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Scan chain ────────────────────────────────────────────────────────────
 async function scanChain(contract, agentAddress, chainName) {
-  const now = Math.floor(Date.now() / 1000);
+  const now   = Math.floor(Date.now() / 1000);
   const count = Number(await contract.gameCounter());
   log(`📊 [${chainName}] Total games: ${count}`);
-
   if (count === 0) return { agentOpen: [], endableIds: [], count };
 
   const scanFrom = Math.max(1, count - 100);
-  const fetches = [];
+  const fetches  = [];
   for (let i = count; i >= scanFrom; i--) fetches.push(safeGetGame(contract, i));
   const games = (await Promise.all(fetches)).filter(Boolean);
 
-  const agentOpen = [];
+  const agentOpen  = [];
   const endableIds = [];
 
   for (const g of games) {
-    const isAgent = g.creator === agentAddress.toLowerCase();
-    const isOpen  = g.status === 0;
+    const isAgent   = g.creator === agentAddress.toLowerCase();
+    const isOpen    = g.status === 0;
     const isExpired = now > g.playDeadline;
-    const allDone = g.finishedCount >= g.playerCount && g.playerCount > 0;
+    const allDone   = g.finishedCount >= g.playerCount && g.playerCount > 0;
 
     if (isOpen) {
       if (isExpired || allDone) {
@@ -147,9 +130,7 @@ async function scanChain(contract, agentAddress, chainName) {
   return { agentOpen, endableIds, count };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// End expired games on a chain
-// ─────────────────────────────────────────────────────────────────────────────
+// ── End expired games ─────────────────────────────────────────────────────
 async function endGames(contract, endableIds, chainName) {
   for (const id of endableIds) {
     try {
@@ -164,12 +145,17 @@ async function endGames(contract, endableIds, chainName) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Create one game on Arc (USDC, ERC20 fee)
-// ─────────────────────────────────────────────────────────────────────────────
-async function createArcGame(arcContract) {
-  const room    = ROOMS[roomIndex % ROOMS.length];
-  const feeWei  = ethers.parseUnits(ARC_ENTRY_FEE, 6);
+// ── Create Arc game ───────────────────────────────────────────────────────
+async function createArcGame(arcContract, arcProvider, agentAddress) {
+  // Balance check
+  const bal = await arcProvider.getBalance(agentAddress);
+  if (bal === 0n) {
+    log(`❌ [Arc] Agent wallet has 0 native ARC — fund ${agentAddress}`);
+    return false;
+  }
+
+  const room   = ROOMS[arcRoomIndex % ROOMS.length];
+  const feeWei = ethers.parseUnits(ARC_ENTRY_FEE, 6);
   log(`🎮 [Arc] Creating: "${room.name}"`);
 
   let retries = 3;
@@ -181,7 +167,7 @@ async function createArcGame(arcContract) {
       );
       const receipt = await tx.wait();
       log(`✅ [Arc] Created — tx: ${receipt.hash.slice(0, 20)}...`);
-      roomIndex++;
+      arcRoomIndex++;
       return true;
     } catch (e) {
       retries--;
@@ -197,76 +183,20 @@ async function createArcGame(arcContract) {
   return false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main tick — checks both chains
-// ─────────────────────────────────────────────────────────────────────────────
-async function tick(arcContract, litvmContract, agentAddress, litvmProvider, litvmWallet) {
-  sep("🤖 Agent Tick — Multichain");
-  const now = Math.floor(Date.now() / 1000);
-
-  // ── Scan both chains ──────────────────────────────────────────────────────
-  const [arcState, litvmState] = await Promise.all([
-    scanChain(arcContract,   agentAddress, "Arc").catch(e => { log(`❌ Arc scan failed: ${e.message}`); return { agentOpen: [], endableIds: [], count: 0 }; }),
-    scanChain(litvmContract, agentAddress, "LitVM").catch(e => { log(`❌ LitVM scan failed: ${e.message}`); return { agentOpen: [], endableIds: [], count: 0 }; }),
-  ]);
-
-  // ── End expired games on both chains ─────────────────────────────────────
-  await endGames(arcContract,   arcState.endableIds,   "Arc");
-  await endGames(litvmContract, litvmState.endableIds, "LitVM");
-
-  // ── Count active games after cleanup ─────────────────────────────────────
-  const arcActive   = arcState.agentOpen.filter(g => !arcState.endableIds.includes(g.id));
-  const litvmActive = litvmState.agentOpen.filter(g => !litvmState.endableIds.includes(g.id));
-
-  log(`✅ Arc active: ${arcActive.length} | LitVM active: ${litvmActive.length}`);
-
-  // ── Check 24hr cooldown ───────────────────────────────────────────────────
-  const hoursSinceLast = (now - lastCycleTime) / 3600;
-  const cooldownOk = lastCycleTime === 0 || hoursSinceLast >= CYCLE_COOLDOWN_HRS;
-
-  log(`⏱️  Hours since last cycle: ${lastCycleTime === 0 ? "never" : hoursSinceLast.toFixed(1)}`);
-
-  // ── Create if both chains have 0 agent games AND cooldown passed ──────────
-  const arcNeedsGame   = arcActive.length === 0;
-  const litvmNeedsGame = litvmActive.length === 0;
-  const bothEnded      = arcNeedsGame && litvmNeedsGame;
-
-  if (bothEnded && cooldownOk) {
-    log(`🚀 Both chains clear + cooldown passed — creating new games!`);
-
-    let arcOk   = false;
-    let litvmOk = false;
-
-    arcOk   = await createArcGame(arcContract);
-    await sleep(3000);
-    litvmOk = await createLitvmGame(litvmContract, litvmProvider, agentAddress);
-
-    if (arcOk || litvmOk) {
-      lastCycleTime = now;
-      log(`✅ Cycle complete — next cycle in ${CYCLE_COOLDOWN_HRS}hrs`);
-    }
-  } else if (!bothEnded) {
-    if (!arcNeedsGame)   log(`⏳ Arc still has ${arcActive.length} active game(s) — waiting`);
-    if (!litvmNeedsGame) log(`⏳ LitVM still has ${litvmActive.length} active game(s) — waiting`);
-  } else if (!cooldownOk) {
-    const hoursLeft = CYCLE_COOLDOWN_HRS - hoursSinceLast;
-    log(`⏳ Cooldown active — next cycle in ${hoursLeft.toFixed(1)}hrs`);
-  }
-}
-
-async function createLitvmGame(litvmContract, provider, walletAddress) {
-  const room   = ROOMS[roomIndex % ROOMS.length];
-  const feeWei = ethers.parseEther(LITVM_ENTRY_FEE);
+// ── Create LitVM game ─────────────────────────────────────────────────────
+async function createLitvmGame(litvmContract, litvmProvider, agentAddress) {
+  const feeWei    = ethers.parseEther(LITVM_ENTRY_FEE);
   const gasBuffer = ethers.parseEther("0.005");
+  const bal       = await litvmProvider.getBalance(agentAddress);
 
-  // Balance check first
-  const bal = await provider.getBalance(walletAddress);
   if (bal < feeWei + gasBuffer) {
     log(`❌ [LitVM] Insufficient zkLTC: have ${ethers.formatEther(bal)}, need ~${LITVM_ENTRY_FEE} + gas`);
     return false;
   }
 
+  const room = ROOMS[litvmRoomIndex % ROOMS.length];
   log(`🎮 [LitVM] Creating: "${room.name}"`);
+
   let retries = 3;
   while (retries > 0) {
     try {
@@ -277,7 +207,7 @@ async function createLitvmGame(litvmContract, provider, walletAddress) {
       );
       const receipt = await tx.wait();
       log(`✅ [LitVM] Created — tx: ${receipt.hash.slice(0, 20)}...`);
-      roomIndex++;
+      litvmRoomIndex++;
       return true;
     } catch (e) {
       retries--;
@@ -293,56 +223,87 @@ async function createLitvmGame(litvmContract, provider, walletAddress) {
   return false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Boot
-// ─────────────────────────────────────────────────────────────────────────────
-async function run() {
-  if (!process.env.AGENT_KEY) {
-    console.error("❌ Missing AGENT_KEY");
-    process.exit(1);
+// ── Main tick ─────────────────────────────────────────────────────────────
+async function tick(arcContract, litvmContract, arcProvider, litvmProvider, arcAddress, litvmAddress) {
+  sep("🤖 Agent Tick — Multichain");
+  const now = Math.floor(Date.now() / 1000);
+
+  // Scan both chains
+  const [arcState, litvmState] = await Promise.all([
+    scanChain(arcContract,   arcAddress,   "Arc"  ).catch(e => { log(`❌ Arc scan failed: ${e.message}`);   return { agentOpen: [], endableIds: [], count: 0 }; }),
+    scanChain(litvmContract, litvmAddress, "LitVM").catch(e => { log(`❌ LitVM scan failed: ${e.message}`); return { agentOpen: [], endableIds: [], count: 0 }; }),
+  ]);
+
+  // End expired games
+  await endGames(arcContract,   arcState.endableIds,   "Arc");
+  await endGames(litvmContract, litvmState.endableIds, "LitVM");
+
+  // Arc cycle
+  const arcActive      = arcState.agentOpen.filter(g => !arcState.endableIds.includes(g.id));
+  const arcCooldownOk  = arcLastCycle === 0 || (now - arcLastCycle) / 3600 >= CYCLE_COOLDOWN_HRS;
+  log(`⏱️  [Arc]   Hours since last cycle: ${arcLastCycle === 0 ? "never" : ((now - arcLastCycle)/3600).toFixed(1)}`);
+
+  if (arcActive.length === 0 && arcCooldownOk) {
+    const ok = await createArcGame(arcContract, arcProvider, arcAddress);
+    if (ok) { arcLastCycle = now; log(`✅ [Arc] Cycle complete — next in ${CYCLE_COOLDOWN_HRS}hrs`); }
+  } else if (arcActive.length > 0) {
+    log(`⏳ [Arc] ${arcActive.length} active game(s) — waiting`);
+  } else {
+    log(`⏳ [Arc] Cooldown — ${(CYCLE_COOLDOWN_HRS - (now - arcLastCycle)/3600).toFixed(1)}hrs left`);
   }
+
+  await sleep(3000);
+
+  // LitVM cycle
+  const litvmActive     = litvmState.agentOpen.filter(g => !litvmState.endableIds.includes(g.id));
+  const litvmCooldownOk = litvmLastCycle === 0 || (now - litvmLastCycle) / 3600 >= CYCLE_COOLDOWN_HRS;
+  log(`⏱️  [LitVM] Hours since last cycle: ${litvmLastCycle === 0 ? "never" : ((now - litvmLastCycle)/3600).toFixed(1)}`);
+
+  if (litvmActive.length === 0 && litvmCooldownOk) {
+    const ok = await createLitvmGame(litvmContract, litvmProvider, litvmAddress);
+    if (ok) { litvmLastCycle = now; log(`✅ [LitVM] Cycle complete — next in ${CYCLE_COOLDOWN_HRS}hrs`); }
+  } else if (litvmActive.length > 0) {
+    log(`⏳ [LitVM] ${litvmActive.length} active game(s) — waiting`);
+  } else {
+    log(`⏳ [LitVM] Cooldown — ${(CYCLE_COOLDOWN_HRS - (now - litvmLastCycle)/3600).toFixed(1)}hrs left`);
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+async function run() {
+  if (!process.env.AGENT_KEY)       { console.error("❌ Missing AGENT_KEY");       process.exit(1); }
+  if (!process.env.LITVM_AGENT_KEY) { console.error("❌ Missing LITVM_AGENT_KEY"); process.exit(1); }
 
   const arcProvider   = await makeArcProvider();
   const litvmProvider = makeLitvmProvider();
 
-  const wallet = new ethers.Wallet(process.env.AGENT_KEY);
-  const arcWallet   = wallet.connect(arcProvider);
-  const litvmWallet = wallet.connect(litvmProvider);
+  const arcWallet   = new ethers.Wallet(process.env.AGENT_KEY,       arcProvider);
+  const litvmWallet = new ethers.Wallet(process.env.LITVM_AGENT_KEY, litvmProvider);
 
   const arcContract   = new ethers.Contract(ARC_CONTRACT,   ABI, arcWallet);
   const litvmContract = new ethers.Contract(LITVM_CONTRACT, ABI, litvmWallet);
 
   sep("🤖 TriviaFi Agent — Multichain Mode");
-  log(`Wallet:        ${wallet.address}`);
-  log(`Arc Contract:  ${ARC_CONTRACT}`);
-  log(`LitVM Contract:${LITVM_CONTRACT}`);
-  log(`Cycle:         1 game per chain every ${CYCLE_COOLDOWN_HRS}hrs after both end`);
-  log(`Check interval:${CHECK_INTERVAL_MS / 1000}s`);
+  log(`Arc   wallet: ${arcWallet.address}`);
+  log(`LitVM wallet: ${litvmWallet.address}`);
+  log(`Arc   contract: ${ARC_CONTRACT}`);
+  log(`LitVM contract: ${LITVM_CONTRACT}`);
+  log(`Game duration:  ~24hrs (1hr reg + 23hr play)`);
+  log(`Check interval: ${CHECK_INTERVAL_MS / 1000}s`);
 
-  // Check Arc wallet balance
-  try {
-    const arcBal = await arcProvider.getBalance(wallet.address);
-    log(`Arc balance:   ${ethers.formatEther(arcBal)} (gas)`);
-  } catch (_) {}
+  // Show balances
+  try { log(`Arc   balance: ${ethers.formatEther(await arcProvider.getBalance(arcWallet.address))} ARC`); } catch (_) {}
+  try { log(`LitVM balance: ${ethers.formatEther(await litvmProvider.getBalance(litvmWallet.address))} zkLTC`); } catch (_) {}
 
-  // Check LitVM wallet balance
-  try {
-    const litvmBal = await litvmProvider.getBalance(wallet.address);
-    log(`LitVM balance: ${ethers.formatEther(litvmBal)} zkLTC`);
-  } catch (_) {}
-
-  await tick(arcContract, litvmContract, wallet.address, litvmProvider, litvmWallet);
+  await tick(arcContract, litvmContract, arcProvider, litvmProvider, arcWallet.address, litvmWallet.address);
 
   setInterval(async () => {
     try {
-      await tick(arcContract, litvmContract, wallet.address, litvmProvider, litvmWallet);
+      await tick(arcContract, litvmContract, arcProvider, litvmProvider, arcWallet.address, litvmWallet.address);
     } catch (e) {
       log(`❌ Tick error: ${e.message}`);
     }
   }, CHECK_INTERVAL_MS);
 }
 
-run().catch((e) => {
-  console.error("Fatal:", e.message);
-  process.exit(1);
-});
+run().catch(e => { console.error("Fatal:", e.message); process.exit(1); });
