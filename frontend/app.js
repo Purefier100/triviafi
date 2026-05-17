@@ -2112,7 +2112,7 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
   const dist = parseFloat(pool) * 0.95;
   let breakdownHtml = "";
   if (n === 0)
-    breakdownHtml = `<p style="color:var(--muted);font-size:.82rem">No players yet. Entry fee: ${fee} USDC</p>`;
+    breakdownHtml = `<p style="color:var(--muted);font-size:.82rem">No players yet. Entry fee: ${fee} ${gameSymbol}</p>`;
   else if (n === 1)
     breakdownHtml = `<div>🥇 <strong style="color:var(--gold)">${dist.toFixed(
       2,
