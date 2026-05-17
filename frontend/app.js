@@ -1982,6 +1982,28 @@ async function openGame(gameId, gameChainId) {
   const targetChainId = gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   currentGameChainId = targetChainId;
 
+  const userChainId = provider ? Number((await provider.getNetwork()).chainId) : null;
+if (userAddress && userChainId && userChainId !== targetChainId) {
+  toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
+    });
+    activeNet = NETWORKS[targetChainId];
+    CONTRACT_ADDRESS = activeNet.contractAddress;
+    USDC_ADDRESS = activeNet.tokenAddress;
+    await reconnectContracts();
+  } catch (e) {
+    if (e.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{ chainId: NETWORKS[targetChainId].hexChainId, ...NETWORKS[targetChainId].addParams }],
+      });
+    }
+  }
+}
+
   const targetNet = NETWORKS[targetChainId];
   if (targetNet) {
     const tempProvider = new ethers.JsonRpcProvider(targetNet.rpc);
