@@ -1982,7 +1982,7 @@ async function openGame(gameId, gameChainId) {
   const targetChainId = gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   currentGameChainId = targetChainId;
 
-  const userChainId = provider ? Number((await provider.getNetwork()).chainId) : null;
+const userChainId = provider ? Number((await provider.getNetwork()).chainId) : null;
 if (userAddress && userChainId && userChainId !== targetChainId) {
   toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
   try {
@@ -1990,18 +1990,33 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
       method: "wallet_switchEthereumChain",
       params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
     });
-    activeNet = NETWORKS[targetChainId];
-    CONTRACT_ADDRESS = activeNet.contractAddress;
-    USDC_ADDRESS = activeNet.tokenAddress;
-    await reconnectContracts();
   } catch (e) {
     if (e.code === 4902) {
-      await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [{ chainId: NETWORKS[targetChainId].hexChainId, ...NETWORKS[targetChainId].addParams }],
-      });
+      try {
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{ chainId: NETWORKS[targetChainId].hexChainId, ...NETWORKS[targetChainId].addParams }],
+        });
+      } catch (_) {}
     }
   }
+  // ✅ Always rebuild after switch — wait for provider to reflect new chain
+  await new Promise(r => setTimeout(r, 500));
+  activeNet = NETWORKS[targetChainId];
+  CONTRACT_ADDRESS = activeNet.contractAddress;
+  USDC_ADDRESS = activeNet.tokenAddress;
+  provider = new ethers.BrowserProvider(window.ethereum);
+  signer = await provider.getSigner();
+  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+  if (!activeNet.isNative) {
+    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+  } else {
+    usdcContract = null;
+  }
+  readProvider = await createProvider(targetChainId);
+  readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
+  updateNetBar();
+  toast(`✅ Switched to ${activeNet.name}`, "success");
 }
 
   const targetNet = NETWORKS[targetChainId];
