@@ -2467,11 +2467,49 @@ async function startPlay() {
 
   const g = currentGame || (await getGame(currentGameId));
   const catId = Number(g[3]), diff = Number(g[5]);
+
   toast("Loading questions...", "info");
 
   try {
-    // ✅ Get questions FROM SERVER (not OpenTDB directly)
-    const res = await fetch(`${BACKEND}/game/start`, {
+    // ✅ Fetch from OpenTDB with fallback categories
+    const diffParam = diff === 0 ? "" : `&difficulty=${["","easy","medium","hard"][diff]}`;
+    const url = `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`;
+
+    let qtData;
+    // Try primary category first, fallback to General Knowledge
+    for (const fetchUrl of [url, `https://opentdb.com/api.php?amount=10&type=multiple&encode=url3986${diffParam}`]) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const qtRes = await fetch(fetchUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+        qtData = await qtRes.json();
+        if (qtData.response_code === 0 && qtData.results?.length > 0) break;
+      } catch (_) {}
+    }
+
+    if (!qtData || qtData.response_code !== 0 || !qtData.results?.length) {
+      toast("Could not load questions. Try again.", "error");
+      return;
+    }
+
+    // ✅ Build questions with shuffled answers — store correct answer locally
+    questions = qtData.results.map((q, idx) => {
+      const correct = decodeURIComponent(q.correct_answer);
+      const incorrect = q.incorrect_answers.map(a => decodeURIComponent(a));
+      // Unique shuffle seed per game+question so same player can't memorize
+      const options = shuffle([correct, ...incorrect]);
+      return {
+        question: decodeURIComponent(q.question),
+        correct,
+        answers: options,
+        diff: q.difficulty,
+        id: idx,
+      };
+    });
+
+    // ✅ Notify backend a session started (non-blocking, ignore failures)
+    fetch(`${BACKEND}/game/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -2479,25 +2517,8 @@ async function startPlay() {
         gameId: currentGameId,
         wallet: userAddress,
         chainId: currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002),
-        categoryId: catId,
-        difficulty: diff,
       }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      toast(data.error || "Failed to start game", "error");
-      return;
-    }
-
-    // Server returns questions without correct answers
-    questions = data.questions.map((q) => ({
-      question: q.question,
-      correct: null, // server holds this
-      answers: q.options,
-      diff: ["easy","medium","hard"][diff - 1] || "easy",
-      id: q.questionIndex,
-    }));
+    }).catch(() => {});
 
     currentQ = 0;
     score = 0;
@@ -2508,8 +2529,9 @@ async function startPlay() {
     showScreen("screenPlay");
     loadQ();
     hideToast();
+
   } catch (e) {
-    toast("Error: " + e.message, "error");
+    toast("Error loading questions: " + e.message, "error");
   }
 }
 
@@ -2601,42 +2623,64 @@ function pickAnswer(idx) {
   answered = true;
   clearInterval(timerInt);
   const q = questions[currentQ];
+  const selected = q.answers[idx];
+  const correct = selected === q.correct;
+  const speed = correct ? Math.floor((timeLeft / 15) * 50) : 0;
+  const pts = correct ? 100 + speed : 0;
+  score += pts;
 
   answers.push({
     questionIndex: currentQ,
-    selected: q.answers[idx],
+    selected,
+    correct,
     timeLeft,
   });
 
-  // Show neutral feedback (server will score)
-  document.querySelectorAll(".ans-btn").forEach((b) => b.disabled = true);
+  if (correct) {
+    streakCount++;
+    if (streakCount >= STREAK_THRESHOLD) payStreakBonus();
+  } else {
+    streakCount = 0;
+  }
+
+  // ✅ Show correct/wrong feedback immediately
+  document.querySelectorAll(".ans-btn").forEach((b, i) => {
+    b.disabled = true;
+    if (q.answers[i] === q.correct) b.classList.add("correct");
+    else if (i === idx && !correct) b.classList.add("wrong");
+  });
+
+  document.getElementById("qPts").textContent =
+    streakCount >= STREAK_THRESHOLD ? `⭐ ${score} 🔥x${streakCount}` : `⭐ ${score}`;
+
   const fb = document.getElementById("qFeedback");
   fb.style.display = "block";
-  fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
-  fb.textContent = `Answer recorded ✓`;
+  if (correct) {
+    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
+    fb.textContent = `✓ Correct! +${pts} pts${speed > 0 ? " (⚡ speed bonus!)" : ""}${streakCount >= STREAK_THRESHOLD ? ` 🔥 Streak x${streakCount}` : ""}`;
+  } else {
+    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+    fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
+  }
 
-  setTimeout(() => { currentQ++; loadQ(); }, 1000);
+  setTimeout(() => { currentQ++; loadQ(); }, 1500);
 }
-
 
 function timeUp() {
   answered = true;
   streakCount = 0;
   const q = questions[currentQ];
-  answers.push({ questionIndex: currentQ, correct: false, timeLeft: 0 });
+  answers.push({ questionIndex: currentQ, correct: false, selected: null, timeLeft: 0 });
   document.querySelectorAll(".ans-btn").forEach((b, i) => {
     b.disabled = true;
     if (q.answers[i] === q.correct) b.classList.add("correct");
   });
   const fb = document.getElementById("qFeedback");
-  fb.style.cssText =
-    "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+  fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
   fb.textContent = `⏰ Time's up! Answer: ${q.correct}`;
-  setTimeout(() => {
-    currentQ++;
-    loadQ();
-  }, 1500);
+  setTimeout(() => { currentQ++; loadQ(); }, 1500);
 }
+
 
 async function getAIHint() {
   if (!contract || !userAddress) return toast("Connect wallet first", "error");
