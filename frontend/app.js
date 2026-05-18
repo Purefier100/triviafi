@@ -919,8 +919,22 @@ function gameToArray(g) {
 
 // Wrapper: always call this instead of readContract.getGame() directly
 async function getGame(id) {
-  const raw = await readContract.getGame(id);
-  return gameToArray(raw);
+  try {
+    const raw = await Promise.race([
+      readContract.getGame(id),
+
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 4000)
+      ),
+    ]);
+
+    return gameToArray(raw);
+
+  } catch (e) {
+    console.warn("Game load failed:", id);
+
+    return null;
+  }
 }
 
 async function createProvider(chainId) {
@@ -972,7 +986,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   setInterval(() => {
   const screen = document.querySelector(".screen.active");
   if (screen?.id === "screenLobby") loadGames();
-}, 30000);
+}, 10000);
 });
 
 function checkUrlGame() {
@@ -1228,12 +1242,13 @@ async function connectWallet() {
 
     renderAuthState();
     toast("✅ Wallet connected!", "success");
-    await loadGames();
+    document.body.classList.add("wallet-connected");
+    loadGames();
     loadMyStats();
 
     // refresh current opened game instantly
     if (currentGameId) {
-      await openGame(currentGameId);
+      openGame(currentGameId);
     }
 
     if (window.pendingGameId) {
@@ -1289,8 +1304,47 @@ function injectStreakStyles() {
     .bet-quick-btns{display:flex;gap:8px;margin:10px 0}
     .bet-quick-btn{flex:1;padding:8px;border-radius:8px;border:1px solid rgba(123,97,255,.3);background:rgba(123,97,255,.08);color:var(--purple);font-size:.82rem;font-weight:600;cursor:pointer}
     .bet-quick-btn:hover{background:rgba(123,97,255,.2);border-color:var(--purple)}
+    .skeleton-card {
+    border-radius: 18px;
+    min-height: 190px;
+    
+    background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.03) 25%,
+    rgba(255,255,255,0.08) 50%,
+    rgba(255,255,255,0.03) 75%
+    
+    );
+    
+    background-size: 200% 100%;
+    
+    animation: shimmer 1.3s linear infinite;
+    
+    border: 1px solid rgba(255,255,255,0.04);
+    }
+    
+    @keyframes shimmer {
+    0% {
+    background-position: 200% 0;
+    }
+    
+    100% {
+    background-position: -200% 0;
+    }
+    }
   `;
   document.head.appendChild(s);
+}
+
+function skeletonCards(count = 6) {
+  return `
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+    <div class="skeleton-card"></div>
+  `;
 }
 
 function showStreakBanner(n) {
@@ -1407,10 +1461,11 @@ function setTickerText(html) {
 }
 
 async function loadGames() {
-  const el = document.getElementById("gamesList");
-  el.innerHTML = `<div class="game-grid">${Array(6)
-    .fill('<div class="skeleton skeleton-card"></div>')
-    .join("")}</div>`;
+  const grid = document.getElementById("gamesGrid");
+
+  if (grid) {
+    grid.innerHTML = skeletonCards(6);
+  }
 
   try {
     // ── Fetch from BOTH chains in parallel ───────────────────────────────────
