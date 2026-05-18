@@ -2467,58 +2467,44 @@ async function startPlay() {
 
   const g = currentGame || (await getGame(currentGameId));
   const catId = Number(g[3]), diff = Number(g[5]);
+  const chainId = currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
 
   toast("Loading questions...", "info");
 
   try {
-    // ✅ Fetch from OpenTDB with fallback categories
-    const diffParam = diff === 0 ? "" : `&difficulty=${["","easy","medium","hard"][diff]}`;
-    const url = `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
-    let qtData;
-    // Try primary category first, fallback to General Knowledge
-    for (const fetchUrl of [url, `https://opentdb.com/api.php?amount=10&type=multiple&encode=url3986${diffParam}`]) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-        const qtRes = await fetch(fetchUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-        qtData = await qtRes.json();
-        if (qtData.response_code === 0 && qtData.results?.length > 0) break;
-      } catch (_) {}
-    }
-
-    if (!qtData || qtData.response_code !== 0 || !qtData.results?.length) {
-      toast("Could not load questions. Try again.", "error");
-      return;
-    }
-
-    // ✅ Build questions with shuffled answers — store correct answer locally
-    questions = qtData.results.map((q, idx) => {
-      const correct = decodeURIComponent(q.correct_answer);
-      const incorrect = q.incorrect_answers.map(a => decodeURIComponent(a));
-      // Unique shuffle seed per game+question so same player can't memorize
-      const options = shuffle([correct, ...incorrect]);
-      return {
-        question: decodeURIComponent(q.question),
-        correct,
-        answers: options,
-        diff: q.difficulty,
-        id: idx,
-      };
-    });
-
-    // ✅ Notify backend a session started (non-blocking, ignore failures)
-    fetch(`${BACKEND}/game/start`, {
+    const res = await fetch(`${BACKEND}/game/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
+      signal: controller.signal,
       body: JSON.stringify({
         gameId: currentGameId,
         wallet: userAddress,
-        chainId: currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002),
+        chainId,
+        categoryId: catId,
+        difficulty: diff,
       }),
-    }).catch(() => {});
+    });
+    clearTimeout(timeout);
+
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || "Failed to start game", "error");
+      return;
+    }
+
+    // ✅ Server sends questions WITHOUT correct answers
+    // correct answer is NEVER sent to client
+    questions = data.questions.map((q) => ({
+      question: q.question,
+      answers: q.options,       // shuffled options, no correct field
+      diff: q.diff || "easy",
+      id: q.questionIndex,
+      correct: null,            // intentionally null — server holds this
+    }));
 
     currentQ = 0;
     score = 0;
@@ -2531,7 +2517,7 @@ async function startPlay() {
     hideToast();
 
   } catch (e) {
-    toast("Error loading questions: " + e.message, "error");
+    toast("Server required to play. Please try again.", "error");
   }
 }
 
@@ -2624,61 +2610,37 @@ function pickAnswer(idx) {
   clearInterval(timerInt);
   const q = questions[currentQ];
   const selected = q.answers[idx];
-  const correct = selected === q.correct;
-  const speed = correct ? Math.floor((timeLeft / 15) * 50) : 0;
-  const pts = correct ? 100 + speed : 0;
-  score += pts;
 
+  // ✅ Record ONLY what user selected — no correct flag, no score
   answers.push({
     questionIndex: currentQ,
-    selected,
-    correct,
-    timeLeft,
+    selected,          // just the text they picked
+    timeLeft,          // time remaining for speed bonus
   });
 
-  if (correct) {
-    streakCount++;
-    if (streakCount >= STREAK_THRESHOLD) payStreakBonus();
-  } else {
-    streakCount = 0;
-  }
-
-  // ✅ Show correct/wrong feedback immediately
-  document.querySelectorAll(".ans-btn").forEach((b, i) => {
-    b.disabled = true;
-    if (q.answers[i] === q.correct) b.classList.add("correct");
-    else if (i === idx && !correct) b.classList.add("wrong");
-  });
-
-  document.getElementById("qPts").textContent =
-    streakCount >= STREAK_THRESHOLD ? `⭐ ${score} 🔥x${streakCount}` : `⭐ ${score}`;
+  // Neutral UI — don't reveal correct answer
+  document.querySelectorAll(".ans-btn").forEach((b) => b.disabled = true);
+  document.querySelectorAll(".ans-btn")[idx].style.background = "rgba(0,229,255,.15)";
+  document.querySelectorAll(".ans-btn")[idx].style.borderColor = "var(--accent)";
 
   const fb = document.getElementById("qFeedback");
-  fb.style.display = "block";
-  if (correct) {
-    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
-    fb.textContent = `✓ Correct! +${pts} pts${speed > 0 ? " (⚡ speed bonus!)" : ""}${streakCount >= STREAK_THRESHOLD ? ` 🔥 Streak x${streakCount}` : ""}`;
-  } else {
-    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
-    fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
-  }
+  fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
+  fb.textContent = "Answer recorded ✓";
 
-  setTimeout(() => { currentQ++; loadQ(); }, 1500);
+  setTimeout(() => { currentQ++; loadQ(); }, 1000);
 }
 
 function timeUp() {
   answered = true;
-  streakCount = 0;
-  const q = questions[currentQ];
-  answers.push({ questionIndex: currentQ, correct: false, selected: null, timeLeft: 0 });
-  document.querySelectorAll(".ans-btn").forEach((b, i) => {
-    b.disabled = true;
-    if (q.answers[i] === q.correct) b.classList.add("correct");
-  });
+  answers.push({ questionIndex: currentQ, selected: null, timeLeft: 0 });
+
+  document.querySelectorAll(".ans-btn").forEach((b) => b.disabled = true);
+
   const fb = document.getElementById("qFeedback");
   fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
-  fb.textContent = `⏰ Time's up! Answer: ${q.correct}`;
-  setTimeout(() => { currentQ++; loadQ(); }, 1500);
+  fb.textContent = "⏰ Time's up!";
+
+  setTimeout(() => { currentQ++; loadQ(); }, 1200);
 }
 
 
@@ -2750,13 +2712,9 @@ async function doClaimRefund(gameId) {
 
 async function finishTrivia() {
   clearInterval(timerInt);
-  saveScore(currentGameId, score);
-  document.getElementById("resScore").textContent = score;
-  document.getElementById("resIcon").textContent =
-    score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-  document.getElementById("resSub").textContent = `${
-    questions.length
-  } questions · ${questions[0]?.diff || "mixed"} · ${score} pts`;
+  document.getElementById("resScore").textContent = "...";
+  document.getElementById("resIcon").textContent = "⏳";
+  document.getElementById("resSub").textContent = `${questions.length} questions answered — submit to see score`;
   document.getElementById("winnerBanner").innerHTML = "";
   document.getElementById("submitSection").style.display = "block";
   showScreen("screenResults");

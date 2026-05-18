@@ -1299,38 +1299,35 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       });
     }
 
-    const storedQs = await pool.query(
-      "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
-      [sessionId],
-    );
+    // In /submit-score, replace the scoring section:
 
-    let score = 0;
-    if (storedQs.rows.length > 0) {
-      // ✅ Full server-side verification — ignores client's correct flag
-      for (const stored of storedQs.rows) {
-        const userAnswer = answers.find(
-          (a) => a.questionIndex === stored.q_index,
-        );
-        if (!userAnswer) continue;
-        if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-        }
-      }
-    } else {
-      // ✅ No stored questions — calculate from client answers with correct flags
-  // Client sends correct:true/false which we trust since score is bounded
-  for (const ans of answers) {
-    if (ans.correct === true) {
-      const tl = Math.max(0, Math.min(15, ans.timeLeft || 0));
-      score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-    }
-  }
-  score = Math.min(score, 1500); // cap at max possible
-  console.log(`⚠️ Using client score fallback: ${score}`);
+const storedQs = await pool.query(
+  "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
+  [sessionId],
+);
+
+let score = 0;
+
+if (storedQs.rows.length === 0) {
+  // ✅ No stored questions = backend was asleep when game started
+  // Reject — cannot verify score without server-stored questions
+  return res.status(400).json({
+    error: "Game session expired. You must start the game while server is online.",
+  });
 }
 
-    score = Math.min(score, 1500);
+// ✅ Score calculated 100% server-side — client correct flag IGNORED
+for (const stored of storedQs.rows) {
+  const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
+  if (!userAnswer || !userAnswer.selected) continue;
+
+  if (userAnswer.selected === stored.correct_answer) {
+    const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
+    score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+  }
+}
+
+score = Math.min(score, 1500);
 
     // ✅ Sign the score
     const message = ethers.solidityPackedKeccak256(
@@ -1480,6 +1477,16 @@ app.get("/health", (req, res) =>
     contract: CONTRACT_ADDRESS,
   }),
 );
+
+// Self-ping to prevent Render sleep
+if (process.env.NODE_ENV === "production") {
+  setInterval(async () => {
+    try {
+      await fetch(`https://name-triviafi-backend.onrender.com/health`);
+      console.log("🏓 Self-ping OK");
+    } catch (_) {}
+  }, 8 * 60 * 1000); // every 8 minutes
+}
 
 // =============================================================================
 // START
