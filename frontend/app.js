@@ -859,8 +859,10 @@ let currentGameId = null,
 let selectedCatId = null,
   selectedCatName = null,
   selectedDiff = 0;
-let allGames = [],
-  filterStatus = "all";
+let allGames = [];
+let gamesLoading = false;
+let lastGamesRender = 0;
+let filterStatus = "all";
 let questions = [],
   currentQ = 0,
   score = 0;
@@ -1461,6 +1463,10 @@ function setTickerText(html) {
 }
 
 async function loadGames() {
+  if (gamesLoading) return;
+  gamesLoading = true;
+  const renderId = Date.now();
+  lastGamesRender = renderId;
   const grid = document.getElementById("gamesGrid");
 
   if (grid) {
@@ -1500,13 +1506,20 @@ async function loadGames() {
     const totalCount = arcCount + litvmCount;
     document.getElementById("gTotal").textContent = totalCount;
 
-    if (totalCount === 0) {
-      el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet! Create the first one.</p>`;
-      document.getElementById("gPool").textContent = "$0";
-      document.getElementById("gActive").textContent = "0";
-      return;
-    }
+   if (totalCount === 0) {
+  grid.innerHTML = `
+    <p style="color:var(--muted);text-align:center;padding:30px">
+      No games yet! Create the first one.
+    </p>
+  `;
 
+  document.getElementById("gPool").textContent = "$0";
+  document.getElementById("gActive").textContent = "0";
+
+  gamesLoading = false;
+
+  return;
+}
     const LIMIT = 100;
     const BATCH = 5;
     allGames = [];
@@ -1556,7 +1569,12 @@ async function loadGames() {
         if (r.status === "fulfilled") allGames.push(r.value);
     }
 
-    // Sort newest first (by game id desc, arc first for ties)
+    // prevent stale refresh overwrite
+    if (renderId !== lastGamesRender) {
+      gamesLoading = false;
+      return;
+    }
+
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
 
     // Stats
@@ -1579,9 +1597,15 @@ async function loadGames() {
 
     renderGames();
     updateTicker();
+    gamesLoading = false;
   } catch (e) {
-    el.innerHTML = `<p style="color:var(--red);text-align:center;padding:20px">Error: ${e.message}</p>`;
-  }
+  gamesLoading = false;
+
+  grid.innerHTML = `
+    <p style="color:var(--red);text-align:center;padding:20px">
+      Error: ${e.message}
+    </p>
+  `;
 }
 
 // Loads older games on demand
