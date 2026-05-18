@@ -261,15 +261,20 @@ async function initDB() {
     // GAME QUESTIONS
     // =========================================================================
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS game_questions (
-        id                  SERIAL PRIMARY KEY,
-        session_id          INT REFERENCES game_sessions(id) ON DELETE CASCADE,
-        q_index             INT NOT NULL,
-        correct_answer      TEXT NOT NULL,
+  CREATE TABLE IF NOT EXISTS game_questions (
+    id             SERIAL PRIMARY KEY,
+    session_id     INT REFERENCES game_sessions(id) ON DELETE CASCADE,
+    q_index        INT NOT NULL,
+    correct_answer TEXT NOT NULL,
+    question       TEXT,
+    options        TEXT,
+    UNIQUE(session_id, q_index)
+  );
+`);
 
-        UNIQUE(session_id, q_index)
-      );
-    `);
+// ✅ Add missing columns to existing table (safe to run multiple times)
+await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
+await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
     await pool
       .query(
         `
