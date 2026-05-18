@@ -1598,14 +1598,15 @@ async function loadGames() {
     renderGames();
     updateTicker();
     gamesLoading = false;
-  } catch (e) {
-  gamesLoading = false;
+    } catch (e) {
+    gamesLoading = false;
 
-  grid.innerHTML = `
-    <p style="color:var(--red);text-align:center;padding:20px">
-      Error: ${e.message}
-    </p>
-  `;
+    grid.innerHTML = `
+      <p style="color:var(--red);text-align:center;padding:20px">
+        Error: ${e.message}
+      </p>
+    `;
+  }
 }
 
 // Loads older games on demand
