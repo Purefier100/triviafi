@@ -2971,6 +2971,10 @@ async function doTriggerEnd(gameId) {
 }
 
 async function refreshResults() {
+  const gameNet = NETWORKS[currentGameChainId] || activeNet;
+const gameDecimals = gameNet.decimals;
+const gameSymbol = gameNet.symbol;
+const dp = gameDecimals === 18 ? 4 : 2;
   if (!currentGameId) return;
   try {
     const g = await getGame(currentGameId);
@@ -2983,8 +2987,9 @@ async function refreshResults() {
           (p) => p?.toLowerCase() === userAddress?.toLowerCase(),
         )
       : -1;
-    if (myPos >= 0 && s === 1) {
-      const dist = parseFloat(ethers.formatUnits(prizePool, 6)) * 0.95;
+    if (myPos >= 0 && s === 1 && loadSavedScore(currentGameId) > 0) {
+
+      const dist = parseFloat(ethers.formatUnits(prizePool, gameDecimals)) * 0.95;
       const prizes =
         n === 1
           ? [dist]
@@ -3000,7 +3005,7 @@ async function refreshResults() {
         "winnerBanner",
       ).innerHTML = `<div class="winner-banner"><h3>${
         medals[myPos]
-      } — YOU WON!</h3><div class="winner-prize">${prize} USDC</div>${
+      } — YOU WON!</h3><div class="winner-prize">${prize} gameSymbol</div>${
         !claimed_
           ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
           : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`
@@ -3017,7 +3022,7 @@ async function refreshResults() {
     const [addrs, scoreList, finished, claimedList] =
       await readContract.getLeaderboard(currentGameId);
     if (!addrs.length) return;
-    const dist = parseFloat(ethers.formatUnits(prizePool, 6)) * 0.95;
+    const dist = parseFloat(ethers.formatUnits(prizePool, gameDecimals)) * 0.95;
     const prizes =
       n === 1
         ? [dist, 0, 0]

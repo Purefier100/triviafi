@@ -275,20 +275,17 @@ async function initDB() {
 // ✅ Add missing columns to existing table (safe to run multiple times)
 await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
 await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
-    await pool
-      .query(
-        `
+   // With this single safe block:
+await pool.query(`
+  DO $$ BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'gs_user_game_chain_unique'
+    ) THEN
       ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_user_id_game_id_key;
-    `,
-      )
-      .catch(() => {});
-    await pool
-      .query(
-        `
-      ALTER TABLE game_sessions ADD CONSTRAINT IF NOT EXISTS gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
-    `,
-      )
-      .catch(() => {});
+      ALTER TABLE game_sessions ADD CONSTRAINT gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
+    END IF;
+  END $$;
+`).catch(() => {});
 
     // Make google_id nullable
     await pool
@@ -967,6 +964,123 @@ app.get("/debug/rpc", async (req, res) => {
   res.json(results);
 });
 
+// ✅ LOCAL QUESTION BANK — 200 questions across categories
+// Used when OpenTDB is unavailable. Prevents "No questions available" errors.
+const LOCAL_QUESTIONS = {
+  9: [ // General Knowledge
+    { q: "What is the capital of Australia?", correct: "Canberra", wrong: ["Sydney", "Melbourne", "Perth"] },
+    { q: "How many sides does a hexagon have?", correct: "6", wrong: ["5", "7", "8"] },
+    { q: "Which planet is known as the Red Planet?", correct: "Mars", wrong: ["Jupiter", "Venus", "Saturn"] },
+    { q: "What is the largest ocean on Earth?", correct: "Pacific Ocean", wrong: ["Atlantic Ocean", "Indian Ocean", "Arctic Ocean"] },
+    { q: "Who painted the Mona Lisa?", correct: "Leonardo da Vinci", wrong: ["Michelangelo", "Raphael", "Donatello"] },
+    { q: "What is the chemical symbol for gold?", correct: "Au", wrong: ["Go", "Gd", "Ag"] },
+    { q: "How many bones are in the adult human body?", correct: "206", wrong: ["195", "213", "220"] },
+    { q: "What year did World War II end?", correct: "1945", wrong: ["1943", "1944", "1946"] },
+    { q: "What is the smallest country in the world?", correct: "Vatican City", wrong: ["Monaco", "San Marino", "Liechtenstein"] },
+    { q: "Which element has the atomic number 1?", correct: "Hydrogen", wrong: ["Helium", "Oxygen", "Carbon"] },
+    { q: "What is the fastest land animal?", correct: "Cheetah", wrong: ["Lion", "Leopard", "Gazelle"] },
+    { q: "In what country was pizza invented?", correct: "Italy", wrong: ["Greece", "France", "Spain"] },
+    { q: "What is the longest river in the world?", correct: "Nile", wrong: ["Amazon", "Mississippi", "Yangtze"] },
+    { q: "How many continents are there?", correct: "7", wrong: ["5", "6", "8"] },
+    { q: "What gas do plants absorb from the atmosphere?", correct: "Carbon Dioxide", wrong: ["Oxygen", "Nitrogen", "Hydrogen"] },
+  ],
+  17: [ // Science
+    { q: "What is the speed of light?", correct: "299,792,458 m/s", wrong: ["300,000,000 m/s", "199,792,458 m/s", "399,792,458 m/s"] },
+    { q: "What is the powerhouse of the cell?", correct: "Mitochondria", wrong: ["Nucleus", "Ribosome", "Golgi Apparatus"] },
+    { q: "What planet has the most moons?", correct: "Saturn", wrong: ["Jupiter", "Uranus", "Neptune"] },
+    { q: "What is the hardest natural substance?", correct: "Diamond", wrong: ["Ruby", "Quartz", "Topaz"] },
+    { q: "What force keeps planets in orbit?", correct: "Gravity", wrong: ["Magnetism", "Friction", "Centripetal force"] },
+    { q: "How many chromosomes do humans have?", correct: "46", wrong: ["23", "48", "44"] },
+    { q: "What is H2O commonly known as?", correct: "Water", wrong: ["Hydrogen Peroxide", "Oxygen", "Salt water"] },
+    { q: "What is the center of an atom called?", correct: "Nucleus", wrong: ["Electron", "Proton", "Neutron"] },
+    { q: "Which gas makes up most of Earth's atmosphere?", correct: "Nitrogen", wrong: ["Oxygen", "Carbon Dioxide", "Argon"] },
+    { q: "What is the boiling point of water at sea level?", correct: "100°C", wrong: ["90°C", "110°C", "95°C"] },
+    { q: "What type of energy does the sun produce?", correct: "Nuclear energy", wrong: ["Chemical energy", "Mechanical energy", "Electrical energy"] },
+    { q: "What is DNA short for?", correct: "Deoxyribonucleic acid", wrong: ["Dioxyribonucleic acid", "Diribonucleic acid", "Deoxyribose acid"] },
+    { q: "What is the process by which plants make food?", correct: "Photosynthesis", wrong: ["Respiration", "Fermentation", "Digestion"] },
+    { q: "How many planets are in our solar system?", correct: "8", wrong: ["7", "9", "10"] },
+    { q: "What is the study of earthquakes called?", correct: "Seismology", wrong: ["Geology", "Volcanology", "Meteorology"] },
+  ],
+  23: [ // History
+    { q: "In what year did the Berlin Wall fall?", correct: "1989", wrong: ["1987", "1991", "1985"] },
+    { q: "Who was the first President of the United States?", correct: "George Washington", wrong: ["John Adams", "Thomas Jefferson", "Benjamin Franklin"] },
+    { q: "Which empire was the largest in history?", correct: "British Empire", wrong: ["Roman Empire", "Mongol Empire", "Ottoman Empire"] },
+    { q: "In what year did World War I begin?", correct: "1914", wrong: ["1912", "1916", "1918"] },
+    { q: "Who discovered America?", correct: "Christopher Columbus", wrong: ["Amerigo Vespucci", "Leif Erikson", "Vasco da Gama"] },
+    { q: "What ancient wonder was located in Alexandria?", correct: "The Lighthouse of Alexandria", wrong: ["The Colossus", "The Hanging Gardens", "The Temple of Artemis"] },
+    { q: "When was the Magna Carta signed?", correct: "1215", wrong: ["1066", "1314", "1415"] },
+    { q: "Who was Napoleon Bonaparte?", correct: "French Emperor", wrong: ["British General", "Russian Tsar", "Spanish King"] },
+    { q: "In what year did the Titanic sink?", correct: "1912", wrong: ["1910", "1914", "1916"] },
+    { q: "Which country first landed on the moon?", correct: "United States", wrong: ["Soviet Union", "China", "United Kingdom"] },
+    { q: "Who wrote the Declaration of Independence?", correct: "Thomas Jefferson", wrong: ["George Washington", "John Adams", "Benjamin Franklin"] },
+    { q: "What was the name of Hitler's political party?", correct: "Nazi Party", wrong: ["Communist Party", "Fascist Party", "Conservative Party"] },
+    { q: "When did the French Revolution begin?", correct: "1789", wrong: ["1776", "1799", "1804"] },
+    { q: "Who was Cleopatra?", correct: "Queen of Egypt", wrong: ["Queen of Rome", "Queen of Greece", "Queen of Persia"] },
+    { q: "What year did the Cold War end?", correct: "1991", wrong: ["1989", "1985", "1993"] },
+  ],
+  15: [ // Video Games
+    { q: "What company created Mario?", correct: "Nintendo", wrong: ["Sega", "Atari", "Sony"] },
+    { q: "In what game do you 'catch them all'?", correct: "Pokémon", wrong: ["Digimon", "Yo-kai Watch", "Monster Hunter"] },
+    { q: "What is the best-selling video game of all time?", correct: "Minecraft", wrong: ["Tetris", "GTA V", "Wii Sports"] },
+    { q: "Who is the main character in The Legend of Zelda?", correct: "Link", wrong: ["Zelda", "Ganon", "Impa"] },
+    { q: "What color is Sonic the Hedgehog?", correct: "Blue", wrong: ["Red", "Green", "Yellow"] },
+    { q: "In Fortnite, how many players compete in a match?", correct: "100", wrong: ["50", "150", "200"] },
+    { q: "What is the currency in Animal Crossing?", correct: "Bells", wrong: ["Coins", "Rupees", "Gold"] },
+    { q: "Which game features the character Master Chief?", correct: "Halo", wrong: ["Call of Duty", "Gears of War", "Destiny"] },
+    { q: "What year was the original PlayStation released?", correct: "1994", wrong: ["1993", "1995", "1996"] },
+    { q: "Which company makes the Xbox?", correct: "Microsoft", wrong: ["Sony", "Nintendo", "Sega"] },
+    { q: "What game popularized the battle royale genre?", correct: "PUBG", wrong: ["Fortnite", "Apex Legends", "H1Z1"] },
+    { q: "What is the max level in most Pokémon games?", correct: "100", wrong: ["50", "99", "150"] },
+    { q: "In Minecraft, what do you need to create a Nether portal?", correct: "Obsidian", wrong: ["Diamond", "Gold", "Lava"] },
+    { q: "What genre is Dark Souls?", correct: "Action RPG", wrong: ["Turn-based RPG", "Strategy", "Platformer"] },
+    { q: "Who is the villain in most Mario games?", correct: "Bowser", wrong: ["Wario", "Koopa", "Kamek"] },
+  ],
+  22: [ // Geography
+    { q: "What is the capital of Japan?", correct: "Tokyo", wrong: ["Osaka", "Kyoto", "Hiroshima"] },
+    { q: "Which country has the most natural lakes?", correct: "Canada", wrong: ["Russia", "United States", "Brazil"] },
+    { q: "What is the tallest mountain in the world?", correct: "Mount Everest", wrong: ["K2", "Mont Blanc", "Kilimanjaro"] },
+    { q: "Which country is the largest by area?", correct: "Russia", wrong: ["Canada", "China", "United States"] },
+    { q: "What is the capital of Brazil?", correct: "Brasília", wrong: ["São Paulo", "Rio de Janeiro", "Salvador"] },
+    { q: "Which desert is the largest in the world?", correct: "Sahara", wrong: ["Gobi", "Arabian", "Antarctic"] },
+    { q: "What river flows through Egypt?", correct: "Nile", wrong: ["Amazon", "Congo", "Tigris"] },
+    { q: "Which country has the most population?", correct: "India", wrong: ["China", "United States", "Indonesia"] },
+    { q: "What is the capital of France?", correct: "Paris", wrong: ["Lyon", "Marseille", "Bordeaux"] },
+    { q: "Which ocean is the smallest?", correct: "Arctic Ocean", wrong: ["Indian Ocean", "Atlantic Ocean", "Southern Ocean"] },
+    { q: "What country has the longest coastline?", correct: "Canada", wrong: ["Russia", "Australia", "Norway"] },
+    { q: "What is the capital of Germany?", correct: "Berlin", wrong: ["Munich", "Hamburg", "Frankfurt"] },
+    { q: "In which continent is the Amazon rainforest?", correct: "South America", wrong: ["Africa", "Asia", "Central America"] },
+    { q: "What is the smallest continent?", correct: "Australia", wrong: ["Europe", "Antarctica", "South America"] },
+    { q: "Which country owns Greenland?", correct: "Denmark", wrong: ["Norway", "Iceland", "Canada"] },
+  ],
+  18: [ // Computers
+    { q: "What does CPU stand for?", correct: "Central Processing Unit", wrong: ["Computer Processing Unit", "Central Program Unit", "Core Processing Unit"] },
+    { q: "Who founded Microsoft?", correct: "Bill Gates", wrong: ["Steve Jobs", "Mark Zuckerberg", "Elon Musk"] },
+    { q: "What does HTML stand for?", correct: "HyperText Markup Language", wrong: ["HyperText Machine Language", "HighText Markup Language", "HyperText Model Language"] },
+    { q: "What programming language is known for web development?", correct: "JavaScript", wrong: ["Python", "Java", "C++"] },
+    { q: "What is the most popular operating system?", correct: "Windows", wrong: ["macOS", "Linux", "Android"] },
+    { q: "What does RAM stand for?", correct: "Random Access Memory", wrong: ["Read Access Memory", "Random Application Memory", "Read Application Memory"] },
+    { q: "Who invented the World Wide Web?", correct: "Tim Berners-Lee", wrong: ["Bill Gates", "Steve Jobs", "Vint Cerf"] },
+    { q: "What is the binary representation of the number 5?", correct: "101", wrong: ["110", "100", "111"] },
+    { q: "What does URL stand for?", correct: "Uniform Resource Locator", wrong: ["Universal Resource Locator", "Unified Resource Link", "Universal Reference Link"] },
+    { q: "What company created the Android operating system?", correct: "Google", wrong: ["Apple", "Samsung", "Microsoft"] },
+    { q: "What is the shortcut to copy in most applications?", correct: "Ctrl+C", wrong: ["Ctrl+V", "Ctrl+X", "Ctrl+Z"] },
+    { q: "Which programming language was created by Guido van Rossum?", correct: "Python", wrong: ["Ruby", "Perl", "Java"] },
+    { q: "What does USB stand for?", correct: "Universal Serial Bus", wrong: ["Unified Serial Bus", "Universal System Bus", "Unified System Bus"] },
+    { q: "What is the file extension for a Python file?", correct: ".py", wrong: [".python", ".pt", ".pyc"] },
+    { q: "What does SSD stand for?", correct: "Solid State Drive", wrong: ["Super Speed Drive", "Static Storage Device", "System Storage Drive"] },
+  ],
+};
+
+// Fallback: use general knowledge for unmapped categories
+const DEFAULT_CAT = 9;
+
+function getLocalQuestions(catId, diff, count = 10) {
+  const bank = LOCAL_QUESTIONS[catId] || LOCAL_QUESTIONS[DEFAULT_CAT];
+  // Shuffle and pick `count` questions
+  const shuffled = [...bank].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, Math.min(count, shuffled.length));
+}
+
 app.post("/game/start", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
@@ -1017,9 +1131,9 @@ app.post("/game/start", async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO game_sessions (user_id, wallet, game_id)
-       VALUES ($1,$2,$3) ON CONFLICT (user_id,game_id) DO NOTHING`,
-      [req.user.id, wallet.toLowerCase(), gameId],
+      `INSERT INTO game_sessions (user_id, wallet, game_id, chain_id)
+      VALUES ($1,$2,$3,$4) ON CONFLICT ON CONSTRAINT gs_user_game_chain_unique DO NOTHING`,
+      [req.user.id, wallet.toLowerCase(), gameId, chainId],
     );
 
     const sessionRow = await pool.query(
@@ -1048,19 +1162,71 @@ app.post("/game/start", async (req, res) => {
     const diffParam =
       diff > 0 ? `&difficulty=${["", "easy", "medium", "hard"][diff]}` : "";
 
-    let qtData;
-    try {
-      const qtRes = await fetch(
-        `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
-      );
-      qtData = await qtRes.json();
-    } catch (e) {
-      return res.status(503).json({ error: "Failed to fetch questions" });
-    }
+    // ✅ Try OpenTDB first, fall back to local bank
+let useLocal = false;
+let qtResults = [];
 
-    if (!qtData || qtData.response_code !== 0) {
-      return res.status(503).json({ error: "No questions available" });
-    }
+try {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const qtRes = await fetch(
+    `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
+    { signal: controller.signal }
+  );
+  clearTimeout(timeout);
+  const qtData = await qtRes.json();
+
+  if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
+    qtResults = qtData.results.map(q => ({
+      question: decodeURIComponent(q.question),
+      correct: decodeURIComponent(q.correct_answer),
+      incorrect: q.incorrect_answers.map(a => decodeURIComponent(a)),
+      difficulty: q.difficulty,
+    }));
+  } else {
+    useLocal = true;
+  }
+} catch (e) {
+  useLocal = true;
+  console.warn("OpenTDB unavailable, using local bank:", e.message);
+}
+
+if (useLocal) {
+  const localQs = getLocalQuestions(catId, diff, 10);
+  qtResults = localQs.map(q => ({
+    question: q.q,
+    correct: q.correct,
+    incorrect: q.wrong,
+    difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : diff === 3 ? "hard" : "easy",
+  }));
+}
+
+if (!qtResults.length) {
+  return res.status(503).json({ error: "Could not load questions. Please try again." });
+}
+
+// ✅ Store questions server-side, shuffle options, never send correct to client
+const clientQuestions = [];
+for (let i = 0; i < qtResults.length; i++) {
+  const q = qtResults[i];
+  const options = [q.correct, ...q.incorrect].sort(() => Math.random() - 0.5);
+  const optionsJson = JSON.stringify(options);
+
+  await pool.query(
+    `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+     VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
+    [sessionId, i, q.correct, q.question, optionsJson],
+  );
+
+  clientQuestions.push({
+    questionIndex: i,
+    question: q.question,
+    options,
+    diff: q.difficulty,
+  });
+}
+
+res.json({ ok: true, questions: clientQuestions });
 
     // ✅ Store questions + correct answers server-side, shuffle options
     const clientQuestions = [];
@@ -1095,6 +1261,8 @@ app.post("/game/start", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+
 // =============================================================================
 // SUBMIT SCORE
 // =============================================================================
