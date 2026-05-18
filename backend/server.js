@@ -1159,103 +1159,73 @@ app.post("/game/start", async (req, res) => {
     // ✅ Fetch questions SERVER-SIDE — correct answers never sent to client
     const catId = categoryId || 9;
     const diff = parseInt(difficulty) || 0;
-    const diffParam =
-      diff > 0 ? `&difficulty=${["", "easy", "medium", "hard"][diff]}` : "";
+    const diffParam = diff > 0 ? `&difficulty=${["","easy","medium","hard"][diff]}` : "";
 
-    // ✅ Try OpenTDB first, fall back to local bank
-let useLocal = false;
-let qtResults = [];
+    let useLocal = false;
+    let qtResults = [];
 
-try {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  const qtRes = await fetch(
-    `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
-    { signal: controller.signal }
-  );
-  clearTimeout(timeout);
-  const qtData = await qtRes.json();
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const qtRes = await fetch(
+        `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeout);
+      const qtData = await qtRes.json();
 
-  if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
-    qtResults = qtData.results.map(q => ({
-      question: decodeURIComponent(q.question),
-      correct: decodeURIComponent(q.correct_answer),
-      incorrect: q.incorrect_answers.map(a => decodeURIComponent(a)),
-      difficulty: q.difficulty,
-    }));
-  } else {
-    useLocal = true;
-  }
-} catch (e) {
-  useLocal = true;
-  console.warn("OpenTDB unavailable, using local bank:", e.message);
-}
+      if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
+        qtResults = qtData.results.map(q => ({
+          question: decodeURIComponent(q.question),
+          correct:  decodeURIComponent(q.correct_answer),
+          incorrect: q.incorrect_answers.map(a => decodeURIComponent(a)),
+          difficulty: q.difficulty,
+        }));
+      } else {
+        useLocal = true;
+        console.warn("OpenTDB returned no results, using local bank");
+      }
+    } catch (e) {
+      useLocal = true;
+      console.warn("OpenTDB unavailable, using local bank:", e.message);
+    }
 
-if (useLocal) {
-  const localQs = getLocalQuestions(catId, diff, 10);
-  qtResults = localQs.map(q => ({
-    question: q.q,
-    correct: q.correct,
-    incorrect: q.wrong,
-    difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : diff === 3 ? "hard" : "easy",
-  }));
-}
+    if (useLocal) {
+      const localQs = getLocalQuestions(catId, diff, 10);
+      qtResults = localQs.map(q => ({
+        question:   q.q,
+        correct:    q.correct,
+        incorrect:  q.wrong,
+        difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : diff === 3 ? "hard" : "easy",
+      }));
+    }
 
-if (!qtResults.length) {
-  return res.status(503).json({ error: "Could not load questions. Please try again." });
-}
+    if (!qtResults.length) {
+      return res.status(503).json({ error: "Could not load questions. Please try again." });
+    }
 
-// ✅ Store questions server-side, shuffle options, never send correct to client
-const clientQuestions = [];
-for (let i = 0; i < qtResults.length; i++) {
-  const q = qtResults[i];
-  const options = [q.correct, ...q.incorrect].sort(() => Math.random() - 0.5);
-  const optionsJson = JSON.stringify(options);
-
-  await pool.query(
-    `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
-     VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-    [sessionId, i, q.correct, q.question, optionsJson],
-  );
-
-  clientQuestions.push({
-    questionIndex: i,
-    question: q.question,
-    options,
-    diff: q.difficulty,
-  });
-}
-
-res.json({ ok: true, questions: clientQuestions });
-
-    // ✅ Store questions + correct answers server-side, shuffle options
+    // ✅ Store questions server-side — correct answer NEVER sent to client
     const clientQuestions = [];
-    for (let i = 0; i < qtData.results.length; i++) {
-      const q = qtData.results[i];
-      const correct = decodeURIComponent(q.correct_answer);
-      const question = decodeURIComponent(q.question);
-      const incorrect = q.incorrect_answers.map((a) => decodeURIComponent(a));
-
-      // Shuffle options
-      const options = [correct, ...incorrect].sort(() => Math.random() - 0.5);
-      const optionsJson = JSON.stringify(options);
+    for (let i = 0; i < qtResults.length; i++) {
+      const q = qtResults[i];
+      const options = [q.correct, ...q.incorrect].sort(() => Math.random() - 0.5);
 
       await pool.query(
         `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-        [sessionId, i, correct, question, optionsJson],
+        [sessionId, i, q.correct, q.question, JSON.stringify(options)],
       );
 
-      // Send to client WITHOUT correct answer
       clientQuestions.push({
         questionIndex: i,
-        question,
+        question: q.question,
         options,
         diff: q.difficulty,
       });
     }
 
-    res.json({ ok: true, questions: clientQuestions });
+    return res.json({ ok: true, questions: clientQuestions });
+
   } catch (e) {
     console.error("Game start error:", e.message);
     res.status(500).json({ error: e.message });
