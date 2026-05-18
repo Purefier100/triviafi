@@ -1197,6 +1197,24 @@ async function connectWallet() {
     });
     const authData = await authRes.json();
 
+    const me = await fetch(`${BACKEND}/auth/me`, {
+      credentials: "include",
+    });
+    
+    const meData = await me.json();
+    
+    const activeScreen = document.querySelector(".screen.active");
+    
+    if (activeScreen?.id === "screenJoin" && currentGameId) {
+      
+      await openGame(currentGameId);
+    }
+    
+    if (meData.user) {
+      
+      currentProfile = meData.user;
+    }
+
     if (authData.error) {
       toast(`⚠️ ${authData.error}`, "error");
     } else if (authData.user) {
@@ -1212,6 +1230,11 @@ async function connectWallet() {
     toast("✅ Wallet connected!", "success");
     await loadGames();
     loadMyStats();
+
+    // refresh current opened game instantly
+    if (currentGameId) {
+      await openGame(currentGameId);
+    }
 
     if (window.pendingGameId) {
       openGame(window.pendingGameId);
