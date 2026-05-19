@@ -201,21 +201,38 @@ async function initDB() {
     `);
 
     // =========================================================================
-    // GAME SESSIONS
+    // GAME SESSIONS — drop and recreate constraint safely
     // =========================================================================
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS game_sessions (
-        id              SERIAL PRIMARY KEY,
-        user_id         INT REFERENCES users(id) ON DELETE CASCADE,
-        wallet          TEXT NOT NULL,
-        game_id         INT NOT NULL,
-        chain_id        INT DEFAULT 5042002,
-        started_at      TIMESTAMPTZ DEFAULT NOW(),
-        finished        BOOLEAN DEFAULT FALSE,
-        score           INT DEFAULT 0,
-        UNIQUE(user_id, game_id, chain_id)
+      CREATE TABLE IF NOT EXISTS game_sessions ( 
+      id         SERIAL PRIMARY KEY,
+      user_id    INT REFERENCES users(id) ON DELETE CASCADE,
+      wallet     TEXT NOT NULL,
+      game_id    INT NOT NULL,
+      chain_id   INT DEFAULT 5042002,
+      started_at TIMESTAMPTZ DEFAULT NOW(),
+      finished   BOOLEAN DEFAULT FALSE,
+      score      INT DEFAULT 0
       );
     `);
+    
+    // ✅ Add chain_id column if missing (existing tables)
+    await pool.query(`ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`).catch(() => {});
+    // ✅ Safely recreate the unique constraint with chain_id included
+    await pool.query(`
+      DO $$ BEGIN
+     -- Drop old constraint without chain_id if it exists
+     IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'game_sessions_user_id_game_id_key') THEN
+      ALTER TABLE game_sessions DROP CONSTRAINT game_sessions_user_id_game_id_key;
+      END IF;
+      -- Drop new constraint if it exists (so we can recreate cleanly)
+      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gs_user_game_chain_unique') THEN
+      ALTER TABLE game_sessions DROP CONSTRAINT gs_user_game_chain_unique;
+      END IF;
+      -- Add the correct constraint
+      ALTER TABLE game_sessions ADD CONSTRAINT gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
+      END $$;
+    `).catch((e) => console.warn("Constraint migration:", e.message));
 
     // =========================================================================
     // BETS
@@ -1133,10 +1150,10 @@ app.post("/game/start", async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO game_sessions (user_id, wallet, game_id, chain_id)
-      VALUES ($1,$2,$3,$4) ON CONFLICT ON CONSTRAINT gs_user_game_chain_unique DO NOTHING`,
-      [req.user.id, wallet.toLowerCase(), gameId, chainId],
-    );
+  `INSERT INTO game_sessions (user_id, wallet, game_id, chain_id)
+  VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, game_id, chain_id) DO NOTHING`,
+  [req.user.id, wallet.toLowerCase(), gameId, chainId],
+);
 
     const sessionRow = await pool.query(
       "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
