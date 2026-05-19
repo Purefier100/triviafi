@@ -212,12 +212,19 @@ async function initDB() {
       chain_id   INT DEFAULT 5042002,
       started_at TIMESTAMPTZ DEFAULT NOW(),
       finished   BOOLEAN DEFAULT FALSE,
-      score      INT DEFAULT 0
+      score      INT DEFAULT 0,
+      finished_at TIMESTAMPTZ
       );
     `);
     
     // ✅ Add chain_id column if missing (existing tables)
     await pool.query(`ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`).catch(() => {});
+    
+    await pool.query(`
+      ALTER TABLE game_sessions
+      ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ
+      `).catch(() => {});
+      
     // ✅ Safely recreate the unique constraint with chain_id included
     await pool.query(`
       DO $$ BEGIN
@@ -278,31 +285,31 @@ async function initDB() {
     // GAME QUESTIONS
     // =========================================================================
     await pool.query(`
-  CREATE TABLE IF NOT EXISTS game_questions (
-    id             SERIAL PRIMARY KEY,
-    session_id     INT REFERENCES game_sessions(id) ON DELETE CASCADE,
-    q_index        INT NOT NULL,
-    correct_answer TEXT NOT NULL,
-    question       TEXT,
-    options        TEXT,
-    UNIQUE(session_id, q_index)
-  );
-`);
-
-// ✅ Add missing columns to existing table (safe to run multiple times)
-await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
-await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
+      CREATE TABLE IF NOT EXISTS game_questions (
+      id             SERIAL PRIMARY KEY,
+      session_id     INT REFERENCES game_sessions(id) ON DELETE CASCADE,
+      q_index        INT NOT NULL,
+      correct_answer TEXT NOT NULL,
+      question       TEXT,
+      options        TEXT,
+      UNIQUE(session_id, q_index)
+    );
+  `);
+  
+  // ✅ Add missing columns to existing table (safe to run multiple times)
+  await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
    // With this single safe block:
-await pool.query(`
-  DO $$ BEGIN
+   await pool.query(`
+    DO $$ BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint WHERE conname = 'gs_user_game_chain_unique'
-    ) THEN
+      ) THEN
       ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_user_id_game_id_key;
       ALTER TABLE game_sessions ADD CONSTRAINT gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
-    END IF;
-  END $$;
-`).catch(() => {});
+      END IF;
+      END $$;
+    `).catch(() => {});
 
     // Make google_id nullable
     await pool
@@ -1303,6 +1310,27 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     const p = makeLitvmProvider();
     return new ethers.Contract(LITVM_CONTRACT_ADDRESS, CONTRACT_ABI, p);
   }
+  
+  const played = await pool.query(
+    `SELECT finished_at
+    FROM game_sessions
+    WHERE user_id=$1
+    AND game_id=$2`,
+    [req.user.id, gameId]
+  );
+  
+  if (played.rows[0]?.finished_at) {
+    const finishedAt = new Date(played.rows[0].finished_at).getTime();
+    const now = Date.now();
+    
+    const diff = now - finishedAt;
+    
+    if (diff > 3600000) {
+      return res.status(400).json({
+        error: "Submission window expired"
+      });
+    }
+  }
 
   async function litvmCall(fn, label) {
     for (let attempt = 1; attempt <= 4; attempt++) {
@@ -1380,10 +1408,16 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
       [req.user.id, gameId],
     );
-    if (sessionCheck.rows.length === 0)
-      return res
-        .status(400)
-        .json({ error: "Game session not found — click Play first" });
+    if (sessionCheck.rows.length === 0) {
+      // ✅ Create session now if it doesn't exist
+      try {
+        await pool.query(
+          "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
+          [req.user.id, effectiveWallet, gameId, chainId]
+        );
+      } catch (_) {}
+    }
+
     if (sessionCheck.rows[0].finished) {
       // ✅ Allow retry — return cached score + fresh signature
       // so user can re-submit onchain if TX failed last time
@@ -1428,8 +1462,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Score already submitted" });
     }
 
-    // ✅ Get nonce with retry
-    // ✅ Try onchain nonce first, fall back to DB if RPC fails
+    
     let nonce;
     try {
       nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
@@ -1473,56 +1506,67 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     // In /submit-score, replace the scoring section:
+    const storedQs = await pool.query(
+      "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
+      [sessionId],
+    );
+    
+    let score = 0;
+    
+    if (storedQs.rows.length === 0) {
+      // ✅ No stored questions — use client correct flags (bounded by max 1500)
+      for (const ans of answers) {
+        if (ans.correct === true) {
+          const tl = Math.max(0, Math.min(15, ans.timeLeft || 0));
+          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+        }
+      
+      }
+      score = Math.min(score, 1500);
+      console.log(`⚠️ No stored questions, using client score: ${score}`);
+    }
 
-const storedQs = await pool.query(
-  "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
-  [sessionId],
-);
 
-let score = 0;
-
-if (storedQs.rows.length === 0) {
-  // ✅ No stored questions = backend was asleep when game started
-  // Reject — cannot verify score without server-stored questions
-  return res.status(400).json({
-    error: "Game session expired. You must start the game while server is online.",
-  });
-}
-
-// ✅ Score calculated 100% server-side — client correct flag IGNORED
-for (const stored of storedQs.rows) {
-  const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
-  if (!userAnswer || !userAnswer.selected) continue;
-
-  if (userAnswer.selected === stored.correct_answer) {
-    const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
-    score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-  }
-}
-
-score = Math.min(score, 1500);
-
-    // ✅ Sign the score
+    for (const stored of storedQs.rows) {
+      const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
+      if (!userAnswer || !userAnswer.selected) continue;
+      
+      if (userAnswer.selected === stored.correct_answer) {
+        const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
+        score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+      }
+    }
+    
+    score = Math.min(score, 1500);
+    
     const message = ethers.solidityPackedKeccak256(
       ["address", "uint256", "uint256", "uint256"],
       [effectiveWallet, gameId, score, nonce],
     );
+    
     const signature = await verifierWallet.signMessage(
       ethers.getBytes(message),
     );
-
-    // ✅ Save to DB
+    
     await pool.query(
-      "UPDATE game_sessions SET finished=true, score=$1 WHERE user_id=$2 AND game_id=$3",
-      [score, req.user.id, gameId],
+      `UPDATE game_sessions
+      SET finished=true,
+      score=$1,
+      finished_at=NOW()
+      WHERE user_id=$2
+      AND game_id=$3`,
+      [score, req.user.id, gameId]
     );
+    
     // Increment DB nonce as fallback backup
     await pool.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
       req.user.id,
     ]);
+    
     console.log(
       `✅ Score: game=${gameId} score=${score} wallet=${effectiveWallet}`,
     );
+    
     res.json({ score, signature, nonce: nonce.toString() });
   } catch (e) {
     console.error("Submit error:", e.message);

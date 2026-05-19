@@ -185,6 +185,28 @@ async function startGame() {
   answers = [];
   currentIndex = 0;
 
+  // 🔒 BLOCK replay after refresh
+  if (sessionStorage.getItem(`playing_${currentGameId}`)) {
+    toast("You already played this game!", "error");
+
+    showScreen("screenResults");
+
+    score = loadSavedScore(currentGameId);
+
+    document.getElementById("resScore").textContent =
+      score || "...";
+
+    document.getElementById("resSub").textContent =
+      `Already played · ${score || "pending"} pts`;
+
+    document.getElementById("submitSection").style.display =
+      score > 0 ? "block" : "none";
+
+    await refreshResults();
+
+    return;
+  }
+
   // 🔒 BLOCK REPLAY
   try {
     const res = await fetch(
@@ -237,7 +259,10 @@ async function startGame() {
     alert("Server error. Try again.");
     return;
   }
-
+  
+  // ✅ Mark as started immediately 
+  sessionStorage.setItem(`playing_${currentGameId}`, "1");
+  
   // ▶️ START GAME
   showScreen("screenGame");
   loadQuestions();
@@ -265,10 +290,18 @@ function selectAnswer(questionId, selected, timeLeft) {
 // ========================
 function loadQuestions() {
   const q = questions[currentIndex];
-
-  // 🔥 GAME FINISHED
+  
   if (!q) {
-    submitScore(); // ✅ THIS IS THE FIX
+    
+    // ✅ Permanently block replay
+    markSubmitted(currentGameId);
+    
+    // ✅ Save local score immediately
+    saveScore(currentGameId, score);
+    
+    // ✅ Submit to backend/onchain
+    submitScore();
+    
     return;
   }
 
@@ -330,6 +363,13 @@ async function submitScore() {
     await tx.wait();
 
     toast("✅ Score submitted onchain!", "success");
+    // ✅ Clear temporary play lock
+    sessionStorage.removeItem(`playing_${currentGameId}`);
+    
+    // ✅ Permanently mark submitted
+    markSubmitted(currentGameId);
+    // ✅ Save final score locally
+    saveScore(currentGameId, data.score);
   } catch (e) {
     console.error(e);
     toast("Submit failed", "error");
@@ -2725,6 +2765,7 @@ async function startPlay() {
         }),
       });
     } catch (_) {} 
+    markSubmitted(currentGameId);
     questions = rawQuestions;
     currentQ = 0;
     score = 0;
@@ -2997,12 +3038,10 @@ async function submitMyScore() {
     // ✅ If backend fails, use client score directly with a workaround
     let verifiedScore = score;
     let signature = data?.signature;
-
+    
     if (!res.ok || data?.error) {
-      // Backend unavailable — try direct submission with client score
-      // This requires the verifier to sign off — if backend is down, 
-      // save locally and show retry
-      toast("Backend busy — score saved locally. Retry submission.", "info");
+      const errMsg = data?.error || "Server error";
+      toast("Server error: " + errMsg, "error");
       saveScore(currentGameId, score);
       btn.disabled = false;
       btn.textContent = "📡 Retry Submit Onchain";
