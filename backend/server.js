@@ -317,7 +317,7 @@ await pool.query(`
       )
       .catch(() => {});
       // ✅ Add missing columns to game_sessions (safe on existing tables)
-await pool.query(`ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`).catch(() => {});
+      await pool.query(`ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`).catch(() => {});
 
     console.log("✅ Database ready");
   } catch (e) {
