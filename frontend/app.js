@@ -876,11 +876,11 @@ const STREAK_THRESHOLD = 3,
 let autoRefreshInterval = null,
   countdownInterval = null;
 
-function scoreKey(gid) {
-  return `arc_score_${gid}_${userAddress}`;
-}
 function submittedKey(gid) {
-  return `arc_submitted_${gid}_${userAddress}`;
+  return `arc_submitted_${gid}`;
+}
+function scoreKey(gid) {
+  return `arc_score_${gid}`;
 }
 function markSubmitted(gid) {
   localStorage.setItem(submittedKey(gid), "1");
@@ -2284,10 +2284,66 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
     )}" data-prefix="" data-expiredtext="now!">${fmtTime(
       regSecs,
     )}</span></p></div>`;
-  else if (inPlayPhase && joined && !finished)
-    actionHtml = `<button class="btn btn-primary" onclick="startPlay()" style="background:linear-gradient(135deg,var(--gold),var(--orange))">🎮 Play Now!</button><p style="text-align:center;color:var(--red);font-size:.77rem;margin-top:8px;font-weight:600">⚠️ Deadline in ${fmtTime(
-      playSecs,
-    )}</p>`;
+  else if (inPlayPhase && joined && !finished) {
+  // ✅ Check server-side if already played
+  let serverPlayed = false;
+
+  try {
+    const chk = await fetch(
+      `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
+      { credentials: "include" }
+    );
+
+    const chkData = await chk.json();
+
+    if (chkData.finished || chkData.played) {
+      serverPlayed = true;
+
+      markSubmitted(currentGameId);
+
+      saveScore(
+        currentGameId,
+        loadSavedScore(currentGameId) || 0
+      );
+    }
+  } catch (_) {}
+
+  if (alreadySubmitted(currentGameId) || serverPlayed) {
+    actionHtml = `
+      <div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)">
+        <p style="color:var(--green);font-weight:600">
+          ✅ You already played this game!
+        </p>
+
+        <p style="color:var(--muted);font-size:.82rem;margin-top:4px">
+          Score: ${loadSavedScore(currentGameId) || "pending"} pts
+        </p>
+
+        <button
+          class="btn btn-ghost btn-sm"
+          style="margin-top:10px"
+          onclick="doTriggerEnd(${currentGameId})"
+        >
+          Check results
+        </button>
+      </div>
+    `;
+  } else {
+    actionHtml = `
+      <button
+        class="btn btn-primary"
+        onclick="startPlay()"
+        style="background:linear-gradient(135deg,var(--gold),var(--orange))"
+      >
+        🎮 Play Now!
+      </button>
+
+      <p style="text-align:center;color:var(--red);font-size:.77rem;margin-top:8px;font-weight:600">
+        ⚠️ Deadline in ${fmtTime(playSecs)}
+      </p>
+    `;
+  }
+}
   else if (inPlayPhase && !joined)
     actionHtml = `<p style="color:var(--muted);text-align:center;padding:10px">Registration closed.</p>`;
   else if (finished)
@@ -2567,6 +2623,50 @@ async function startPlay() {
     await refreshResults();
     return;
   }
+  
+  try {
+    const chainId =
+    currentGameChainId ||
+    (activeNet.decimals === 18 ? 4441 : 5042002);
+    
+    const chk = await fetch(
+      `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
+      {
+        credentials: "include",
+      }
+    );
+    
+    const chkData = await chk.json();
+    
+    if (chkData.finished || chkData.played) {
+      
+      markSubmitted(currentGameId);
+      
+      toast("You already played this game!", "error");
+      
+      showScreen("screenResults");
+      
+      score = loadSavedScore(currentGameId);
+      
+      document.getElementById("resScore").textContent =
+      
+      score || "...";
+      
+      document.getElementById("resIcon").textContent =
+      score >= 800 ? "🏆" :
+      score >= 500 ? "🎯" : "💪";
+      
+      document.getElementById("resSub").textContent =
+      `Already played · ${score || "pending"} pts`;
+      
+      document.getElementById("submitSection").style.display =
+      score > 0 ? "block" : "none";
+      
+      await refreshResults();
+      
+      return;
+    }
+  } catch (_) {}
 
   const g = currentGame || (await getGame(currentGameId));
   const catId = Number(g[3]), diff = Number(g[5]);
@@ -2610,24 +2710,21 @@ async function startPlay() {
 
     // ✅ Send correct answers to backend to store server-side (non-blocking)
     // Backend will use THESE for scoring — client correct flag is ignored
-    fetch(`${BACKEND}/game/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        gameId: currentGameId,
-        wallet: userAddress,
-        chainId,
-        categoryId: catId,
-        difficulty: diff,
-        // ✅ Send correct answers so server can verify — stored server-side only
-        correctAnswers: rawQuestions.map((q, i) => ({
-          index: i,
-          correct: q.correct,
-        })),
-      }),
-    }).catch(() => {});
-
+    try {
+      await fetch(`${BACKEND}/game/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          gameId: currentGameId,
+          wallet: userAddress,
+          chainId,
+          categoryId: catId,
+          difficulty: diff,
+          correctAnswers: rawQuestions.map((q, i) => ({ index: i, correct: q.correct })),
+        }),
+      });
+    } catch (_) {} 
     questions = rawQuestions;
     currentQ = 0;
     score = 0;

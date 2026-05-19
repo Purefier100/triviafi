@@ -926,6 +926,13 @@ app.get("/game/status/:gameId", async (req, res) => {
       "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
       [req.user.id, gameId],
     );
+    
+    return res.json({
+      status,
+      played: r.rows.length > 0,
+      finished: r.rows[0]?.finished || false,
+      onchain,
+    });
 
     // Check if actually finished onchain
     let onchain = false;
