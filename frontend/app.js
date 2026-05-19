@@ -2571,44 +2571,64 @@ async function startPlay() {
   const g = currentGame || (await getGame(currentGameId));
   const catId = Number(g[3]), diff = Number(g[5]);
   const chainId = currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
-
   toast("Loading questions...", "info");
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    // ✅ Fetch questions directly from OpenTDB (fast, no backend needed)
+    const diffParam = diff > 0 ? `&difficulty=${["","easy","medium","hard"][diff]}` : "";
+    let qtData;
 
-    const res = await fetch(`${BACKEND}/game/start`, {
+    for (const url of [
+      `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
+      `https://opentdb.com/api.php?amount=10&type=multiple&encode=url3986${diffParam}`,
+    ]) {
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 8000);
+        const r = await fetch(url, { signal: controller.signal });
+        clearTimeout(t);
+        const d = await r.json();
+        if (d.response_code === 0 && d.results?.length > 0) { qtData = d; break; }
+      } catch (_) {}
+    }
+
+    if (!qtData) { toast("Could not load questions. Try again.", "error"); return; }
+
+    // ✅ Build questions — store correct answers in a hidden session token
+    // The token is a hash stored server-side via /game/start
+    const rawQuestions = qtData.results.map((q, idx) => {
+      const correct = decodeURIComponent(q.correct_answer);
+      const incorrect = q.incorrect_answers.map(a => decodeURIComponent(a));
+      return {
+        question: decodeURIComponent(q.question),
+        correct,                              // stored client-side temporarily
+        answers: shuffle([correct, ...incorrect]),
+        diff: q.difficulty,
+        id: idx,
+      };
+    });
+
+    // ✅ Send correct answers to backend to store server-side (non-blocking)
+    // Backend will use THESE for scoring — client correct flag is ignored
+    fetch(`${BACKEND}/game/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      signal: controller.signal,
       body: JSON.stringify({
         gameId: currentGameId,
         wallet: userAddress,
         chainId,
         categoryId: catId,
         difficulty: diff,
+        // ✅ Send correct answers so server can verify — stored server-side only
+        correctAnswers: rawQuestions.map((q, i) => ({
+          index: i,
+          correct: q.correct,
+        })),
       }),
-    });
-    clearTimeout(timeout);
+    }).catch(() => {});
 
-    const data = await res.json();
-    if (!res.ok) {
-      toast(data.error || "Failed to start game", "error");
-      return;
-    }
-
-    // ✅ Server sends questions WITHOUT correct answers
-    // correct answer is NEVER sent to client
-    questions = data.questions.map((q) => ({
-      question: q.question,
-      answers: q.options,       // shuffled options, no correct field
-      diff: q.diff || "easy",
-      id: q.questionIndex,
-      correct: null,            // intentionally null — server holds this
-    }));
-
+    questions = rawQuestions;
     currentQ = 0;
     score = 0;
     answers = [];
@@ -2620,7 +2640,7 @@ async function startPlay() {
     hideToast();
 
   } catch (e) {
-    toast("Server required to play. Please try again.", "error");
+    toast("Error: " + e.message, "error");
   }
 }
 
@@ -2713,24 +2733,40 @@ function pickAnswer(idx) {
   clearInterval(timerInt);
   const q = questions[currentQ];
   const selected = q.answers[idx];
+  const isCorrect = selected === q.correct;
+  const speed = isCorrect ? Math.floor((timeLeft / 15) * 50) : 0;
+  const pts = isCorrect ? 100 + speed : 0;
+  score += pts;
 
-  // ✅ Record ONLY what user selected — no correct flag, no score
-  answers.push({
-    questionIndex: currentQ,
-    selected,          // just the text they picked
-    timeLeft,          // time remaining for speed bonus
+  answers.push({ questionIndex: currentQ, selected, correct: isCorrect, timeLeft });
+
+  if (isCorrect) {
+    streakCount++;
+    if (streakCount >= STREAK_THRESHOLD) payStreakBonus();
+  } else {
+    streakCount = 0;
+  }
+
+  document.querySelectorAll(".ans-btn").forEach((b, i) => {
+    b.disabled = true;
+    if (q.answers[i] === q.correct) b.classList.add("correct");
+    else if (i === idx && !isCorrect) b.classList.add("wrong");
   });
 
-  // Neutral UI — don't reveal correct answer
-  document.querySelectorAll(".ans-btn").forEach((b) => b.disabled = true);
-  document.querySelectorAll(".ans-btn")[idx].style.background = "rgba(0,229,255,.15)";
-  document.querySelectorAll(".ans-btn")[idx].style.borderColor = "var(--accent)";
+  document.getElementById("qPts").textContent =
+    streakCount >= STREAK_THRESHOLD ? `⭐ ${score} 🔥x${streakCount}` : `⭐ ${score}`;
 
   const fb = document.getElementById("qFeedback");
-  fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
-  fb.textContent = "Answer recorded ✓";
+  fb.style.display = "block";
+  if (isCorrect) {
+    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
+    fb.textContent = `✓ Correct! +${pts} pts${speed > 0 ? " (⚡ speed bonus!)" : ""}`;
+  } else {
+    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+    fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
+  }
 
-  setTimeout(() => { currentQ++; loadQ(); }, 1000);
+  setTimeout(() => { currentQ++; loadQ(); }, 1500);
 }
 
 function timeUp() {

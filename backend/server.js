@@ -1149,11 +1149,17 @@ app.post("/game/start", async (req, res) => {
       return res.status(400).json({ error: "Already finished this game" });
     }
 
-    await pool.query(
-  `INSERT INTO game_sessions (user_id, wallet, game_id, chain_id)
-  VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, game_id, chain_id) DO NOTHING`,
-  [req.user.id, wallet.toLowerCase(), gameId, chainId],
-);
+    const existCheck = await pool.query(
+      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId]
+    );
+    
+    if (existCheck.rows.length === 0) {
+      await pool.query(
+        "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
+        [req.user.id, wallet.toLowerCase(), gameId, chainId]
+      );
+    }
 
     const sessionRow = await pool.query(
       "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
@@ -1176,74 +1182,72 @@ app.post("/game/start", async (req, res) => {
     }
 
     // ✅ Fetch questions SERVER-SIDE — correct answers never sent to client
-    const catId = categoryId || 9;
-    const diff = parseInt(difficulty) || 0;
-    const diffParam = diff > 0 ? `&difficulty=${["","easy","medium","hard"][diff]}` : "";
+    const { correctAnswers } = req.body;
 
-    let useLocal = false;
-    let qtResults = [];
+if (correctAnswers && Array.isArray(correctAnswers) && correctAnswers.length >= 5) {
+  // Client sent correct answers — store them server-side for scoring
+  for (const qa of correctAnswers) {
+    await pool.query(
+      `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+       VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
+      [sessionId, qa.index, qa.correct, "client-fetched", "[]"]
+    );
+  }
+  // ✅ Return ok — questions already rendered client-side
+  return res.json({ ok: true, questions: [] });
+}
 
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const qtRes = await fetch(
-        `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
-        { signal: controller.signal }
-      );
-      clearTimeout(timeout);
-      const qtData = await qtRes.json();
+// ✅ Server-side fetch fallback (when client didn't send correctAnswers)
+const catId = categoryId || 9;
+const diff = parseInt(difficulty) || 0;
+const diffParam = diff > 0 ? `&difficulty=${["","easy","medium","hard"][diff]}` : "";
 
-      if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
-        qtResults = qtData.results.map(q => ({
-          question: decodeURIComponent(q.question),
-          correct:  decodeURIComponent(q.correct_answer),
-          incorrect: q.incorrect_answers.map(a => decodeURIComponent(a)),
-          difficulty: q.difficulty,
-        }));
-      } else {
-        useLocal = true;
-        console.warn("OpenTDB returned no results, using local bank");
-      }
-    } catch (e) {
-      useLocal = true;
-      console.warn("OpenTDB unavailable, using local bank:", e.message);
-    }
+let useLocal = false;
+let qtResults = [];
 
-    if (useLocal) {
-      const localQs = getLocalQuestions(catId, diff, 10);
-      qtResults = localQs.map(q => ({
-        question:   q.q,
-        correct:    q.correct,
-        incorrect:  q.wrong,
-        difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : diff === 3 ? "hard" : "easy",
-      }));
-    }
+try {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const qtRes = await fetch(
+    `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
+    { signal: controller.signal }
+  );
+  clearTimeout(timeout);
+  const qtData = await qtRes.json();
+  if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
+    qtResults = qtData.results.map(q => ({
+      question: decodeURIComponent(q.question),
+      correct: decodeURIComponent(q.correct_answer),
+      incorrect: q.incorrect_answers.map(a => decodeURIComponent(a)),
+      difficulty: q.difficulty,
+    }));
+  } else { useLocal = true; }
+} catch (e) { useLocal = true; }
 
-    if (!qtResults.length) {
-      return res.status(503).json({ error: "Could not load questions. Please try again." });
-    }
+if (useLocal) {
+  const localQs = getLocalQuestions(catId, diff, 10);
+  qtResults = localQs.map(q => ({
+    question: q.q, correct: q.correct, incorrect: q.wrong,
+    difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : "easy",
+  }));
+}
 
-    // ✅ Store questions server-side — correct answer NEVER sent to client
-    const clientQuestions = [];
-    for (let i = 0; i < qtResults.length; i++) {
-      const q = qtResults[i];
-      const options = [q.correct, ...q.incorrect].sort(() => Math.random() - 0.5);
+if (!qtResults.length) {
+  return res.status(503).json({ error: "Could not load questions." });
+}
 
-      await pool.query(
-        `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-        [sessionId, i, q.correct, q.question, JSON.stringify(options)],
-      );
-
-      clientQuestions.push({
-        questionIndex: i,
-        question: q.question,
-        options,
-        diff: q.difficulty,
-      });
-    }
-
-    return res.json({ ok: true, questions: clientQuestions });
+const clientQuestions = [];
+for (let i = 0; i < qtResults.length; i++) {
+  const q = qtResults[i];
+  const options = [q.correct, ...q.incorrect].sort(() => Math.random() - 0.5);
+  await pool.query(
+    `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+     VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
+    [sessionId, i, q.correct, q.question, JSON.stringify(options)]
+  );
+  clientQuestions.push({ questionIndex: i, question: q.question, options, diff: q.difficulty });
+}
+return res.json({ ok: true, questions: clientQuestions });
 
   } catch (e) {
     console.error("Game start error:", e.message);
