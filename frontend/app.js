@@ -352,24 +352,30 @@ async function submitScore() {
       return;
     }
 
+    // ✅ Save score immediately
+    saveScore(currentGameId, data.score);
+    
+    // ✅ Mark played immediately
+    markSubmitted(currentGameId);
+    
+    // ✅ Show score instantly
+    document.getElementById("resScore").textContent = data.score;
+    
+    // ✅ Keep replay blocked
+    sessionStorage.removeItem(`playing_${currentGameId}`);
+    
     const tx = await contract.submitScore(
       currentGameId,
       data.score,
+      data.nonce,
       data.signature,
     );
-
-    toast("⛓️ Waiting for blockchain confirmation...", "info");
-
-    await tx.wait();
-
-    toast("✅ Score submitted onchain!", "success");
-    // ✅ Clear temporary play lock
-    sessionStorage.removeItem(`playing_${currentGameId}`);
     
-    // ✅ Permanently mark submitted
-    markSubmitted(currentGameId);
-    // ✅ Save final score locally
-    saveScore(currentGameId, data.score);
+    toast("⛓️ Waiting for blockchain confirmation...", "info");
+    
+    await tx.wait();
+    
+    toast("✅ Score submitted onchain!", "success");
   } catch (e) {
     console.error(e);
     toast("Submit failed", "error");
@@ -851,7 +857,7 @@ const ABI = [
   "function nonces(address) view returns (uint256)",
   "function createGame(string,uint8,string,uint8,uint256,uint256,uint256,uint256) external returns (uint256)",
   "function joinGame(uint256) external payable",
-  "function submitScore(uint256,uint256,bytes) external",
+  "function submitScore(uint256,uint256,uint256,bytes) external",
   "function triggerEnd(uint256) external",
   "function claimPrize(uint256) external",
   "function cancelGame(uint256,string) external",
