@@ -224,7 +224,7 @@ async function initDB() {
       ALTER TABLE game_sessions
       ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ
       `).catch(() => {});
-      
+
     // ✅ Safely recreate the unique constraint with chain_id included
     await pool.query(`
       DO $$ BEGIN
@@ -933,13 +933,6 @@ app.get("/game/status/:gameId", async (req, res) => {
       "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
       [req.user.id, gameId],
     );
-    
-    return res.json({
-      status,
-      played: r.rows.length > 0,
-      finished: r.rows[0]?.finished || false,
-      onchain,
-    });
 
     // Check if actually finished onchain
     let onchain = false;
@@ -1511,33 +1504,29 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       [sessionId],
     );
     
+    
     let score = 0;
     
     if (storedQs.rows.length === 0) {
-      // ✅ No stored questions — use client correct flags (bounded by max 1500)
       for (const ans of answers) {
         if (ans.correct === true) {
           const tl = Math.max(0, Math.min(15, ans.timeLeft || 0));
           score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
         }
-      
       }
       score = Math.min(score, 1500);
       console.log(`⚠️ No stored questions, using client score: ${score}`);
-    }
-
-
-    for (const stored of storedQs.rows) {
-      const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
-      if (!userAnswer || !userAnswer.selected) continue;
-      
-      if (userAnswer.selected === stored.correct_answer) {
-        const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
-        score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+    } else {
+      for (const stored of storedQs.rows) {
+        const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
+        if (!userAnswer || !userAnswer.selected) continue;
+        if (userAnswer.selected === stored.correct_answer) {
+          const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
+          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+        }
       }
+      score = Math.min(score, 1500);
     }
-    
-    score = Math.min(score, 1500);
     
     const message = ethers.solidityPackedKeccak256(
       ["address", "uint256", "uint256", "uint256"],
