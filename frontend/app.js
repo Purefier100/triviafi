@@ -292,14 +292,7 @@ function loadQuestions() {
   const q = questions[currentIndex];
   
   if (!q) {
-    
-    // ✅ Permanently block replay
-    markSubmitted(currentGameId);
-    
-    // ✅ Save local score immediately
-    saveScore(currentGameId, score);
-    
-    // ✅ Submit to backend/onchain
+
     submitScore();
     
     return;
@@ -351,18 +344,10 @@ async function submitScore() {
       toast(data.error || "Submit failed", "error");
       return;
     }
-
-    // ✅ Save score immediately
-    saveScore(currentGameId, data.score);
-    
-    // ✅ Mark played immediately
-    markSubmitted(currentGameId);
     
     // ✅ Show score instantly
     document.getElementById("resScore").textContent = data.score;
     
-    // ✅ Keep replay blocked
-    sessionStorage.removeItem(`playing_${currentGameId}`);
     
     const tx = await contract.submitScore(
       currentGameId,
@@ -374,6 +359,11 @@ async function submitScore() {
     toast("⛓️ Waiting for blockchain confirmation...", "info");
     
     await tx.wait();
+    saveScore(currentGameId, data.score);
+    
+    markSubmitted(currentGameId);
+    
+    sessionStorage.removeItem(`playing_${currentGameId}`);
     
     toast("✅ Score submitted onchain!", "success");
   } catch (e) {
