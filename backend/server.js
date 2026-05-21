@@ -1521,25 +1521,20 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     let score = 0;
     
     if (storedQs.rows.length === 0) {
-      
-      // No stored questions — fall back to client correct flags
-      for (const ans of answers) {
-        if (ans.correct === true) {
-          const tl = Math.max(0, Math.min(15, ans.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-        }
-      
-      }
-      score = Math.min(score, 1500);
-      console.log(`⚠️ No stored questions, using client score: ${score}`);
+      return res.status(400).json({ error: "No questions found. Play the game first." });
     } else {
+      // ✅ Validate answer count before scoring
+      if (answers.length < storedQs.rows.length * 0.5) {
+        return res.status(400).json({ error: "Too few answers submitted" });
+      }
       // ✅ Server-side scoring from stored questions
       for (const stored of storedQs.rows) {
-        const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
+        const userAnswer = answers.find(a => Number(a.questionIndex) === Number(stored.q_index));
         if (!userAnswer || !userAnswer.selected) continue;
         if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+          // timeLeft is client-reported — cap it to limit inflation
+          const tl = Math.max(0, Math.min(5, userAnswer.timeLeft || 0));
+          score += 100 + Math.min(17, Math.floor((tl / 15) * 50));
         }
       }
       score = Math.min(score, 1500);
