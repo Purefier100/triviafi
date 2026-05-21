@@ -1478,18 +1478,10 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       console.log(`⚠️ Using DB nonce: ${nonce}`);
     }
     
-    const sessionResult = await pool.query(
-      `SELECT * FROM game_sessions
-      WHERE user_id=$1
-      AND game_id=$2
-      AND chain_id=$3`,
-      [
-        req.user.id,
-        gameId,
-        chainId
-      ]
-    );
-    const sessionId = sessionRow.rows[0]?.id;
+    const sessionId = sessionCheck.rows[0]?.id;
+    if (!sessionId) {
+      return res.status(400).json({ error: "No game session found. Play the game first." });
+    }
 
     const sessionData = await pool.query(
       "SELECT started_at FROM game_sessions WHERE id=$1",
@@ -1555,9 +1547,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       score=$1,
       finished_at=NOW()
       WHERE user_id=$2
-      AND game_id=$3
-      AND chain_id=$4
-      [score, req.user.id, gameId, chainId]
+      AND game_id=$3`,
+      [score, req.user.id, gameId]
     );
     
     // Increment DB nonce as fallback backup
