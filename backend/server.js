@@ -1168,7 +1168,12 @@ app.post("/game/start", async (req, res) => {
       );
     }
 
-    const sessionId = sessionCheck.rows[0]?.id;
+    // Re-fetch to get the id whether it was just inserted or already existed
+    const sessionRow = await pool.query(
+      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId]
+    );
+    const sessionId = sessionRow.rows[0]?.id;
 
     // ✅ Check if questions already stored (replay attempt)
     const existingQs = await pool.query(
