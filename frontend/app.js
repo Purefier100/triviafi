@@ -941,6 +941,25 @@ async function initReown() {
   });
 }
 
+async function connectWallet() {
+  const btn = document.getElementById("connectBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Loading...";
+  }
+  
+  if (!appKit) {
+    await initReown();
+  }
+  
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "🦊 Connect Wallet";
+  }
+  
+  appKit.open();
+}
+
 async function onWalletConnected(address) {
   userAddress = address;
 
@@ -1194,7 +1213,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
   initAuth();
-  initReown(); // ← add this (non-blocking, loads in background)
+  await initReown(); // ← await it now so appKit is ready on first click
   setInterval(() => {
     const screen = document.querySelector(".screen.active");
     if (screen?.id === "screenLobby") loadGames();
