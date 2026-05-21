@@ -2995,12 +2995,13 @@ async function doClaimRefund(gameId) {
 
 async function finishTrivia() {
   clearInterval(timerInt);
-  document.getElementById("resScore").textContent = "...";
-  document.getElementById("resIcon").textContent = "⏳";
-  document.getElementById("resSub").textContent = `${questions.length} questions answered — submit to see score`;
+  document.getElementById("resScore").textContent = score;
+  document.getElementById("resIcon").textContent = score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+  document.getElementById("resSub").textContent = `${questions.length} questions answered — submitting...`;
   document.getElementById("winnerBanner").innerHTML = "";
-  document.getElementById("submitSection").style.display = "block";
+  document.getElementById("submitSection").style.display = "none";
   showScreen("screenResults");
+  await submitMyScore();
   await refreshResults();
   startAutoRefresh(currentGameId);
 }
@@ -3033,9 +3034,8 @@ async function submitMyScore() {
       body: JSON.stringify({
         gameId: currentGameId,
         wallet: userAddress,
-        answers,  // send answers with correct flag from client
+        answers,
         chainId,
-        clientScore: score, // send client score as hint
       }),
     });
 
@@ -3063,7 +3063,8 @@ async function submitMyScore() {
     const tx = await contract.submitScore(
       currentGameId,
       verifiedScore,
-      signature,
+      data.nonce,
+      data.signature,
     );
     await tx.wait();
 

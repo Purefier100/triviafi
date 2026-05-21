@@ -1508,25 +1508,27 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     let score = 0;
     
     if (storedQs.rows.length === 0) {
-      for (const ans of answers) {
-        if (ans.correct === true) {
-          const tl = Math.max(0, Math.min(15, ans.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-        }
-      }
-      score = Math.min(score, 1500);
-      console.log(`⚠️ No stored questions, using client score: ${score}`);
-    } else {
-      for (const stored of storedQs.rows) {
-        const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
-        if (!userAnswer || !userAnswer.selected) continue;
-        if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-        }
-      }
-      score = Math.min(score, 1500);
+      return res.status(400).json({ error: "No game session found. Play the game first." });
     }
+
+    // Validate answer count and timing
+    for (const ans of answers) {
+      const tl = ans.timeLeft;
+      if (tl !== null && tl !== undefined && (tl < 0 || tl > 15)) {
+        return res.status(400).json({ error: "Invalid answer timing" });
+      }
+    }
+
+    // Server-side scoring only — client correct flag is ignored
+    for (const stored of storedQs.rows) {
+      const userAnswer = answers.find(a => Number(a.questionIndex) === Number(stored.q_index));
+      if (!userAnswer || !userAnswer.selected) continue;
+      if (userAnswer.selected === stored.correct_answer) {
+        const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
+        score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+      }
+    }
+    score = Math.min(score, 1500);
     
     const message = ethers.solidityPackedKeccak256(
       ["address", "uint256", "uint256", "uint256"],
