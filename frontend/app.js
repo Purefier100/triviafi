@@ -941,25 +941,6 @@ async function initReown() {
   });
 }
 
-async function connectWallet() {
-  const btn = document.getElementById("connectBtn");
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = "⏳ Loading...";
-  }
-  
-  if (!appKit) {
-    await initReown();
-  }
-  
-  if (btn) {
-    btn.disabled = false;
-    btn.textContent = "🦊 Connect Wallet";
-  }
-  
-  appKit.open();
-}
-
 async function onWalletConnected(address) {
   userAddress = address;
 
@@ -1039,11 +1020,12 @@ function handleNetworkSwitch(chainId) {
   toast(`✅ Switched to ${activeNet.name}`, "success");
 }
 
-// Replace the old connectWallet() — now just opens the AppKit modal
 async function connectWallet() {
   if (!appKit) {
-    toast("Initializing wallet...", "info");
+    const btn = document.getElementById("connectBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "⏳ Loading..."; }
     await initReown();
+    if (btn) { btn.disabled = false; btn.textContent = "🦊 Connect Wallet"; }
   }
   appKit.open();
 }
@@ -1209,11 +1191,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   checkUrlGame();
   startTickerLoop();
   loadGlobalStats();
-  loadGames();
+  loadGames();                    // ← runs immediately
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
   initAuth();
-  await initReown(); // ← await it now so appKit is ready on first click
+  initReown().catch(console.error); // ← non-blocking, no await
   setInterval(() => {
     const screen = document.querySelector(".screen.active");
     if (screen?.id === "screenLobby") loadGames();
