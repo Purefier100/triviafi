@@ -299,6 +299,7 @@ async function initDB() {
   // ✅ Add missing columns to existing table (safe to run multiple times)
   await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
   await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS game_questions_session_qindex ON game_questions(session_id, q_index)`).catch(() => {});
    // With this single safe block:
    await pool.query(`
     DO $$ BEGIN
