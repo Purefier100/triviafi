@@ -2744,10 +2744,9 @@ async function startPlay() {
       };
     });
 
-    // ✅ Send correct answers to backend to store server-side (non-blocking)
-    // Backend will use THESE for scoring — client correct flag is ignored
+    // ✅ Store correct answers server-side BEFORE starting quiz — blocking
     try {
-      await fetch(`${BACKEND}/game/start`, {
+      const startRes = await fetch(`${BACKEND}/game/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -2760,7 +2759,18 @@ async function startPlay() {
           correctAnswers: rawQuestions.map((q, i) => ({ index: i, correct: q.correct })),
         }),
       });
-    } catch (_) {} 
+      if (!startRes.ok) {
+        const err = await startRes.json().catch(() => ({}));
+        // "Already finished" is fine — questions already stored
+        if (err.error && !err.error.includes("finished")) {
+          toast("Failed to register session: " + err.error, "error");
+          return;
+        }
+      }
+    } catch (e) {
+      toast("Could not register game session. Check connection.", "error");
+      return;
+    }
     questions = rawQuestions;
     currentQ = 0;
     score = 0;
