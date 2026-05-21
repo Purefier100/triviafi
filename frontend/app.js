@@ -2771,7 +2771,6 @@ async function startPlay() {
         }),
       });
     } catch (_) {} 
-    markSubmitted(currentGameId);
     questions = rawQuestions;
     currentQ = 0;
     score = 0;
@@ -3018,8 +3017,7 @@ async function submitMyScore() {
   }
 
   const btn = document.getElementById("submitBtn");
-  btn.disabled = true;
-  btn.textContent = "⏳ Getting signature...";
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Getting signature..."; }
 
   try {
     toast("Step 1/2: Getting score signature...", "info");
@@ -3049,8 +3047,10 @@ async function submitMyScore() {
       const errMsg = data?.error || "Server error";
       toast("Server error: " + errMsg, "error");
       saveScore(currentGameId, score);
-      btn.disabled = false;
-      btn.textContent = "📡 Retry Submit Onchain";
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "📡 Retry Submit Onchain";
+      }
       return;
     }
 
@@ -3058,7 +3058,9 @@ async function submitMyScore() {
     signature = data.signature;
 
     toast(`Step 2/2: Submitting ${verifiedScore} pts onchain...`, "info");
-    btn.textContent = `⏳ Submitting ${verifiedScore} pts...`;
+    if (btn) {
+      btn.textContent = `⏳ Submitting ${verifiedScore} pts...`;
+    }
 
     const tx = await contract.submitScore(
       currentGameId,
@@ -3067,6 +3069,10 @@ async function submitMyScore() {
       data.signature,
     );
     await tx.wait();
+    
+    markSubmitted(currentGameId);
+    saveScore(currentGameId, verifiedScore);
+    sessionStorage.removeItem(`playing_${currentGameId}`);
 
     if (typeof confetti === "function") {
       confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
@@ -3090,14 +3096,18 @@ async function submitMyScore() {
     }).catch(() => {});
 
     toast(`✅ Score ${verifiedScore} submitted onchain!`, "success");
-    btn.textContent = `✓ Submitted: ${verifiedScore} pts`;
+    if (btn) {
+      btn.textContent = `✓ Submitted: ${verifiedScore} pts`;
+    }
     document.getElementById("submitSection").style.display = "none";
     await refreshResults();
     await doTriggerEnd(currentGameId);
 
   } catch (e) {
-    btn.disabled = false;
-    btn.textContent = "📡 Submit Score Onchain";
+    if (btn) {
+       btn.disabled = false;
+       btn.textContent = "📡 Submit Score Onchain";
+      }
     toast("Failed: " + (e.reason || e.message), "error");
   }
 }
