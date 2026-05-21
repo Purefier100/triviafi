@@ -1460,24 +1460,35 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     
+    // Always fetch fresh onchain nonce — stale nonce causes estimateGas revert
     let nonce;
-    try {
-      nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
-      // Keep DB in sync with onchain nonce
-      await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
-        nonce.toString(),
-        req.user.id,
-      ]);
-      console.log(`✅ Onchain nonce for ${effectiveWallet}: ${nonce}`);
-    } catch (e) {
-      console.warn("getNonce RPC failed, falling back to DB nonce:", e.message);
-      const nonceRow = await pool.query("SELECT nonce FROM users WHERE id=$1", [
-        req.user.id,
-      ]);
-      nonce = BigInt(nonceRow.rows[0]?.nonce || 0);
-      console.log(`⚠️ Using DB nonce: ${nonce}`);
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
+        await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
+          nonce.toString(), req.user.id,
+        ]);
+        console.log(`✅ Onchain nonce: ${nonce} (attempt ${attempt})`);
+        break;
+      } catch (e) {
+        console.warn(`nonce attempt ${attempt}/4 failed: ${e.message}`);
+        if (attempt === 4) {
+          return res.status(503).json({ error: "Could not fetch nonce. Try again." });
+        }
+        await new Promise(r => setTimeout(r, 1000 * attempt));
+      }
     }
     
+    // Check game is still open before signing
+    try {
+      const gameStatus = await activeRpcCall(
+        (c) => c.getPlayerStatus(gameId, effectiveWallet),
+        "recheck"
+      );
+      if (gameStatus[1] === true) {
+        return res.status(400).json({ error: "Score already submitted onchain" });
+      }
+    } catch (_) {}
     const sessionId = sessionCheck.rows[0]?.id;
     if (!sessionId) {
       return res.status(400).json({ error: "No game session found. Play the game first." });
