@@ -3074,18 +3074,6 @@ async function submitMyScore() {
     markSubmitted(currentGameId);
     saveScore(currentGameId, score);
 
-    // ✅ Also save to backend DB to prevent replay
-    fetch(`${BACKEND}/game/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({
-        gameId: currentGameId,
-        wallet: userAddress,
-        chainId,
-      }),
-    }).catch(() => {});
-
     toast(`✅ Score ${verifiedScore} submitted onchain!`, "success");
     if (btn) {
       btn.textContent = `✓ Submitted: ${verifiedScore} pts`;

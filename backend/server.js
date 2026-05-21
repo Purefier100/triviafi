@@ -1511,6 +1511,22 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       });
     }
 
+    // ✅ Sanitize answers — reject suspicious inputs
+    if (answers.length > 20) {
+      return res.status(400).json({ error: "Too many answers" });
+    }
+    for (const ans of answers) {
+      if (typeof ans.questionIndex !== "number" && typeof ans.questionIndex !== "string") {
+        return res.status(400).json({ error: "Invalid answer format" });
+      }
+      if (ans.selected !== null && typeof ans.selected !== "string") {
+        return res.status(400).json({ error: "Invalid answer selection" });
+      }
+      if (ans.selected && ans.selected.length > 500) {
+        return res.status(400).json({ error: "Answer too long" });
+      }
+    }
+
     // In /submit-score, replace the scoring section:
     const storedQs = await pool.query(
       "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
@@ -1520,26 +1536,21 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     
     let score = 0;
     
-    if (storedQs.rows.length === 0) {
-      
-      // No stored questions — fall back to client correct flags
-      for (const ans of answers) {
-        if (ans.correct === true) {
-          const tl = Math.max(0, Math.min(15, ans.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
-        }
-      
-      }
-      score = Math.min(score, 1500);
-      console.log(`⚠️ No stored questions, using client score: ${score}`);
+   if (storedQs.rows.length === 0) {
+      return res.status(400).json({ error: "No questions found. Play the game first." });
     } else {
-      // ✅ Server-side scoring from stored questions
+      // ✅ Validate answer count — prevent skipping questions
+      if (answers.length < storedQs.rows.length * 0.5) {
+        return res.status(400).json({ error: "Too few answers submitted" });
+      }
+      // ✅ Server-side scoring — q_index coerced, speed bonus capped
       for (const stored of storedQs.rows) {
-        const userAnswer = answers.find(a => a.questionIndex === stored.q_index);
+        const userAnswer = answers.find(a => Number(a.questionIndex) === Number(stored.q_index));
         if (!userAnswer || !userAnswer.selected) continue;
         if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(0, Math.min(15, userAnswer.timeLeft || 0));
-          score += 100 + Math.min(50, Math.floor((tl / 15) * 50));
+          // timeLeft is client-reported — cap hard to limit inflation
+          const tl = Math.max(0, Math.min(5, userAnswer.timeLeft || 0));
+          score += 100 + Math.min(17, Math.floor((tl / 15) * 50));
         }
       }
       score = Math.min(score, 1500);
