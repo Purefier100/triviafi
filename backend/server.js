@@ -300,17 +300,6 @@ async function initDB() {
   await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
   await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS game_questions_session_qindex ON game_questions(session_id, q_index)`).catch(() => {});
-   // With this single safe block:
-   await pool.query(`
-    DO $$ BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint WHERE conname = 'gs_user_game_chain_unique'
-      ) THEN
-      ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_user_id_game_id_key;
-      ALTER TABLE game_sessions ADD CONSTRAINT gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
-      END IF;
-      END $$;
-    `).catch(() => {});
 
     // Make google_id nullable
     await pool
@@ -1279,6 +1268,10 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
   if (!gameId || !Array.isArray(answers))
     return res.status(400).json({ error: "Invalid input" });
 
+  if (![5042002, 4441].includes(Number(chainId))) {
+    return res.status(400).json({ error: "Invalid chain" });
+  }
+
   const effectiveWallet = (req.user.wallet || wallet || "").toLowerCase();
   if (!effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet))
     return res
@@ -1506,7 +1499,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
 
     const minPossibleTime = answers.length * 1.5;
 
-    if (sessionAge < minPossibleTime) {
+    const hardFloor = Math.max(15000, answers.length * 1500); // at least 15s total
+    if (sessionAge * 1000 < hardFloor) {
       return res.status(400).json({
         error: "Impossible completion time detected",
       });
@@ -1525,6 +1519,25 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       }
       if (ans.selected && ans.selected.length > 500) {
         return res.status(400).json({ error: "Answer too long" });
+      }
+    }
+
+    // ✅ Duplicate question index check
+    const seenIdx = new Set();
+    for (const ans of answers) {
+      const key = Number(ans.questionIndex);
+      if (seenIdx.has(key)) {
+        return res.status(400).json({ error: "Duplicate answer detected" });
+      }
+      seenIdx.add(key);
+    }
+
+    // ✅ Answer timestamp gap check — blocks bots answering in <300ms
+    const sorted = [...answers].sort((a, b) => (a.answeredAt || 0) - (b.answeredAt || 0));
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = (sorted[i].answeredAt || 0) - (sorted[i - 1].answeredAt || 0);
+      if (gap > 0 && gap < 300) {
+        return res.status(400).json({ error: "Bot-like answering speed detected" });
       }
     }
 
