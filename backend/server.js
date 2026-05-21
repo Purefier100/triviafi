@@ -1478,12 +1478,11 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       console.log(`⚠️ Using DB nonce: ${nonce}`);
     }
 
-    // ✅ Calculate score server-side
-    const sessionRow = await pool.query(
-      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId],
-    );
-    const sessionId = sessionRow.rows[0]?.id;
+    // Use session already fetched above
+    const sessionId = sessionCheck.rows[0]?.id;
+    if (!sessionId) {
+      return res.status(400).json({ error: "No game session found. Play the game first." });
+    }
 
     const sessionData = await pool.query(
       "SELECT started_at FROM game_sessions WHERE id=$1",
