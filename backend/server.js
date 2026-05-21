@@ -1168,11 +1168,7 @@ app.post("/game/start", async (req, res) => {
       );
     }
 
-    const sessionRow = await pool.query(
-      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId],
-    );
-    const sessionId = sessionRow.rows[0]?.id;
+    const sessionId = sessionCheck.rows[0]?.id;
 
     // ✅ Check if questions already stored (replay attempt)
     const existingQs = await pool.query(
@@ -1397,21 +1393,25 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Score already submitted onchain" });
 
     // ✅ Check DB session
-    const sessionCheck = await pool.query(
-      "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+    let sessionCheck = await pool.query(
+      "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
       [req.user.id, gameId],
     );
     if (sessionCheck.rows.length === 0) {
-      // ✅ Create session now if it doesn't exist
       try {
         await pool.query(
           "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
           [req.user.id, effectiveWallet, gameId, chainId]
         );
+        // Re-fetch after insert
+        sessionCheck = await pool.query(
+          "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+          [req.user.id, gameId]
+        );
       } catch (_) {}
     }
 
-    if (sessionCheck.rows[0].finished) {
+    if (sessionCheck.rows[0]?.finished) {
       // ✅ Allow retry — return cached score + fresh signature
       // so user can re-submit onchain if TX failed last time
       const cachedScore = sessionCheck.rows[0].score;
