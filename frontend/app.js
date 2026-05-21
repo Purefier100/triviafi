@@ -792,6 +792,8 @@ function displayName(wallet) {
 // =============================================================================
 // CONTRACT SETUP
 // =============================================================================
+const Web3Modal = window.Web3Modal.default;
+const WalletConnectProvider = window.WalletConnectProvider.default;
 
 // ── Multi-network config ──────────────────────────────────────────────────────
 const NETWORKS = {
@@ -865,182 +867,6 @@ const USDC_ABI = [
   "function transfer(address,uint256) external returns (bool)",
   "function allowance(address owner,address spender) view returns (uint256)",
 ];
-
-// =============================================================================
-// REOWN APPKIT — Wallet Connection
-// =============================================================================
-
-let appKit = null;
-let appKitProvider = null; // EthersAdapter provider from AppKit
-
-async function initReown() {
-  const { createAppKit } = await import("https://esm.sh/@reown/appkit@1.8.18");
-  const { EthersAdapter } = await import("https://esm.sh/@reown/appkit-adapter-ethers@1.8.18");
-  const { defineChain } = await import("https://esm.sh/@reown/appkit@1.8.18/networks");
-
-  const arcTestnet = defineChain({
-    id: 5042002,
-    caipNetworkId: "eip155:5042002",
-    chainNamespace: "eip155",
-    name: "Arc Testnet",
-    nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 6 },
-    rpcUrls: { default: { http: ["https://rpc.testnet.arc.network"] } },
-    blockExplorers: { default: { name: "ArcScan", url: "https://testnet.arcscan.app" } },
-  });
-
-  const litvmTestnet = defineChain({
-    id: 4441,
-    caipNetworkId: "eip155:4441",
-    chainNamespace: "eip155",
-    name: "LitVM Testnet",
-    nativeCurrency: { name: "zkLTC", symbol: "zkLTC", decimals: 18 },
-    rpcUrls: { default: { http: ["https://liteforge.rpc.caldera.xyz/http"] } },
-    blockExplorers: { default: { name: "LitVM Explorer", url: "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz" } },
-  });
-
-  const ethersAdapter = new EthersAdapter();
-
-  appKit = createAppKit({
-    adapters: [ethersAdapter],
-    networks: [arcTestnet, litvmTestnet],
-    defaultNetwork: arcTestnet,
-    projectId: "34d7d1669bebb8656acbe3da0c325e60", 
-    metadata: {
-      name: "TriviaFi",
-      description: "Multichain trivia — win USDC on Arc, win zkLTC on LitVM",
-      url: "https://triviafi.vercel.app", 
-      icons: ["https://triviafi.vercel.app/favicon.ico"],
-    },
-    features: {
-      analytics: false,
-      email: false,
-      socials: false, // wallet-only, no email/social login
-    },
-    themeMode: "dark",
-    themeVariables: {
-      "--w3m-accent": "#00e5ff",
-      "--w3m-border-radius-master": "12px",
-    },
-  });
-
-  // ── Listen for account/network changes ──────────────────────────────────────
-  appKit.subscribeAccount(async (accountState) => {
-    if (accountState.isConnected && accountState.address) {
-      await onWalletConnected(accountState.address);
-    } else if (!accountState.isConnected && userAddress) {
-      onWalletDisconnected();
-    }
-  });
-
-  appKit.subscribeNetwork((networkState) => {
-    if (!networkState?.chainId) return;
-    const chainId = Number(networkState.chainId);
-    if (NETWORKS[chainId] && chainId !== (activeNet.decimals === 18 ? 4441 : 5042002)) {
-      handleNetworkSwitch(chainId);
-    }
-  });
-}
-
-async function onWalletConnected(address) {
-  userAddress = address;
-
-  // Build ethers provider/signer from AppKit's provider
-  const walletProvider = appKit.getWalletProvider();
-  if (!walletProvider) return;
-
-  provider = new ethers.BrowserProvider(walletProvider);
-  signer = await provider.getSigner();
-
-  const network = await provider.getNetwork();
-  const chainId = Number(network.chainId);
-
-  // Set activeNet based on connected chain
-  if (NETWORKS[chainId]) {
-    activeNet = NETWORKS[chainId];
-  }
-
-  CONTRACT_ADDRESS = activeNet.contractAddress;
-  USDC_ADDRESS = activeNet.tokenAddress;
-
-  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-  if (!activeNet.isNative) {
-    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-  } else {
-    usdcContract = null;
-  }
-
-  try { platformAddress = await readContract.platform(); } catch (_) {}
-
-  // Auth with backend
-  try {
-    const message = `Login to ${activeNet.name}`;
-    const signature = await signer.signMessage(message);
-    const authRes = await fetch(`${BACKEND}/auth/wallet`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ wallet: userAddress, signature, networkName: activeNet.name }),
-    });
-    const authData = await authRes.json();
-    if (authData.user) currentProfile = authData.user;
-
-    const meData = await fetch(`${BACKEND}/auth/me`, { credentials: "include" }).then(r => r.json());
-    if (meData.user) currentProfile = meData.user;
-  } catch (e) {
-    console.error("Auth error:", e.message);
-  }
-
-  updateNetBar();
-  renderAuthState();
-  toast("✅ Wallet connected!", "success");
-  document.body.classList.add("wallet-connected");
-  loadGames();
-  loadMyStats();
-
-  if (currentGameId) openGame(currentGameId);
-  if (window.pendingGameId) { openGame(window.pendingGameId); window.pendingGameId = null; }
-}
-
-function onWalletDisconnected() {
-  provider = signer = contract = usdcContract = null;
-  userAddress = null;
-  stopAutoRefresh();
-  renderAuthState();
-  showScreen("screenLobby");
-  toast("Wallet disconnected", "info");
-}
-
-function handleNetworkSwitch(chainId) {
-  if (!NETWORKS[chainId]) return;
-  activeNet = NETWORKS[chainId];
-  CONTRACT_ADDRESS = activeNet.contractAddress;
-  USDC_ADDRESS = activeNet.tokenAddress;
-  reconnectContracts();
-  updateNetBar();
-  toast(`✅ Switched to ${activeNet.name}`, "success");
-}
-
-async function connectWallet() {
-  if (!appKit) {
-    const btn = document.getElementById("connectBtn");
-    if (btn) { btn.disabled = true; btn.textContent = "⏳ Loading..."; }
-    await initReown();
-    if (btn) { btn.disabled = false; btn.textContent = "🦊 Connect Wallet"; }
-  }
-  appKit.open();
-}
-
-// Replace disconnectWallet()
-function disconnectWallet() {
-  if (appKit) appKit.disconnect();
-  onWalletDisconnected();
-}
-
-// Replace switchToNetwork()
-async function switchToNetwork(chainId) {
-  if (!appKit) return;
-  await appKit.switchNetwork({ id: chainId });
-}
 const CATEGORIES = [
   { id: 9, name: "General Knowledge", icon: "🧠" },
   { id: 17, name: "Science & Nature", icon: "🔬" },
@@ -1191,15 +1017,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   checkUrlGame();
   startTickerLoop();
   loadGlobalStats();
-  loadGames();                    // ← runs immediately
+  loadGames();
   countdownInterval = setInterval(updateCountdowns, 1000);
   injectStreakStyles();
   initAuth();
-  initReown().catch(console.error); // ← non-blocking, no await
   setInterval(() => {
-    const screen = document.querySelector(".screen.active");
-    if (screen?.id === "screenLobby") loadGames();
-  }, 10000);
+  const screen = document.querySelector(".screen.active");
+  if (screen?.id === "screenLobby") loadGames();
+}, 10000);
 });
 
 function checkUrlGame() {
@@ -1232,6 +1057,18 @@ function stopAutoRefresh() {
     autoRefreshInterval = null;
   }
 }
+
+const providerOptions = {
+  walletconnect: {
+    package: WalletConnectProvider,
+    options: {
+      rpc: {
+        5042002: "https://rpc.testnet.arc.network",
+        4441: "https://liteforge.rpc.caldera.xyz/http",
+      },
+    },
+  },
+};
 
 function showNetworkPicker() {
   return new Promise((resolve) => {
@@ -1270,6 +1107,40 @@ function showNetworkPicker() {
   });
 }
 
+async function switchToNetwork(chainId) {
+  const net = NETWORKS[chainId];
+
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: net.hexChainId }],
+    });
+
+    activeNet = net;
+
+    CONTRACT_ADDRESS = net.contractAddress;
+    USDC_ADDRESS = net.tokenAddress;
+
+    await reconnectContracts();
+
+    toast(`✅ Switched to ${net.name}`, "success");
+  } catch (e) {
+    console.error(e);
+
+    if (e.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: net.hexChainId,
+            ...net.addParams,
+          },
+        ],
+      });
+    }
+  }
+}
+
 async function reconnectContracts() {
   readProvider = await createProvider(parseInt(activeNet.hexChainId, 16));
 
@@ -1291,6 +1162,142 @@ async function reconnectContracts() {
   loadGames();
 }
 
+async function connectWallet() {
+  try {
+    const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
+    const providerInstance = await web3Modal.connect();
+    provider = new ethers.BrowserProvider(providerInstance);
+    signer = await provider.getSigner();
+    userAddress = await signer.getAddress();
+
+    const network = await provider.getNetwork();
+    const chainId = Number(network.chainId);
+
+    if (NETWORKS[chainId]) {
+      // ✅ Supported network — use it
+      activeNet = NETWORKS[chainId];
+    } else {
+      // ❌ Unknown network — show picker
+      const chosen = await showNetworkPicker();
+      if (!chosen) return;
+      activeNet = NETWORKS[chosen];
+
+      try {
+        await providerInstance.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: activeNet.hexChainId }],
+        });
+      } catch (switchErr) {
+        if (switchErr.code === 4902 || switchErr.code === -32603) {
+          try {
+            await providerInstance.request({
+              method: "wallet_addEthereumChain",
+              params: [
+                { chainId: activeNet.hexChainId, ...activeNet.addParams },
+              ],
+            });
+          } catch (addErr) {
+            toast(
+              "Please add " + activeNet.name + " manually in MetaMask",
+              "error",
+            );
+            return;
+          }
+        }
+      }
+
+      // Recreate provider after switch
+      provider = new ethers.BrowserProvider(providerInstance);
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
+      const finalNet = await provider.getNetwork();
+      if (Number(finalNet.chainId) !== chosen) {
+        toast("Please switch to " + activeNet.name, "error");
+        return;
+      }
+    }
+
+    CONTRACT_ADDRESS = activeNet.contractAddress;
+    USDC_ADDRESS = activeNet.tokenAddress;
+
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    if (!activeNet.isNative) {
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    }
+
+    // Update network badge in header
+    const netBadge = document.querySelector(".pd-online");
+    if (netBadge)
+      netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
+
+    try {
+      platformAddress = await readContract.platform();
+    } catch (_) {}
+
+    const message = `Login to ${activeNet.name}`;
+    const signature = await signer.signMessage(message);
+
+    const authRes = await fetch(`${BACKEND}/auth/wallet`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        wallet: userAddress,
+        signature,
+        networkName: activeNet.name,
+      }),
+    });
+    const authData = await authRes.json();
+
+    const me = await fetch(`${BACKEND}/auth/me`, {
+      credentials: "include",
+    });
+    
+    const meData = await me.json();
+    
+    const activeScreen = document.querySelector(".screen.active");
+    
+    if (activeScreen?.id === "screenJoin" && currentGameId) {
+      
+      await openGame(currentGameId);
+    }
+    
+    if (meData.user) {
+      
+      currentProfile = meData.user;
+    }
+
+    if (authData.error) {
+      toast(`⚠️ ${authData.error}`, "error");
+    } else if (authData.user) {
+      currentProfile = authData.user;
+    } else if (!currentProfile) {
+      const me = await fetch(`${BACKEND}/auth/me`, {
+        credentials: "include",
+      }).then((r) => r.json());
+      if (me.user) currentProfile = me.user;
+    }
+
+    renderAuthState();
+    toast("✅ Wallet connected!", "success");
+    document.body.classList.add("wallet-connected");
+    loadGames();
+    loadMyStats();
+
+    // refresh current opened game instantly
+    if (currentGameId) {
+      openGame(currentGameId);
+    }
+
+    if (window.pendingGameId) {
+      openGame(window.pendingGameId);
+      window.pendingGameId = null;
+    }
+    updateNetBar();
+  } catch (e) {
+    toast("Connection failed: " + e.message, "error");
+  }
+}
 
 function updateNetBar() {
   const arcBtn = document.getElementById("netArc");
@@ -1698,6 +1705,15 @@ function filterGames(status, btn) {
     .forEach((t) => t.classList.remove("active"));
   btn.classList.add("active");
   renderGames();
+}
+
+function disconnectWallet() {
+  provider = signer = contract = usdcContract = null;
+  userAddress = null;
+  stopAutoRefresh();
+  renderAuthState();
+  showScreen("screenLobby");
+  toast("Wallet disconnected", "info");
 }
 
 function renderGames() {
