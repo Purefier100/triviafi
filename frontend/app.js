@@ -3009,13 +3009,12 @@ async function submitMyScore() {
   if (!contract || !currentGameId)
     return toast("Connect wallet first", "error");
 
-  if (alreadySubmitted(currentGameId)) {
-    toast("Score already submitted!", "error");
+  // Only bail if onchain TX was confirmed — not just if DB session exists
+  if (localStorage.getItem(`arc_onchain_${currentGameId}`) === "1") {
     document.getElementById("submitSection").style.display = "none";
     await refreshResults();
     return;
   }
-
   const btn = document.getElementById("submitBtn");
   if (btn) { btn.disabled = true; btn.textContent = "⏳ Getting signature..."; }
 
@@ -3068,8 +3067,11 @@ async function submitMyScore() {
       data.nonce,
       data.signature,
     );
+    
+    toast("⛓️ Waiting for confirmation...", "info");
     await tx.wait();
     
+    localStorage.setItem(`arc_onchain_${currentGameId}`, "1"); // onchain confirmed
     markSubmitted(currentGameId);
     saveScore(currentGameId, verifiedScore);
     sessionStorage.removeItem(`playing_${currentGameId}`);

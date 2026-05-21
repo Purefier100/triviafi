@@ -1417,8 +1417,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     if (sessionCheck.rows[0]?.finished) {
-      // ✅ Allow retry — return cached score + fresh signature
-      // so user can re-submit onchain if TX failed last time
+      // Allow retry for onchain submission if TX failed
       const cachedScore = sessionCheck.rows[0].score;
       if (cachedScore > 0) {
         // Get fresh nonce for retry
