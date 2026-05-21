@@ -847,7 +847,7 @@ const ABI = [
   "function nonces(address) view returns (uint256)",
   "function createGame(string,uint8,string,uint8,uint256,uint256,uint256,uint256) external returns (uint256)",
   "function joinGame(uint256) external payable",
-  "function submitScore(uint256,uint256,uint256,bytes) external",
+  "function submitScore(uint256,uint256,bytes) external",
   "function triggerEnd(uint256) external",
   "function claimPrize(uint256) external",
   "function cancelGame(uint256,string) external",
@@ -3054,7 +3054,6 @@ async function submitMyScore() {
     const tx = await contract.submitScore(
       currentGameId,
       verifiedScore,
-      data.nonce,
       data.signature,
     );
     
