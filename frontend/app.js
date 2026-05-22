@@ -2674,9 +2674,10 @@ async function startPlay() {
     
     const chkData = await chk.json();
     
-    if (chkData.finished || chkData.played) {
-      
+    if (chkData.finished) {
+      // ✅ Already scored server-side — block replay, show retry submit
       markSubmitted(currentGameId);
+      saveScore(currentGameId, chkData.score || loadSavedScore(currentGameId));
       
       toast("You already played this game!", "error");
       
@@ -3095,11 +3096,19 @@ async function submitMyScore() {
     await doTriggerEnd(currentGameId);
 
   } catch (e) {
+    const msg = e.reason || e.message || "";
+    // User rejected TX — score is saved server-side, show retry
+    if (msg.includes("user rejected") || msg.includes("ACTION_REJECTED") || msg.includes("denied")) {
+      toast("Transaction cancelled — tap Submit to try again", "info");
+      document.getElementById("resSub").textContent = "Score saved — submit onchain to finalize";
+    } else {
+      toast("Failed: " + msg, "error");
+    }
     if (btn) {
-       btn.disabled = false;
-       btn.textContent = "📡 Submit Score Onchain";
-      }
-    toast("Failed: " + (e.reason || e.message), "error");
+      btn.disabled = false;
+      btn.textContent = "📡 Submit Score Onchain";
+    }
+    document.getElementById("submitSection").style.display = "block";
   }
 }
 
