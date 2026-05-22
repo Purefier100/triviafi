@@ -1562,9 +1562,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         const userAnswer = answers.find(a => Number(a.questionIndex) === Number(stored.q_index));
         if (!userAnswer || !userAnswer.selected) continue;
         if (userAnswer.selected === stored.correct_answer) {
-          // timeLeft is client-reported — cap hard to limit inflation
-          const tl = Math.max(0, Math.min(5, userAnswer.timeLeft || 0));
-          score += 100 + Math.min(17, Math.floor((tl / 15) * 50));
+          const tl = Math.max(0, Math.min(10, userAnswer.timeLeft || 0)); // cap at 10s not 15
+          score += 100 + Math.floor((tl / 15) * 50);                      // max ~133 per question
         }
       }
       score = Math.min(score, 1500);
