@@ -1382,7 +1382,7 @@ function updateCountdowns() {
 
 async function startTickerLoop() {
   await updateTicker();
-  setInterval(updateTicker, 30000);
+  setInterval(updateTicker, 60000);
 }
 
 async function updateTicker() {
@@ -1416,11 +1416,15 @@ async function updateTicker() {
         g[12] &&
         g[12][0] !== "0x0000000000000000000000000000000000000000"
       ) {
-        items.push(
-          `${icon} ENDED <span class='tick-gold'>${g[4]}</span> · Winner: ${fmt(
-            g[12][0],
-          )}`,
-        );
+        
+        // ✅ Only show a few ended games
+        if (items.length < 6) {
+          items.push(
+            `${icon} ENDED <span class='tick-gold'>${g[4]}</span> · Winner: ${fmt(
+              g[12][0],
+            )}`,
+          );
+        }
       }
     }
     items.push(

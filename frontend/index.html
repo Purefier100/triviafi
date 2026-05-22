@@ -38,10 +38,53 @@
 
     body {
       font-family: 'DM Sans', sans-serif;
-      background: var(--bg);
+      background:
+        radial-gradient(circle at top left, rgba(0, 229, 255, .10), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(123, 97, 255, .10), transparent 30%),
+        linear-gradient(180deg, #070711 0%, #0f172a 100%);
       color: var(--text);
       min-height: 100vh;
-      line-height: 1.5
+      line-height: 1.5;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      width: 420px;
+      height: 420px;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: .12;
+      z-index: -1;
+      animation: orbFloat 14s ease-in-out infinite;
+    }
+
+    body::before {
+      background: #00e5ff;
+      top: -120px;
+      left: -120px;
+    }
+
+    body::after {
+      background: #7b61ff;
+      bottom: -140px;
+      right: -120px;
+      animation-delay: 6s;
+    }
+
+    @keyframes orbFloat {
+
+      0%,
+      100% {
+        transform: translateY(0px);
+      }
+
+      50% {
+        transform: translateY(25px);
+      }
     }
 
     input,
@@ -133,7 +176,19 @@
     /* Screens */
     .screen {
       display: none;
-      animation: screenIn .25s ease
+      animation: smoothFade .35s ease;
+    }
+
+    @keyframes smoothFade {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .screen.active {
@@ -160,13 +215,36 @@
 
     .hero h1 {
       font-family: 'Bebas Neue', sans-serif;
-      font-size: clamp(3rem, 8vw, 5rem);
-      letter-spacing: 4px;
-      line-height: 1.0;
-      background: linear-gradient(135deg, #fff 20%, var(--accent) 80%);
+      font-size: clamp(4rem, 10vw, 7rem);
+      letter-spacing: 5px;
+      line-height: .95;
+      background: linear-gradient(135deg,
+          #ffffff 10%,
+          #8be9ff 45%,
+          #00e5ff 70%,
+          #7b61ff 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
-      margin-bottom: 14px
+      margin-bottom: 18px;
+      text-shadow:
+        0 0 20px rgba(0, 229, 255, .2),
+        0 0 40px rgba(123, 97, 255, .15);
+    }
+
+    .hero {
+      animation: heroFade 1s ease;
+    }
+
+    @keyframes heroFade {
+      from {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .hero p {
@@ -246,11 +324,12 @@
 
     /* Card */
     .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 20px;
-      margin-bottom: 18px
+      background: rgba(22, 33, 62, 0.72);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 18px;
     }
 
     .card-title {
@@ -306,12 +385,27 @@
     }
 
     .btn-primary {
-      background: linear-gradient(135deg, var(--accent), var(--purple));
-      color: #000
+      background: linear-gradient(135deg,
+          #00e5ff,
+          #7b61ff);
+
+      color: white;
+
+      box-shadow:
+        0 10px 25px rgba(0, 229, 255, .18);
+
+      transition:
+        transform .18s,
+        box-shadow .2s,
+        opacity .2s;
     }
 
     .btn-primary:hover {
-      opacity: .88
+      transform: translateY(-2px);
+      opacity: .95;
+
+      box-shadow:
+        0 14px 35px rgba(0, 229, 255, .25);
     }
 
     .btn-ghost {
@@ -386,9 +480,13 @@
     }
 
     .gcard:hover {
-      border-color: rgba(0, 229, 255, .35);
-      transform: translateY(-3px);
-      box-shadow: 0 8px 30px rgba(0, 229, 255, .08)
+      border-color: rgba(0, 229, 255, .45);
+      transform: translateY(-6px) scale(1.015);
+
+      box-shadow:
+        0 0 20px rgba(0, 229, 255, .12),
+        0 0 60px rgba(123, 97, 255, .10),
+        0 20px 40px rgba(0, 0, 0, .45);
     }
 
     .gcard:hover::before {
@@ -519,6 +617,24 @@
       border-radius: 10px;
       padding: 12px;
       text-align: center
+    }
+
+    .play-live {
+      animation: livePulse 1.8s infinite;
+    }
+
+    @keyframes livePulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(0, 229, 255, .45);
+      }
+
+      70% {
+        box-shadow: 0 0 0 16px rgba(0, 229, 255, 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(0, 229, 255, 0);
+      }
     }
 
     .pstat-n {
@@ -730,7 +846,25 @@
     }
 
     .q-clock.urg {
-      color: var(--red)
+      color: var(--red);
+
+      animation:
+        pulse 0.7s infinite,
+        shake .18s infinite;
+    }
+
+    @keyframes shake {
+      0% {
+        transform: translateX(-1px);
+      }
+
+      50% {
+        transform: translateX(1px);
+      }
+
+      100% {
+        transform: translateX(-1px);
+      }
     }
 
     .q-pts {
@@ -785,6 +919,28 @@
 
     .ans-btn:disabled {
       cursor: default
+    }
+
+    .ans-btn {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .ans-btn::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg,
+          transparent,
+          rgba(255, 255, 255, .08),
+          transparent);
+
+      transform: translateX(-100%);
+      transition: transform .5s;
+    }
+
+    .ans-btn:hover::before {
+      transform: translateX(100%);
     }
 
     /* Leaderboard */
@@ -1550,6 +1706,47 @@
     .wallet-connected .pulse {
       animation: none !important;
     }
+
+    .gcard:hover {
+      transform: translateY(-4px) scale(1.01);
+      box-shadow:
+        0 0 20px rgba(0, 229, 255, .15),
+        0 0 60px rgba(123, 97, 255, .12);
+    }
+
+    .live-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin: 30px 0;
+    }
+
+    .live-box {
+      background: rgba(255, 255, 255, .04);
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: 18px;
+      padding: 22px;
+      text-align: center;
+      backdrop-filter: blur(12px);
+    }
+
+    .live-box strong {
+      display: block;
+      font-size: 2rem;
+      color: var(--accent);
+      margin: 6px 0;
+    }
+
+    .live-box p {
+      color: var(--muted);
+      font-size: .8rem;
+    }
+
+    @media(max-width:700px) {
+      .live-stats {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 
@@ -1786,7 +1983,8 @@
             <div class="skeleton skeleton-card"></div>
           </div>
         </div>
-        <button class="btn btn-primary" style="margin-top:16px" onclick="showScreen('screenCreate')">＋ Create Your Own
+        <button class="btn btn-primary play-live" style="margin-top:16px" onclick="showScreen('screenCreate')">＋ Create
+          Your Own
           Game Room</button>
       </div>
 
@@ -1984,6 +2182,26 @@
         <div id="historyList">
           <p style="color:var(--muted);text-align:center;padding:30px">Loading...</p>
         </div>
+      </div>
+    </div>
+
+    <div class="live-stats">
+      <div class="live-box">
+        <span>🔥</span>
+        <strong>1,204</strong>
+        <p>Players Online</p>
+      </div>
+
+      <div class="live-box">
+        <span>💰</span>
+        <strong>$18,420</strong>
+        <p>Total Paid</p>
+      </div>
+
+      <div class="live-box">
+        <span>🏆</span>
+        <strong>284</strong>
+        <p>Live Games</p>
       </div>
     </div>
 
