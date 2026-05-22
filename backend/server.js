@@ -49,12 +49,7 @@ function getCachedProvider(rpcUrl, chainId, name) {
 }
 
 function getCachedContract(address, abi, provider) {
-  const rpcUrl =
-  provider.connection?.url ||
-  provider._getConnection?.()?.url ||
-  "unknown";
-
-const key = `${address}-${rpcUrl}`;
+  const key = `${address}-${provider._getConnection().url}`;
   if (!contractCache[key]) {
     contractCache[key] = new ethers.Contract(address, abi, provider);
   }
@@ -939,7 +934,7 @@ app.get("/game/status/:gameId", async (req, res) => {
     const status = Number(game.status);
 
     const r = await pool.query(
-      "SELECT finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
+      "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
       [req.user.id, gameId, chainId],
     );
 
@@ -961,7 +956,6 @@ app.get("/game/status/:gameId", async (req, res) => {
       status,
       played: r.rows.length > 0,
       finished: r.rows[0]?.finished || false,
-      score: r.rows[0]?.score || 0,
       onchain,
     });
 
@@ -1371,10 +1365,9 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     if (sessionCheck.rows[0]?.finished) {
-      // ✅ Session already scored — return retry signature for onchain submission
-      // This handles: TX rejected, TX failed, user refreshed after scoring
+      // Allow retry for onchain submission if TX failed
       const cachedScore = sessionCheck.rows[0].score;
-      if (cachedScore >= 0) {  // allow score=0 retry too
+      if (cachedScore > 0) {
         // Get fresh nonce for retry
         let nonce;
         try {
@@ -1460,9 +1453,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
 
     const minPossibleTime = answers.length * 1.5;
 
-    // sessionAge is in seconds — min 1.5s per question, minimum 15s total
-    const minSeconds = Math.max(15, answers.length * 1.5);
-    if (sessionAge < minSeconds) {
+    const hardFloor = Math.max(15000, answers.length * 1500); // at least 15s total
+    if (sessionAge * 1000 < hardFloor) {
       return res.status(400).json({
         error: "Impossible completion time detected",
       });
@@ -1494,6 +1486,15 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       seenIdx.add(key);
     }
 
+    // ✅ Answer timestamp gap check — blocks bots answering in <300ms
+    const sorted = [...answers].sort((a, b) => (a.answeredAt || 0) - (b.answeredAt || 0));
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = (sorted[i].answeredAt || 0) - (sorted[i - 1].answeredAt || 0);
+      if (gap > 0 && gap < 300) {
+        return res.status(400).json({ error: "Bot-like answering speed detected" });
+      }
+    }
+
     // In /submit-score, replace the scoring section:
     const storedQs = await pool.query(
       "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
@@ -1522,18 +1523,6 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       score = Math.min(score, 1500);
     }
     
-    // ✅ Mark finished in DB FIRST — before TX so refresh can't replay
-    await pool.query(
-      `UPDATE game_sessions
-      SET finished=true,
-      score=$1,
-      finished_at=NOW()
-      WHERE user_id=$2
-      AND game_id=$3
-      AND chain_id=$4`,
-      [score, req.user.id, gameId, chainId]
-    );
-
     const message = ethers.solidityPackedKeccak256(
       ["address", "uint256", "uint256", "uint256"],
       [effectiveWallet, gameId, score, nonce],
@@ -1541,6 +1530,16 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     
     const signature = await verifierWallet.signMessage(
       ethers.getBytes(message),
+    );
+    
+    await pool.query(
+      `UPDATE game_sessions
+      SET finished=true,
+      score=$1,
+      finished_at=NOW()
+      WHERE user_id=$2
+      AND game_id=$3`,
+      [score, req.user.id, gameId]
     );
     
     // Increment DB nonce as fallback backup

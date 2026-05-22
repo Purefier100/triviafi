@@ -2326,7 +2326,7 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
 
   try {
     const chk = await fetch(
-      `${BACKEND}/game/status/${currentGameId}?chainId=${targetChainId}`,
+      `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
       { credentials: "include" }
     );
 
@@ -2674,10 +2674,9 @@ async function startPlay() {
     
     const chkData = await chk.json();
     
-    if (chkData.finished) {
-      // ✅ Already scored server-side — block replay, show retry submit
+    if (chkData.finished || chkData.played) {
+      
       markSubmitted(currentGameId);
-      saveScore(currentGameId, chkData.score || loadSavedScore(currentGameId));
       
       toast("You already played this game!", "error");
       
@@ -2778,8 +2777,6 @@ async function startPlay() {
     answers = [];
     streakCount = 0;
     answered = false;
-    // ✅ Mark as started — blocks replay on refresh
-    sessionStorage.setItem(`playing_${currentGameId}`, "1");
     buildDots();
     showScreen("screenPlay");
     loadQ();
@@ -3096,19 +3093,11 @@ async function submitMyScore() {
     await doTriggerEnd(currentGameId);
 
   } catch (e) {
-    const msg = e.reason || e.message || "";
-    // User rejected TX — score is saved server-side, show retry
-    if (msg.includes("user rejected") || msg.includes("ACTION_REJECTED") || msg.includes("denied")) {
-      toast("Transaction cancelled — tap Submit to try again", "info");
-      document.getElementById("resSub").textContent = "Score saved — submit onchain to finalize";
-    } else {
-      toast("Failed: " + msg, "error");
-    }
     if (btn) {
-      btn.disabled = false;
-      btn.textContent = "📡 Submit Score Onchain";
-    }
-    document.getElementById("submitSection").style.display = "block";
+       btn.disabled = false;
+       btn.textContent = "📡 Submit Score Onchain";
+      }
+    toast("Failed: " + (e.reason || e.message), "error");
   }
 }
 
@@ -3161,9 +3150,9 @@ async function doTriggerEnd(gameId) {
 
 async function refreshResults() {
   const gameNet = NETWORKS[currentGameChainId] || activeNet;
-  const gameDecimals = gameNet.decimals;
-  const gameSymbol = gameNet.symbol;
-  const dp = gameDecimals === 18 ? 4 : 2;
+const gameDecimals = gameNet.decimals;
+const gameSymbol = gameNet.symbol;
+const dp = gameDecimals === 18 ? 4 : 2;
   if (!currentGameId) return;
   try {
     const g = await getGame(currentGameId);
@@ -3194,7 +3183,7 @@ async function refreshResults() {
         "winnerBanner",
       ).innerHTML = `<div class="winner-banner"><h3>${
         medals[myPos]
-      } — YOU WON!</h3><div class="winner-prize">${prize} ${gameSymbol}</div>${
+      } — YOU WON!</h3><div class="winner-prize">${prize} gameSymbol</div>${
         !claimed_
           ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
           : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`
