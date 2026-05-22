@@ -186,7 +186,9 @@ async function startGame() {
   currentIndex = 0;
 
   // 🔒 BLOCK replay after refresh
-  if (sessionStorage.getItem(`playing_${currentGameId}`)) {
+  if (
+    sessionStorage.getItem(`playing_${currentGameId}`) ||
+    localStorage.getItem(`played_${currentGameId}`)) {
     toast("You already played this game!", "error");
 
     showScreen("screenResults");
@@ -262,6 +264,8 @@ async function startGame() {
   
   // ✅ Mark as started immediately 
   sessionStorage.setItem(`playing_${currentGameId}`, "1");
+
+  localStorage.setItem(`played_${currentGameId}`, "1");
   
   // ▶️ START GAME
   showScreen("screenGame");
@@ -362,8 +366,6 @@ async function submitScore() {
     saveScore(currentGameId, data.score);
     
     markSubmitted(currentGameId);
-    
-    sessionStorage.removeItem(`playing_${currentGameId}`);
     
     toast("✅ Score submitted onchain!", "success");
   } catch (e) {
@@ -792,8 +794,6 @@ function displayName(wallet) {
 // =============================================================================
 // CONTRACT SETUP
 // =============================================================================
-const Web3Modal = window.Web3Modal.default;
-const WalletConnectProvider = window.WalletConnectProvider.default;
 
 // ── Multi-network config ──────────────────────────────────────────────────────
 const NETWORKS = {
@@ -3183,7 +3183,7 @@ const dp = gameDecimals === 18 ? 4 : 2;
         "winnerBanner",
       ).innerHTML = `<div class="winner-banner"><h3>${
         medals[myPos]
-      } — YOU WON!</h3><div class="winner-prize">${prize} gameSymbol</div>${
+      } — YOU WON!</h3><div class="winner-prize">${prize} ${gameSymbol}</div>${
         !claimed_
           ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
           : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`

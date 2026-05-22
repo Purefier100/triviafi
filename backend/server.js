@@ -50,7 +50,7 @@ function calculateScore(serverAnswers, submittedAnswers) {
   for (let i = 0; i < serverAnswers.length; i++) {
     const real = serverAnswers[i];
     const user = submittedAnswers.find(
-      (a) => Number(a.questionId) === Number(real.question_id),
+      (a) => Number(a.questionIndex) === Number(real.question_id),
     );
 
     if (!user) continue;
@@ -742,8 +742,17 @@ app.post("/profile/avatar", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { avatar } = req.body;
   if (!avatar) return res.status(400).json({ error: "No avatar" });
-  if (!avatar.startsWith("http") && !avatar.startsWith("data:image/"))
-    return res.status(400).json({ error: "Invalid format" });
+  if (!avatar.startsWith("https://")) {
+    return res.status(400).json({
+      error: "Only HTTPS images allowed",
+    });
+  }
+  
+  if (avatar.length > 500) {
+    return res.status(400).json({
+      error: "Avatar URL too long",
+    });
+  }
   if (avatar.startsWith("data:image/") && avatar.length > 200000)
     return res.status(400).json({ error: "Image too large — use a URL" });
   try {
@@ -762,7 +771,7 @@ app.get("/profile/by-wallet/:wallet", async (req, res) => {
     return res.status(400).json({ error: "Invalid wallet" });
   try {
     const r = await pool.query(
-      "SELECT username, display_name, avatar FROM users WHERE LOWER(wallet)=LOWER($1)",
+      "SELECT id, google_id, username, display_name, avatar FROM users WHERE LOWER(wallet)=LOWER($1)",
       [req.params.wallet],
     );
     res.json(r.rows[0] || null);
@@ -791,12 +800,13 @@ app.post("/profile/resolve", async (req, res) => {
   }
 });
 
-app.get("/debug/nonce/:wallet", async (req, res) => {
+if (process.env.NODE_ENV !== "production") {
+  app.get("/debug/nonce/:wallet", async (req, res) => {
   const wallet = req.params.wallet;
   try {
     // Use withRetry which IS globally defined
     const onchainNonce = await withRetry(
-      (c) => c.getNonce(wallet),
+      (c) => c.nonces(wallet),
       "debugNonce",
     );
     const dbRow = await pool.query(
@@ -811,9 +821,11 @@ app.get("/debug/nonce/:wallet", async (req, res) => {
     res.json({ error: e.message });
   }
 });
+}
 
-app.get("/debug/contract", async (req, res) => {
-  try {
+if (process.env.NODE_ENV !== "production") {
+  app.get("/debug/contract", async (req, res) => {
+    try {
     const p = makeProvider();
     // Try different nonce function names
     const tests = {};
@@ -873,6 +885,7 @@ app.get("/debug/contract", async (req, res) => {
     res.json({ error: e.message });
   }
 });
+}
 
 app.get("/profile/check/:username", async (req, res) => {
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(req.params.username))
@@ -951,7 +964,8 @@ app.get("/game/status/:gameId", async (req, res) => {
   }
 });
 
-app.get("/debug/rpc", async (req, res) => {
+if (process.env.NODE_ENV !== "production") {
+  app.get("/debug/rpc", async (req, res) => {
   const results = {};
   const rpcs = [
     "https://rpc.testnet.arc.network",
@@ -979,6 +993,7 @@ app.get("/debug/rpc", async (req, res) => {
   }
   res.json(results);
 });
+}
 
 // ✅ LOCAL QUESTION BANK — 200 questions across categories
 // Used when OpenTDB is unavailable. Prevents "No questions available" errors.
@@ -1262,6 +1277,16 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
   const { gameId, wallet, answers, chainId: reqChainId } = req.body;
+  if (!Array.isArray(answers)) {
+    return res.status(400).json({
+      error: "Invalid answers format",
+    });
+  }
+  if (answers.length === 0 || answers.length > 20) {
+    return res.status(400).json({
+      error: "Invalid number of answers",
+    });
+  }
   const chainId = parseInt(reqChainId || "5042002");
   const isLitvm = chainId === 4441;
 
@@ -1443,6 +1468,18 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         console.log(
           `🔄 Retry signature: game=${gameId} score=${cachedScore} nonce=${nonce}`,
         );
+        await pool.query(
+          `
+          UPDATE game_sessions
+          SET finished=true,
+          score=$1,
+          finished_at=NOW()
+          WHERE user_id=$2
+          AND game_id=$3
+          AND chain_id=$4
+          `,
+          [score, req.user.id, gameId, chainId]
+        );
         return res.json({
           score: cachedScore,
           signature,
@@ -1489,15 +1526,38 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     const sessionData = await pool.query(
-      "SELECT started_at FROM game_sessions WHERE id=$1",
-      [sessionId],
+      `SELECT started_at, finished
+      FROM game_sessions
+      WHERE id=$1`,
+      [sessionId]
     );
-
-    const startedAt = sessionData.rows[0]?.started_at;
+    
+    if (!sessionData.rows.length) {
+      return res.status(400).json({
+        error: "Session not found",
+      });
+    }
+    
+    if (sessionData.rows[0].finished) {
+      return res.status(400).json({
+         error: "Game already submitted",
+        });
+      }
+      
+      const startedAt = new Date(
+        sessionData.rows[0].started_at
+      ).getTime();
+      const totalSeconds =
+      (Date.now() - startedAt) / 1000;
+      
+      // Minimum realistic time
+      if (totalSeconds < 15) {
+        return res.status(400).json({
+          error: "Impossible completion speed detected",
+        });
+      }
 
     const sessionAge = (Date.now() - new Date(startedAt).getTime()) / 1000;
-
-    const minPossibleTime = answers.length * 1.5;
 
     const hardFloor = Math.max(15000, answers.length * 1500); // at least 15s total
     if (sessionAge * 1000 < hardFloor) {
@@ -1681,6 +1741,9 @@ app.get("/bets/game/:gameId", async (req, res) => {
 });
 
 app.post("/admin/sync-nonce", async (req, res) => {
+  if (req.headers["x-admin-key"] !== process.env.ADMIN_SECRET) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
   const { wallet } = req.body;
   if (!wallet) return res.status(400).json({ error: "Missing wallet" });
   try {
