@@ -1747,6 +1747,35 @@
         grid-template-columns: 1fr;
       }
     }
+
+    .premium-stats .stat-box {
+      background: linear-gradient(180deg,
+          rgba(255, 255, 255, .04),
+          rgba(255, 255, 255, .02));
+
+      backdrop-filter: blur(18px);
+
+      border: 1px solid rgba(255, 255, 255, .08);
+
+      box-shadow:
+        0 10px 30px rgba(0, 0, 0, .35),
+        0 0 30px rgba(0, 229, 255, .05);
+
+      transition:
+        transform .25s,
+        box-shadow .25s,
+        border-color .25s;
+    }
+
+    .premium-stats .stat-box:hover {
+      transform: translateY(-6px);
+
+      border-color: rgba(0, 229, 255, .35);
+
+      box-shadow:
+        0 20px 40px rgba(0, 0, 0, .45),
+        0 0 50px rgba(0, 229, 255, .12);
+    }
   </style>
 </head>
 
@@ -1938,90 +1967,90 @@
         </div>
       </div>
 
-      <div class="stat-row">
-        <div class="stat-box">
-          <div class="stat-num" id="gTotal">—</div>
-          <div class="stat-lbl">Total Games</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-num" id="gPool" style="font-size:1.1rem;line-height:1.4">—</div>
-          <div class="stat-lbl">Total In Play</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-num" id="gActive">—</div>
-          <div class="stat-lbl">Active Now</div>
-        </div>
+      <div class="stat-row premium-stats"></div>
+      <div class="stat-box">
+        <div class="stat-num" id="gTotal">—</div>
+        <div class="stat-lbl">Total Games</div>
       </div>
+      <div class="stat-box">
+        <div class="stat-num" id="gPool" style="font-size:1.1rem;line-height:1.4">—</div>
+        <div class="stat-lbl">Total In Play</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num" id="gActive">—</div>
+        <div class="stat-lbl">Active Now</div>
+      </div>
+    </div>
 
-      <div class="card">
-        <div
-          style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-          <div style="display:flex;align-items:center;gap:12px">
-            <div class="card-title" style="margin:0">🎮 Game Rooms</div>
-            <div class="online-badge"><span class="online-badge-dot"></span><span id="onlineCount">—</span> online</div>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" onclick="loadGames()">🔄 Refresh</button>
-            <button class="btn btn-primary btn-sm" onclick="showScreen('screenCreate')">＋ New Room</button>
-          </div>
+    <div class="card">
+      <div
+        style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="card-title" style="margin:0">🎮 Game Rooms</div>
+          <div class="online-badge"><span class="online-badge-dot"></span><span id="onlineCount">—</span> online</div>
         </div>
-        <div class="tabs">
-          <button class="tab active" onclick="filterGames('all',this)">All</button>
-          <button class="tab" onclick="filterGames('0',this)">🟢 Open</button>
-          <button class="tab" onclick="filterGames('live',this)">🔴 Live</button>
-          <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
-          <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost btn-sm" onclick="loadGames()">🔄 Refresh</button>
+          <button class="btn btn-primary btn-sm" onclick="showScreen('screenCreate')">＋ New Room</button>
         </div>
-        <!-- Skeleton shown until games load -->
-        <div id="gamesList">
-          <div class="game-grid">
-            <div class="skeleton skeleton-card"></div>
-            <div class="skeleton skeleton-card"></div>
-            <div class="skeleton skeleton-card"></div>
-            <div class="skeleton skeleton-card"></div>
-            <div class="skeleton skeleton-card"></div>
-            <div class="skeleton skeleton-card"></div>
-          </div>
-        </div>
-        <button class="btn btn-primary play-live" style="margin-top:16px" onclick="showScreen('screenCreate')">＋ Create
-          Your Own
-          Game Room</button>
       </div>
+      <div class="tabs">
+        <button class="tab active" onclick="filterGames('all',this)">All</button>
+        <button class="tab" onclick="filterGames('0',this)">🟢 Open</button>
+        <button class="tab" onclick="filterGames('live',this)">🔴 Live</button>
+        <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
+        <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
+      </div>
+      <!-- Skeleton shown until games load -->
+      <div id="gamesList">
+        <div class="game-grid">
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+        </div>
+      </div>
+      <button class="btn btn-primary play-live" style="margin-top:16px" onclick="showScreen('screenCreate')">＋ Create
+        Your Own
+        Game Room</button>
+    </div>
 
-      <!-- Activity feed -->
-      <div class="card" id="activityCard" style="display:none">
-        <div class="card-title">⚡ Recent Activity</div>
-        <div id="activityFeed"></div>
-      </div>
+    <!-- Activity feed -->
+    <div class="card" id="activityCard" style="display:none">
+      <div class="card-title">⚡ Recent Activity</div>
+      <div id="activityFeed"></div>
+    </div>
 
-      <div class="card" id="profileCard" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <div class="card-title" style="margin:0">👤 My Profile</div>
-          <button onclick="logoutAll()"
-            style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:8px;cursor:pointer;font-size:.78rem">Sign
-            Out</button>
+    <div class="card" id="profileCard" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div class="card-title" style="margin:0">👤 My Profile</div>
+        <button onclick="logoutAll()"
+          style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:8px;cursor:pointer;font-size:.78rem">Sign
+          Out</button>
+      </div>
+      <div id="profileGoogleSection"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+      </div>
+      <div id="profileWalletSection"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
+      </div>
+      <div class="profile-grid">
+        <div class="pstat">
+          <div class="pstat-n" id="myPlayed">0</div>
+          <div class="pstat-l">Played</div>
         </div>
-        <div id="profileGoogleSection"
-          style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+        <div class="pstat">
+          <div class="pstat-n" id="myWon">0</div>
+          <div class="pstat-l">Won</div>
         </div>
-        <div id="profileWalletSection"
-          style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
-        </div>
-        <div class="profile-grid">
-          <div class="pstat">
-            <div class="pstat-n" id="myPlayed">0</div>
-            <div class="pstat-l">Played</div>
-          </div>
-          <div class="pstat">
-            <div class="pstat-n" id="myWon">0</div>
-            <div class="pstat-l">Won</div>
-          </div>
-          <div class="pstat">
-            <div class="pstat-n" id="myEarned">$0</div>
-            <div class="pstat-l">Earned</div>
-          </div>
+        <div class="pstat">
+          <div class="pstat-n" id="myEarned">$0</div>
+          <div class="pstat-l">Earned</div>
         </div>
       </div>
+    </div>
     </div>
 
     <!-- CREATE -->
