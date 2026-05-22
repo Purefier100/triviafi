@@ -163,7 +163,7 @@ console.log("Contract:", CONTRACT_ADDRESS);
 // ── DB ────────────────────────────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === "production" ? true : { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false },
 });
 
 async function retry(fn, retries = 3) {
@@ -379,7 +379,7 @@ app.use(express.json({ limit: "512kb" }));
 // ── Session ───────────────────────────────────────────────────────────────────
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET || "fallback-dev-secret",
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -486,8 +486,11 @@ app.get("/games", async (req, res) => {
 
     res.json(result.rows);
   } catch (e) {
-    console.error("[GET /games]", e);
-    res.status(500).json({ error: "Server error" });
+    console.error(e);
+
+    res.status(500).json({
+      error: e.message,
+    });
   }
 });
 
@@ -1559,8 +1562,9 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         const userAnswer = answers.find(a => Number(a.questionIndex) === Number(stored.q_index));
         if (!userAnswer || !userAnswer.selected) continue;
         if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(0, Math.min(10, userAnswer.timeLeft || 0)); // cap at 10s not 15
-          score += 100 + Math.floor((tl / 15) * 50);                      // max ~133 per question
+          // timeLeft is client-reported — cap hard to limit inflation
+          const tl = Math.max(0, Math.min(5, userAnswer.timeLeft || 0));
+          score += 100 + Math.min(17, Math.floor((tl / 15) * 50));
         }
       }
       score = Math.min(score, 1500);
@@ -1678,7 +1682,6 @@ app.get("/bets/game/:gameId", async (req, res) => {
 });
 
 app.post("/admin/sync-nonce", async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
   if (!wallet) return res.status(400).json({ error: "Missing wallet" });
   try {
