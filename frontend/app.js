@@ -1163,10 +1163,13 @@ async function reconnectContracts() {
 }
 
 async function connectWallet() {
+  if (!window.ethereum) {
+    toast("Please install MetaMask", "error");
+    return;
+  }
   try {
-    const web3Modal = new Web3Modal({ cacheProvider: false, providerOptions });
-    const providerInstance = await web3Modal.connect();
-    provider = new ethers.BrowserProvider(providerInstance);
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    provider = new ethers.BrowserProvider(window.ethereum);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
@@ -1174,125 +1177,65 @@ async function connectWallet() {
     const chainId = Number(network.chainId);
 
     if (NETWORKS[chainId]) {
-      // ✅ Supported network — use it
       activeNet = NETWORKS[chainId];
     } else {
-      // ❌ Unknown network — show picker
       const chosen = await showNetworkPicker();
       if (!chosen) return;
       activeNet = NETWORKS[chosen];
-
       try {
-        await providerInstance.request({
+        await window.ethereum.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: activeNet.hexChainId }],
         });
-      } catch (switchErr) {
-        if (switchErr.code === 4902 || switchErr.code === -32603) {
-          try {
-            await providerInstance.request({
-              method: "wallet_addEthereumChain",
-              params: [
-                { chainId: activeNet.hexChainId, ...activeNet.addParams },
-              ],
-            });
-          } catch (addErr) {
-            toast(
-              "Please add " + activeNet.name + " manually in MetaMask",
-              "error",
-            );
-            return;
-          }
+      } catch (e) {
+        if (e.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{ chainId: activeNet.hexChainId, ...activeNet.addParams }],
+          });
         }
       }
-
-      // Recreate provider after switch
-      provider = new ethers.BrowserProvider(providerInstance);
+      provider = new ethers.BrowserProvider(window.ethereum);
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
-      const finalNet = await provider.getNetwork();
-      if (Number(finalNet.chainId) !== chosen) {
-        toast("Please switch to " + activeNet.name, "error");
-        return;
-      }
     }
 
     CONTRACT_ADDRESS = activeNet.contractAddress;
     USDC_ADDRESS = activeNet.tokenAddress;
-
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
     if (!activeNet.isNative) {
       usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
     }
 
-    // Update network badge in header
     const netBadge = document.querySelector(".pd-online");
-    if (netBadge)
-      netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
+    if (netBadge) netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
 
-    try {
-      platformAddress = await readContract.platform();
-    } catch (_) {}
+    try { platformAddress = await readContract.platform(); } catch (_) {}
 
     const message = `Login to ${activeNet.name}`;
     const signature = await signer.signMessage(message);
-
     const authRes = await fetch(`${BACKEND}/auth/wallet`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        wallet: userAddress,
-        signature,
-        networkName: activeNet.name,
-      }),
+      body: JSON.stringify({ wallet: userAddress, signature, networkName: activeNet.name }),
     });
     const authData = await authRes.json();
 
-    const me = await fetch(`${BACKEND}/auth/me`, {
-      credentials: "include",
-    });
-    
-    const meData = await me.json();
-    
-    const activeScreen = document.querySelector(".screen.active");
-    
-    if (activeScreen?.id === "screenJoin" && currentGameId) {
-      
-      await openGame(currentGameId);
-    }
-    
-    if (meData.user) {
-      
-      currentProfile = meData.user;
-    }
+    const meData = await fetch(`${BACKEND}/auth/me`, { credentials: "include" }).then(r => r.json());
+    if (meData.user) currentProfile = meData.user;
+    if (authData.user) currentProfile = authData.user;
 
-    if (authData.error) {
-      toast(`⚠️ ${authData.error}`, "error");
-    } else if (authData.user) {
-      currentProfile = authData.user;
-    } else if (!currentProfile) {
-      const me = await fetch(`${BACKEND}/auth/me`, {
-        credentials: "include",
-      }).then((r) => r.json());
-      if (me.user) currentProfile = me.user;
-    }
+    const activeScreen = document.querySelector(".screen.active");
+    if (activeScreen?.id === "screenJoin" && currentGameId) await openGame(currentGameId);
 
     renderAuthState();
     toast("✅ Wallet connected!", "success");
     document.body.classList.add("wallet-connected");
     loadGames();
     loadMyStats();
-
-    // refresh current opened game instantly
-    if (currentGameId) {
-      openGame(currentGameId);
-    }
-
-    if (window.pendingGameId) {
-      openGame(window.pendingGameId);
-      window.pendingGameId = null;
-    }
+    if (currentGameId) openGame(currentGameId);
+    if (window.pendingGameId) { openGame(window.pendingGameId); window.pendingGameId = null; }
     updateNetBar();
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
