@@ -163,7 +163,7 @@ console.log("Contract:", CONTRACT_ADDRESS);
 // ── DB ────────────────────────────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: process.env.NODE_ENV === "production" ? true : { rejectUnauthorized: false },
 });
 
 async function retry(fn, retries = 3) {
@@ -379,7 +379,7 @@ app.use(express.json({ limit: "512kb" }));
 // ── Session ───────────────────────────────────────────────────────────────────
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "fallback-dev-secret",
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -486,11 +486,8 @@ app.get("/games", async (req, res) => {
 
     res.json(result.rows);
   } catch (e) {
-    console.error(e);
-
-    res.status(500).json({
-      error: e.message,
-    });
+    console.error("[GET /games]", e);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
@@ -1681,6 +1678,7 @@ app.get("/bets/game/:gameId", async (req, res) => {
 });
 
 app.post("/admin/sync-nonce", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
   if (!wallet) return res.status(400).json({ error: "Missing wallet" });
   try {
