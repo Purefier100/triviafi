@@ -945,7 +945,7 @@ app.get("/game/status/:gameId", async (req, res) => {
     const status = Number(game.status);
 
     const r = await pool.query(
-      "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
+      "SELECT finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
       [req.user.id, gameId, chainId],
     );
 
@@ -967,6 +967,7 @@ app.get("/game/status/:gameId", async (req, res) => {
       status,
       played: r.rows.length > 0,
       finished: r.rows[0]?.finished || false,
+      score: r.rows[0]?.score || 0,
       onchain,
     });
 
@@ -1376,9 +1377,10 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     if (sessionCheck.rows[0]?.finished) {
-      // Allow retry for onchain submission if TX failed
+      // ✅ Session already scored — return retry signature for onchain submission
+      // This handles: TX rejected, TX failed, user refreshed after scoring
       const cachedScore = sessionCheck.rows[0].score;
-      if (cachedScore > 0) {
+      if (cachedScore >= 0) {  // allow score=0 retry too
         // Get fresh nonce for retry
         let nonce;
         try {
