@@ -1453,8 +1453,9 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
 
     const minPossibleTime = answers.length * 1.5;
 
-    const hardFloor = Math.max(15000, answers.length * 1500); // at least 15s total
-    if (sessionAge * 1000 < hardFloor) {
+    // sessionAge is in seconds — min 1.5s per question, minimum 15s total
+    const minSeconds = Math.max(15, answers.length * 1.5);
+    if (sessionAge < minSeconds) {
       return res.status(400).json({
         error: "Impossible completion time detected",
       });
@@ -1484,15 +1485,6 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         return res.status(400).json({ error: "Duplicate answer detected" });
       }
       seenIdx.add(key);
-    }
-
-    // ✅ Answer timestamp gap check — blocks bots answering in <300ms
-    const sorted = [...answers].sort((a, b) => (a.answeredAt || 0) - (b.answeredAt || 0));
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = (sorted[i].answeredAt || 0) - (sorted[i - 1].answeredAt || 0);
-      if (gap > 0 && gap < 300) {
-        return res.status(400).json({ error: "Bot-like answering speed detected" });
-      }
     }
 
     // In /submit-score, replace the scoring section:
@@ -1538,8 +1530,9 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       score=$1,
       finished_at=NOW()
       WHERE user_id=$2
-      AND game_id=$3`,
-      [score, req.user.id, gameId]
+      AND game_id=$3
+      AND chain_id=$4`,
+      [score, req.user.id, gameId, chainId]
     );
     
     // Increment DB nonce as fallback backup

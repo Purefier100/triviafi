@@ -2326,7 +2326,7 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
 
   try {
     const chk = await fetch(
-      `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
+      `${BACKEND}/game/status/${currentGameId}?chainId=${targetChainId}`,
       { credentials: "include" }
     );
 
@@ -2777,6 +2777,8 @@ async function startPlay() {
     answers = [];
     streakCount = 0;
     answered = false;
+    // ✅ Mark as started — blocks replay on refresh
+    sessionStorage.setItem(`playing_${currentGameId}`, "1");
     buildDots();
     showScreen("screenPlay");
     loadQ();
@@ -3150,9 +3152,9 @@ async function doTriggerEnd(gameId) {
 
 async function refreshResults() {
   const gameNet = NETWORKS[currentGameChainId] || activeNet;
-const gameDecimals = gameNet.decimals;
-const gameSymbol = gameNet.symbol;
-const dp = gameDecimals === 18 ? 4 : 2;
+  const gameDecimals = gameNet.decimals;
+  const gameSymbol = gameNet.symbol;
+  const dp = gameDecimals === 18 ? 4 : 2;
   if (!currentGameId) return;
   try {
     const g = await getGame(currentGameId);
@@ -3183,7 +3185,7 @@ const dp = gameDecimals === 18 ? 4 : 2;
         "winnerBanner",
       ).innerHTML = `<div class="winner-banner"><h3>${
         medals[myPos]
-      } — YOU WON!</h3><div class="winner-prize">${prize} gameSymbol</div>${
+      } — YOU WON!</h3><div class="winner-prize">${prize} ${gameSymbol}</div>${
         !claimed_
           ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
           : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`
