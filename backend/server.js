@@ -49,7 +49,20 @@ function getCachedProvider(rpcUrl, chainId, name) {
 }
 
 function getCachedContract(address, abi, provider) {
-  const key = `${address}-${provider._getConnection().url}`;
+  function getCachedContract(address, abi, provider) {
+  const rpcUrl =
+    provider.connection?.url ||
+    provider._getConnection?.()?.url ||
+    "unknown";
+
+  const key = `${address}-${rpcUrl}`;
+
+  if (!contractCache[key]) {
+    contractCache[key] = new ethers.Contract(address, abi, provider);
+  }
+
+  return contractCache[key];
+}
   if (!contractCache[key]) {
     contractCache[key] = new ethers.Contract(address, abi, provider);
   }
