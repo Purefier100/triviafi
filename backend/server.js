@@ -37,39 +37,11 @@ const ARC_RPCS = [
   "https://rpc.blockdaemon.testnet.arc.network",
 ];
 
-const providerCache = {};
-const contractCache = {};
-
-function getCachedProvider(rpcUrl, chainId, name) {
-  const key = `${rpcUrl}-${chainId}`;
-  if (!providerCache[key]) {
-    providerCache[key] = new ethers.JsonRpcProvider(rpcUrl, { chainId, name });
-  }
-  return providerCache[key];
-}
-
-function getCachedContract(address, abi, provider) {
-  const rpcUrl =
-    provider.connection?.url ||
-    provider._getConnection?.()?.url ||
-    "unknown";
-
-  const key = `${address}-${rpcUrl}`;
-
-  if (!contractCache[key]) {
-    contractCache[key] = new ethers.Contract(
-      address,
-      abi,
-      provider
-    );
-  }
-
-  return contractCache[key];
-}
-
 function makeProvider(rpcIndex = 0) {
-  const url = ARC_RPCS[rpcIndex % ARC_RPCS.length];
-  return getCachedProvider(url, 5042002, "arc-testnet");
+  return new ethers.JsonRpcProvider(ARC_RPCS[rpcIndex % ARC_RPCS.length], {
+    chainId: 5042002,
+    name: "arc-testnet",
+  });
 }
 
 function calculateScore(serverAnswers, submittedAnswers) {
@@ -92,7 +64,7 @@ function calculateScore(serverAnswers, submittedAnswers) {
 }
 
 const arcProvider = makeProvider();
-const arcContract = getCachedContract(
+const arcContract = new ethers.Contract(
   CONTRACT_ADDRESS,
   CONTRACT_ABI,
   arcProvider,
@@ -100,17 +72,20 @@ const arcContract = getCachedContract(
 
 // ── LitVM provider ────────────────────────────────────────────────────────────
 function makeLitvmProvider() {
-  return getCachedProvider(LITVM_RPC_URL, 4441, "litvm");
+  return new ethers.JsonRpcProvider(LITVM_RPC_URL, {
+    chainId: 4441,
+    name: "litvm",
+  });
 }
 const litvmProvider = makeLitvmProvider();
 const litvmVerifierSigner = verifierWallet.connect(litvmProvider);
-const litvmWriteContract = getCachedContract(
+const litvmWriteContract = new ethers.Contract(
   LITVM_CONTRACT_ADDRESS,
   CONTRACT_ABI,
   litvmVerifierSigner,
 );
 const verifierSigner = verifierWallet.connect(arcProvider);
-const writeContract = getCachedContract(
+const writeContract = new ethers.Contract(
   CONTRACT_ADDRESS,
   CONTRACT_ABI,
   verifierSigner,
@@ -122,7 +97,7 @@ async function withRetry(fn, label = "rpc", retries = 6) {
     try {
       // Alternate between RPCs on each retry
       const provider = makeProvider(i - 1);
-      const contract = getCachedContract(
+      const contract = new ethers.Contract(
         CONTRACT_ADDRESS,
         CONTRACT_ABI,
         provider,
@@ -163,7 +138,7 @@ async function withLitvmRetry(fn, label = "litvm", retries = 4) {
   for (let i = 1; i <= retries; i++) {
     try {
       const provider = makeLitvmProvider();
-      const contract = getCachedContract(
+      const contract = new ethers.Contract(
         LITVM_CONTRACT_ADDRESS,
         CONTRACT_ABI,
         provider,
@@ -927,7 +902,7 @@ app.get("/game/status/:gameId", async (req, res) => {
     const statusContractAddr = isLitvm
       ? LITVM_CONTRACT_ADDRESS
       : CONTRACT_ADDRESS;
-    const statusContract = getCachedContract(
+    const statusContract = new ethers.Contract(
       statusContractAddr,
       [
         "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
@@ -945,8 +920,8 @@ app.get("/game/status/:gameId", async (req, res) => {
     const status = Number(game.status);
 
     const r = await pool.query(
-      "SELECT finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
-      [req.user.id, gameId, chainId],
+      "SELECT finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId],
     );
 
     // Check if actually finished onchain
@@ -967,7 +942,6 @@ app.get("/game/status/:gameId", async (req, res) => {
       status,
       played: r.rows.length > 0,
       finished: r.rows[0]?.finished || false,
-      score: r.rows[0]?.score || 0,
       onchain,
     });
 
@@ -1165,16 +1139,16 @@ app.post("/game/start", async (req, res) => {
 
     // ✅ Check if already started — don't re-fetch questions
     const existingSession = await pool.query(
-      "SELECT id, finished FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
-      [req.user.id, gameId, chainId],
+      "SELECT id, finished FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId],
     );
     if (existingSession.rows.length > 0 && existingSession.rows[0].finished) {
       return res.status(400).json({ error: "Already finished this game" });
     }
 
     const existCheck = await pool.query(
-      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
-      [req.user.id, gameId, chainId]
+      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId]
     );
     
     if (existCheck.rows.length === 0) {
@@ -1186,8 +1160,8 @@ app.post("/game/start", async (req, res) => {
 
     // Re-fetch to get the id whether it was just inserted or already existed
     const sessionRow = await pool.query(
-      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
-      [req.user.id, gameId, chainId]
+      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId]
     );
     const sessionId = sessionRow.rows[0]?.id;
 
@@ -1311,13 +1285,26 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
   )
     return res.status(403).json({ error: "Wallet mismatch" });
 
+  // ✅ Fresh provider factory — avoids stale connections and NETWORK_ERROR
+  function makeFreshContract(attempt = 1) {
+    const rpc = ARC_RPCS[(attempt - 1) % ARC_RPCS.length];
+    const p = new ethers.JsonRpcProvider(rpc, {
+      chainId: 5042002,
+      name: "arc-testnet",
+    });
+    return new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, p);
+  }
+  function makeFreshLitvmContract() {
+    const p = makeLitvmProvider();
+    return new ethers.Contract(LITVM_CONTRACT_ADDRESS, CONTRACT_ABI, p);
+  }
+  
   const played = await pool.query(
     `SELECT finished_at
     FROM game_sessions
     WHERE user_id=$1
-    AND game_id=$2
-    AND chain_id=$3`,
-    [req.user.id, gameId, chainId]
+    AND game_id=$2`,
+    [req.user.id, gameId]
   );
   
   if (played.rows[0]?.finished_at) {
@@ -1333,9 +1320,56 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
   }
 
-  const activeRpcCall = isLitvm
-    ? (fn, label) => withLitvmRetry(fn, label)
-    : (fn, label) => withRetry(fn, label);
+  async function litvmCall(fn, label) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        const contract = makeFreshLitvmContract();
+        const result = await Promise.race([
+          fn(contract),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("LitVM timeout")), 12000),
+          ),
+        ]);
+        return result;
+      } catch (e) {
+        console.warn(`[litvm-${label}] attempt ${attempt}/4: ${e.message}`);
+        if (attempt === 4) throw e;
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+
+  const activeRpcCall = isLitvm ? litvmCall : rpcCall;
+
+  async function rpcCall(fn, label) {
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      try {
+        const contract = makeFreshContract(attempt);
+        const result = await Promise.race([
+          fn(contract),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("RPC timeout")), 12000),
+          ),
+        ]);
+        return result;
+      } catch (e) {
+        const msg = e.message || "";
+        const retryable =
+          msg.includes("txpool is full") ||
+          msg.includes("timeout") ||
+          msg.includes("NETWORK_ERROR") ||
+          msg.includes("network changed") ||
+          msg.includes("unavailable") ||
+          msg.includes("502") ||
+          msg.includes("503") ||
+          msg.includes("429");
+
+        console.warn(`[${label}] attempt ${attempt}/6: ${msg}`);
+        if (!retryable || attempt === 6) throw e;
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
 
   try {
     // ✅ Check joined onchain with retry
@@ -1359,8 +1393,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
 
     // ✅ Check DB session
     let sessionCheck = await pool.query(
-      "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
-      [req.user.id, gameId, chainId],
+      "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+      [req.user.id, gameId],
     );
     if (sessionCheck.rows.length === 0) {
       try {
@@ -1370,17 +1404,16 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         );
         // Re-fetch after insert
         sessionCheck = await pool.query(
-          "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
-          [req.user.id, gameId, chainId]
+          "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
+          [req.user.id, gameId]
         );
       } catch (_) {}
     }
 
     if (sessionCheck.rows[0]?.finished) {
-      // ✅ Session already scored — return retry signature for onchain submission
-      // This handles: TX rejected, TX failed, user refreshed after scoring
+      // Allow retry for onchain submission if TX failed
       const cachedScore = sessionCheck.rows[0].score;
-      if (cachedScore >= 0) {  // allow score=0 retry too
+      if (cachedScore > 0) {
         // Get fresh nonce for retry
         let nonce;
         try {
