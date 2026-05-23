@@ -1754,12 +1754,244 @@
       }
     }
 
+    /* PREMIUM FLOATING LIVE STATS BAR */
+
     #globalStatsBar {
-      position: sticky;
-      top: 0px;
-      /* height of header */
-      z-index: 10;
-      backdrop-filter: blur(8px);
+      position: fixed;
+
+      top: 76px;
+      right: 22px;
+
+      z-index: 999;
+
+      display: flex;
+      align-items: center;
+      gap: 14px;
+
+      padding: 12px 18px;
+
+      border-radius: 18px;
+
+      background:
+        linear-gradient(135deg,
+          rgba(5, 10, 20, .88),
+          rgba(15, 20, 40, .78));
+
+      border:
+        1px solid rgba(0, 229, 255, .14);
+
+      backdrop-filter:
+        blur(18px);
+
+      box-shadow:
+        0 10px 40px rgba(0, 0, 0, .45),
+        0 0 30px rgba(0, 229, 255, .06),
+        inset 0 0 30px rgba(255, 255, 255, .02);
+
+      width: fit-content;
+
+      max-width: calc(100vw - 30px);
+
+      overflow-x: auto;
+
+      transition:
+        transform .25s ease,
+        opacity .25s ease;
+    }
+
+    /* Neon border glow */
+    #globalStatsBar::before {
+      content: "";
+
+      position: absolute;
+      inset: 0;
+
+      border-radius: 18px;
+
+      padding: 1px;
+
+      background:
+        linear-gradient(135deg,
+          rgba(0, 229, 255, .35),
+          rgba(123, 97, 255, .25),
+          transparent);
+
+      -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+
+      -webkit-mask-composite: xor;
+
+      mask-composite: exclude;
+
+      pointer-events: none;
+    }
+
+    /* Hide scrollbar */
+    #globalStatsBar::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Stats item */
+    .gs-item {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+
+      white-space: nowrap;
+
+      color: #d8e7ff;
+
+      font-size: .83rem;
+
+      font-weight: 600;
+    }
+
+    /* Number */
+    .gs-item strong {
+      color: #00e5ff;
+
+      font-weight: 800;
+
+      text-shadow:
+        0 0 12px rgba(0, 229, 255, .45);
+    }
+
+    /* Divider */
+    .gs-divider {
+      width: 1px;
+      height: 18px;
+
+      background:
+        rgba(255, 255, 255, .08);
+    }
+
+    /* LIVE DOT */
+    .gs-live-dot {
+      width: 8px;
+      height: 8px;
+
+      border-radius: 50%;
+
+      background: #06d6a0;
+
+      box-shadow:
+        0 0 12px rgba(6, 214, 160, .9);
+
+      animation:
+        livePulse 1.5s infinite;
+    }
+
+    @keyframes livePulse {
+      0% {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      50% {
+        transform: scale(1.5);
+        opacity: .6;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* Animated numbers */
+    .live-counter {
+      animation:
+        counterGlow 2s infinite alternate;
+    }
+
+    @keyframes counterGlow {
+      from {
+        opacity: .85;
+      }
+
+      to {
+        opacity: 1;
+
+        text-shadow:
+          0 0 18px rgba(0, 229, 255, .55);
+      }
+    }
+
+    /* Leaderboard button */
+    .gs-leaderboard {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      padding: 8px 14px;
+
+      border-radius: 12px;
+
+      background:
+        linear-gradient(135deg,
+          rgba(255, 209, 102, .15),
+          rgba(255, 140, 0, .08));
+
+      border:
+        1px solid rgba(255, 209, 102, .18);
+
+      color: #ffd166;
+
+      font-weight: 700;
+
+      cursor: pointer;
+
+      transition:
+        all .2s ease;
+
+      box-shadow:
+        0 0 20px rgba(255, 209, 102, .08);
+    }
+
+    .gs-leaderboard:hover {
+      transform: translateY(-2px);
+
+      color: white;
+
+      border-color:
+        rgba(255, 209, 102, .45);
+
+      box-shadow:
+        0 0 24px rgba(255, 209, 102, .2);
+    }
+
+    /* MOBILE MODE */
+    @media(max-width:768px) {
+
+      #globalStatsBar {
+        left: 12px;
+        right: 12px;
+
+        top: 72px;
+
+        width: auto;
+
+        justify-content: flex-start;
+
+        padding: 10px 14px;
+
+        border-radius: 14px;
+
+        gap: 10px;
+
+        overflow-x: auto;
+      }
+
+      .gs-item {
+        font-size: .74rem;
+      }
+
+      .gs-leaderboard {
+        padding: 7px 12px;
+
+        font-size: .74rem;
+      }
     }
 
     .stat-live {

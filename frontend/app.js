@@ -3378,16 +3378,54 @@ async function loadGlobalStats() {
   try {
     const res = await fetch(`${BACKEND}/stats/global`);
     const data = await res.json();
+
     const el = document.getElementById("globalStatsBar");
+
     if (!el) return;
+
+    const players = data.totalPlayers || 0;
+    const games = data.totalGamesPlayed || 0;
+    const scores = data.totalFinished || 0;
+
     el.innerHTML = `
-      <span>👥 <strong>${data.totalPlayers}</strong> players</span>
-      <span style="color:var(--border)">·</span>
-      <span>🎮 <strong>${data.totalGamesPlayed}</strong> games played</span>
-      <span style="color:var(--border)">·</span>
-      <span>✅ <strong>${data.totalFinished}</strong> scores submitted</span>
-      <span style="color:var(--border)">·</span>
-      <button onclick="showGlobalLeaderboard()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:.8rem;font-weight:600;padding:0">🏆 View Leaderboard</button>
+      <div class="gs-live-dot"></div>
+
+      <div class="gs-item">
+        👥
+        <strong class="live-counter">
+          ${players}
+        </strong>
+        players
+      </div>
+
+      <div class="gs-divider"></div>
+
+      <div class="gs-item">
+        🎮
+        <strong class="live-counter">
+          ${games}
+        </strong>
+        games played
+      </div>
+
+      <div class="gs-divider"></div>
+
+      <div class="gs-item">
+        ✅
+        <strong class="live-counter">
+          ${scores}
+        </strong>
+        scores submitted
+      </div>
+
+      <div class="gs-divider"></div>
+
+      <div
+        class="gs-leaderboard"
+        onclick="showGlobalLeaderboard()"
+      >
+        🏆 View Leaderboard
+      </div>
     `;
   } catch (_) {}
 }
