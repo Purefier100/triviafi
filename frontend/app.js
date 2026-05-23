@@ -3626,31 +3626,24 @@ async function confirmBet(gameId, playerAddr) {
 }
 
 function toggleNetworkMenu(){
-
   document
-    .getElementById("networkMenu")
-    .classList
-    .toggle("open");
+  .getElementById("networkMenu")
+  .classList
+  .toggle("open");
 }
 
 function selectNetwork(network){
-
-  const active =
-    document.getElementById("activeNetwork");
-
   if(network === "arc"){
-
-    active.innerHTML =
-      "⚡ Arc · USDC";
-
+    
     switchToNetwork(5042002);
+
+    toast("Switched to Arc", "success");
 
   }else{
 
-    active.innerHTML =
-      "🔷 LitVM · zkLTC";
-
     switchToNetwork(4441);
+
+    toast("Switched to LitVM", "success");
   }
 
   document
@@ -3659,19 +3652,16 @@ function selectNetwork(network){
     .remove("open");
 }
 
-/* close when clicking outside */
+/* close dropdown outside click */
 
 document.addEventListener("click",(e)=>{
-
   const dropdown =
-    document.querySelector(".network-dropdown");
-
+  document.querySelector(".network-dropdown");
   if(!dropdown.contains(e.target)){
-
     document
-      .getElementById("networkMenu")
-      .classList
-      .remove("open");
+    .getElementById("networkMenu")
+    .classList
+    .remove("open");
   }
 });
 
