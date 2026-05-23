@@ -210,25 +210,26 @@
     /* Hero */
     .hero {
       position: relative;
+
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
 
       text-align: center;
 
-      padding: 10px 20px 8px;
+      padding: 18px 20px 0;
 
-      min-height: 160px;
+      min-height: auto;
 
-      margin-top: -6px;
+      margin-top: 0;
 
       overflow: hidden;
     }
 
     .hero-glow {
-      width: 220px;
-      height: 220px;
+      width: 120px;
+      height: 120px;
 
       background: radial-gradient(circle,
           rgba(0, 229, 255, .12) 0%,
@@ -238,7 +239,7 @@
       filter: blur(70px);
 
       position: absolute;
-      top: 58%;
+      top: 20%;
       left: 50%;
       transform: translate(-50%, -50%);
     }
@@ -279,7 +280,7 @@
 
       letter-spacing: .6px;
 
-      margin-bottom: 14px;
+      margin-bottom: 8px;
 
       backdrop-filter: blur(12px);
     }
@@ -287,7 +288,7 @@
     .hero-title {
       font-family: 'Bebas Neue', sans-serif;
 
-      font-size: clamp(3.2rem, 8vw, 5.5rem);
+      font-size: clamp(2.8rem, 6vw, 4.5rem);
 
       line-height: .92;
 
