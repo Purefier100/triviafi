@@ -135,36 +135,291 @@
       margin: 0 8px
     }
 
-    /* Header */
+
+    /*PREMIUM HEADER*/
+
     header {
       position: sticky;
       top: 0;
-      z-index: 900;
+      z-index: 999;
+
+      height: 72px;
+
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 24px;
-      background: rgba(15, 15, 26, .95);
-      backdrop-filter: blur(20px);
-      border-bottom: 1px solid var(--border)
+
+      padding: 0 26px;
+
+      background:
+        rgba(7, 10, 18, .82);
+
+      backdrop-filter: blur(18px);
+
+      border-bottom:
+        1px solid rgba(255, 255, 255, .05);
     }
+
+    /* LOGO */
 
     .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+
       font-family: 'Bebas Neue', sans-serif;
-      font-size: 1.5rem;
-      letter-spacing: 3px
+
+      font-size: 2rem;
+
+      letter-spacing: 3px;
+
+      color: white;
     }
 
-    .logo em {
-      color: var(--accent);
-      font-style: normal
+    .logo::before {
+      content: "⚡";
+
+      color: #ff7a18;
+
+      font-size: 1.2rem;
     }
+
+    /* RIGHT SIDE */
 
     .hdr-r {
       display: flex;
       align-items: center;
-      gap: 10px
+      gap: 12px;
     }
+
+    /* NOTIFICATION */
+
+    .notif-btn {
+      width: 42px;
+      height: 42px;
+
+      border-radius: 12px;
+
+      border: 1px solid rgba(255, 255, 255, .06);
+
+      background:
+        rgba(255, 255, 255, .03);
+
+      color: #dfe7ff;
+
+      font-size: 1rem;
+
+      transition: .2s;
+    }
+
+    .notif-btn:hover {
+      border-color: rgba(0, 229, 255, .22);
+
+      background:
+        rgba(255, 255, 255, .05);
+    }
+
+    /* NETWORK SWITCH */
+
+    #netBar {
+      display: flex;
+      align-items: center;
+
+      padding: 4px;
+
+      border-radius: 14px;
+
+      background:
+        rgba(255, 255, 255, .03);
+
+      border:
+        1px solid rgba(255, 255, 255, .05);
+
+      gap: 4px;
+    }
+
+    #netBar button {
+      height: 38px;
+
+      padding: 0 16px;
+
+      border: none;
+
+      border-radius: 10px;
+
+      background: transparent;
+
+      color: #7f8aa3;
+
+      font-size: .78rem;
+
+      font-weight: 700;
+
+      transition: .2s;
+    }
+
+    #netBar button:hover {
+      color: white;
+    }
+
+    #netArc.active-net,
+    #netLitvm.active-net {
+      background:
+        linear-gradient(135deg,
+          rgba(0, 229, 255, .12),
+          rgba(123, 97, 255, .14));
+
+      color: #00e5ff;
+
+      box-shadow:
+        inset 0 0 0 1px rgba(0, 229, 255, .18);
+    }
+
+    /* GOOGLE BUTTON */
+
+    #googleLoginBtn {
+      height: 42px;
+
+      padding: 0 18px;
+
+      border-radius: 12px;
+
+      border: 1px solid rgba(255, 255, 255, .06);
+
+      background:
+        rgba(255, 255, 255, .02);
+
+      color: #eef3ff;
+
+      font-size: .84rem;
+
+      font-weight: 700;
+
+      transition: .2s;
+    }
+
+    #googleLoginBtn:hover {
+      border-color: rgba(255, 255, 255, .14);
+
+      background:
+        rgba(255, 255, 255, .04);
+    }
+
+    /* CONNECT BUTTON */
+
+    #connectBtn {
+      height: 44px;
+
+      padding: 0 22px;
+
+      border: none;
+
+      border-radius: 12px;
+
+      background:
+        linear-gradient(135deg,
+          #00cfff,
+          #5b6cff);
+
+      color: white;
+
+      font-size: .88rem;
+
+      font-weight: 800;
+
+      letter-spacing: .2px;
+
+      box-shadow:
+        0 10px 24px rgba(0, 229, 255, .18);
+
+      transition: .2s;
+    }
+
+    #connectBtn:hover {
+      transform: translateY(-1px);
+
+      box-shadow:
+        0 14px 30px rgba(0, 229, 255, .24);
+    }
+
+    /* PROFILE */
+
+    .profile-trigger {
+      height: 44px;
+
+      padding: 0 12px 0 8px;
+
+      border-radius: 14px;
+
+      background:
+        rgba(255, 255, 255, .03);
+
+      border:
+        1px solid rgba(255, 255, 255, .06);
+
+      transition: .2s;
+    }
+
+    .profile-trigger:hover {
+      border-color:
+        rgba(0, 229, 255, .2);
+    }
+
+    .profile-avatar {
+      width: 30px;
+      height: 30px;
+
+      font-size: .78rem;
+
+      color: white;
+    }
+
+    .profile-name {
+      color: #f4f7ff;
+
+      font-size: .82rem;
+
+      font-weight: 700;
+    }
+
+    /* MOBILE */
+
+    @media(max-width:900px) {
+
+      #googleLoginBtn {
+        display: none !important;
+      }
+
+      #netBar button {
+        padding: 0 12px;
+        font-size: .72rem;
+      }
+    }
+
+    @media(max-width:680px) {
+
+      header {
+        padding: 0 14px;
+      }
+
+      .notif-btn {
+        display: none;
+      }
+
+      #netBar {
+        display: none;
+      }
+
+      #connectBtn {
+        padding: 0 16px;
+        font-size: .8rem;
+      }
+
+      .profile-name {
+        display: none;
+      }
+    }
+
 
     /* Main */
     main {
@@ -1204,26 +1459,6 @@
         opacity: 1;
         transform: translateY(0)
       }
-    }
-
-    /* Notification */
-    .notif-btn {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      position: relative;
-      font-size: 1rem;
-      transition: border-color .2s
-    }
-
-    .notif-btn:hover {
-      border-color: var(--accent)
     }
 
     .notif-dot {
@@ -2337,7 +2572,7 @@
   <div id="ticker"><span id="tickerInner">⚡ Loading live leaderboard data...</span></div>
 
   <header>
-    <div class="logo">⚡</em>TRIVIA</div>
+    <div class="logo">TRIVIA</div>
     <div class="hdr-r">
       <div class="notif-btn" title="Notifications" onclick="toast('No new notifications','info')">🔔</div>
 
@@ -2442,6 +2677,24 @@
         </div>
       </div>
     </div>
+    <div id="netBar">
+      <button id="netArc" class="active-net">
+        ⚡ Arc · USDC
+      </button>
+
+      <button id="netLitvm">
+        🔷 LitVM · zkLTC
+      </button>
+    </div>
+
+    <button id="googleLoginBtn">
+      <svg>...</svg>
+      Login with Google
+    </button>
+
+    <button id="connectBtn">
+      🦊 Connect Wallet
+    </button>
   </header>
 
   <div id="globalStatsBar"></div>
