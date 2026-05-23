@@ -3626,42 +3626,37 @@ async function confirmBet(gameId, playerAddr) {
 }
 
 function toggleNetworkMenu() {
-  document
-    .getElementById("networkMenu")
-    .classList.toggle("open");
+  const menu = document.getElementById("networkMenu");
+  const chevron = document.getElementById("netChevron");
+  const isOpen = menu.classList.toggle("open");
+  chevron.style.transform = isOpen ? "rotate(180deg)" : "rotate(0deg)";
 }
 
 function selectNetwork(network) {
+  const isArc = network === "arc";
+  document.getElementById("selectedNetwork").textContent = isArc ? "⚡ Arc · USDC" : "🔷 LitVM · zkLTC";
 
-  const label =
-    network === "arc"
-      ? "⚡ Arc · USDC"
-      : "🔷 LitVM · zkLTC";
+  // Update active state on options
+  document.getElementById("netOptArc").className = "net-opt" + (isArc ? " net-opt-active" : "");
+  document.getElementById("netOptLitvm").className = "net-opt" + (!isArc ? " net-opt-active" : "");
 
-  document.getElementById(
-    "selectedNetwork"
-  ).innerText = label;
-
-  document
-    .getElementById("networkMenu")
-    .classList.remove("open");
+  // Close menu
+  document.getElementById("networkMenu").classList.remove("open");
+  document.getElementById("netChevron").style.transform = "rotate(0deg)";
 }
 
-document
-  .getElementById("networkTrigger")
-  .addEventListener("click", toggleNetworkMenu);
-
-/* close dropdown outside click */
-
-document.addEventListener("click",(e)=>{
-  const dropdown =
-  document.querySelector(".network-dropdown");
-  if(!dropdown.contains(e.target)){
-    document
-    .getElementById("networkMenu")
-    .classList
-    .remove("open");
+// Close on outside click — replace the old listener
+document.addEventListener("click", (e) => {
+  const switcher = document.querySelector(".network-switcher");
+  const menu = document.getElementById("networkMenu");
+  const chevron = document.getElementById("netChevron");
+  if (switcher && !switcher.contains(e.target)) {
+    menu.classList.remove("open");
+    if (chevron) chevron.style.transform = "rotate(0deg)";
   }
+  // keep profile dropdown close logic too
+  const t = document.getElementById("profileTrigger");
+  if (t && !t.contains(e.target)) t.classList.remove("open");
 });
 
 function fmt(addr) {
