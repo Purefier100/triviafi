@@ -52,6 +52,10 @@ async function initAuth() {
     }
     history.replaceState({}, "", location.pathname);
   }
+  document.addEventListener("click", (e) => {
+    const t = document.getElementById("profileTrigger");
+    if (t && !t.contains(e.target)) t.classList.remove("open");
+  });
 }
 
 function toggleProfileDropdown(e) {
