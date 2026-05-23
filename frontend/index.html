@@ -2073,6 +2073,95 @@
         grid-template-columns: 1fr;
       }
     }
+
+    .rooms-footer {
+      margin-top: 18px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      gap: 14px;
+
+      padding-top: 14px;
+
+      border-top:
+        1px solid rgba(255, 255, 255, .06);
+    }
+
+    .rooms-footer-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      color: var(--muted);
+
+      font-size: .76rem;
+
+      font-weight: 600;
+    }
+
+    .rooms-live-dot {
+      width: 7px;
+      height: 7px;
+
+      border-radius: 50%;
+
+      background: #06d6a0;
+
+      box-shadow:
+        0 0 12px rgba(6, 214, 160, .8);
+
+      animation: pulse 2s infinite;
+    }
+
+    .rooms-create-btn {
+      border: none;
+
+      padding: 10px 16px;
+
+      border-radius: 12px;
+
+      background:
+        linear-gradient(135deg,
+          rgba(0, 229, 255, .18),
+          rgba(123, 97, 255, .18));
+
+      border:
+        1px solid rgba(0, 229, 255, .18);
+
+      color: #dffcff;
+
+      font-size: .78rem;
+
+      font-weight: 700;
+
+      cursor: pointer;
+
+      transition: all .2s ease;
+    }
+
+    .rooms-create-btn:hover {
+      transform: translateY(-2px);
+
+      border-color:
+        rgba(0, 229, 255, .35);
+
+      box-shadow:
+        0 0 20px rgba(0, 229, 255, .12);
+    }
+
+    @media(max-width:768px) {
+
+      .rooms-footer {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .rooms-create-btn {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 
@@ -2314,9 +2403,16 @@
             <div class="skeleton skeleton-card"></div>
           </div>
         </div>
-        <button class="btn btn-primary play-live" style="margin-top:16px" onclick="showScreen('screenCreate')">＋ Create
-          Your Own
-          Game Room</button>
+        <div class="rooms-footer">
+          <div class="rooms-footer-left">
+            <span class="rooms-live-dot"></span>
+            <span>Live rooms updating in real-time</span>
+          </div>
+
+          <button class="rooms-create-btn" onclick="showScreen('screenCreate')">
+            ＋ Create Room
+          </button>
+        </div>
       </div>
 
       <!-- Activity feed -->
