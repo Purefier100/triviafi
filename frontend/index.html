@@ -2185,157 +2185,246 @@
       position: relative;
     }
 
+    /* MAIN BUTTON */
+
     #networkTrigger {
-      height: 42px;
-      padding: 0 14px;
-      border-radius: 12px;
+      height: 48px;
+
+      min-width: 190px;
+
+      padding: 0 18px;
+
+      border-radius: 16px;
+
       border: 1px solid rgba(255, 255, 255, .08);
-      background: rgba(255, 255, 255, .03);
+
+      background:
+        linear-gradient(180deg,
+          rgba(255, 255, 255, .045),
+          rgba(255, 255, 255, .02));
+
+      backdrop-filter: blur(16px);
+
       display: flex;
       align-items: center;
-      gap: 8px;
+      justify-content: space-between;
+      gap: 12px;
+
       color: #f5f7ff;
-      font-size: .84rem;
+
+      font-size: .88rem;
       font-weight: 700;
+
+      letter-spacing: .2px;
+
       cursor: pointer;
-      transition: border-color .2s, background .2s;
-      white-space: nowrap;
+
+      transition:
+        all .22s ease;
+
+      box-shadow:
+        0 10px 30px rgba(0, 0, 0, .35),
+        0 0 0 1px rgba(0, 229, 255, .03);
     }
+
+    /* HOVER */
 
     #networkTrigger:hover {
-      border-color: rgba(0, 229, 255, .3);
-      background: rgba(0, 229, 255, .05);
+      border-color:
+        rgba(0, 229, 255, .28);
+
+      background:
+        linear-gradient(180deg,
+          rgba(0, 229, 255, .08),
+          rgba(255, 255, 255, .03));
+
+      transform:
+        translateY(-1px);
+
+      box-shadow:
+        0 14px 34px rgba(0, 0, 0, .42),
+        0 0 24px rgba(0, 229, 255, .08);
     }
 
-    #netChevron {
-      transition: transform .22s ease;
-      opacity: .6;
+    /* ACTIVE OPEN */
+
+    .network-switcher.open #networkTrigger {
+      border-color:
+        rgba(0, 229, 255, .35);
+
+      box-shadow:
+        0 0 24px rgba(0, 229, 255, .12);
     }
+
+    /* CHEVRON */
+
+    #netChevron {
+      opacity: .55;
+
+      transition:
+        transform .24s ease,
+        opacity .2s ease;
+    }
+
+    .network-switcher.open #netChevron {
+      transform: rotate(180deg);
+
+      opacity: 1;
+    }
+
+    /* DROPDOWN */
 
     #networkMenu {
       position: absolute;
-      top: calc(100% + 8px);
+
+      top: calc(100% + 10px);
+
       left: 0;
-      min-width: 180px;
-      background: #111520;
-      border: 1px solid rgba(255, 255, 255, .1);
-      border-radius: 14px;
-      padding: 6px;
+
+      width: 100%;
+
+      padding: 8px;
+
+      border-radius: 18px;
+
+      border:
+        1px solid rgba(255, 255, 255, .08);
+
+      background:
+        rgba(10, 14, 24, .96);
+
+      backdrop-filter: blur(18px);
+
       display: none;
+
       flex-direction: column;
-      gap: 4px;
-      box-shadow: 0 16px 40px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 229, 255, .04);
+
+      gap: 6px;
+
       z-index: 9999;
-      animation: netDropIn .18s ease;
-    }
 
-    @keyframes netDropIn {
-      from {
-        opacity: 0;
-        transform: translateY(-6px);
-      }
+      box-shadow:
+        0 24px 60px rgba(0, 0, 0, .55),
+        0 0 30px rgba(0, 229, 255, .05);
 
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      animation:
+        networkDrop .18s ease;
     }
 
     #networkMenu.open {
       display: flex;
     }
 
+    /* DROPDOWN ANIMATION */
+
+    @keyframes networkDrop {
+      from {
+        opacity: 0;
+        transform:
+          translateY(-8px) scale(.98);
+      }
+
+      to {
+        opacity: 1;
+        transform:
+          translateY(0) scale(1);
+      }
+    }
+
+    /* NETWORK OPTION */
+
     .net-opt {
       width: 100%;
-      height: 46px;
-      border: none;
-      border-radius: 10px;
-      background: transparent;
-      color: rgba(220, 230, 255, .7);
-      font-size: .86rem;
-      font-weight: 700;
-      text-align: left;
+
+      height: 52px;
+
       padding: 0 14px;
-      cursor: pointer;
+
+      border: none;
+
+      border-radius: 14px;
+
+      background: transparent;
+
       display: flex;
       align-items: center;
-      gap: 10px;
-      transition: background .15s, color .15s;
+      gap: 12px;
+
+      cursor: pointer;
+
+      color:
+        rgba(220, 230, 255, .72);
+
+      font-size: .88rem;
+      font-weight: 700;
+
+      transition:
+        all .18s ease;
     }
+
+    /* HOVER */
 
     .net-opt:hover {
-      background: rgba(255, 255, 255, .05);
+      background:
+        rgba(255, 255, 255, .05);
+
       color: #fff;
+
+      transform:
+        translateX(2px);
     }
 
+    /* ACTIVE */
+
     .net-opt-active {
-      background: rgba(255, 140, 0, .18);
-      color: #ff9d3a;
+      background:
+        linear-gradient(135deg,
+          rgba(0, 229, 255, .14),
+          rgba(123, 97, 255, .12));
+
+      border:
+        1px solid rgba(0, 229, 255, .18);
+
+      color: #00e5ff;
+
+      box-shadow:
+        inset 0 0 18px rgba(0, 229, 255, .04);
     }
 
     .net-opt-active:hover {
-      background: rgba(255, 140, 0, .25);
-      color: #ffb060;
+      color: #7ef2ff;
     }
 
+    /* ICON */
+
     .net-opt-icon {
+      width: 24px;
+      display: flex;
+      justify-content: center;
+
       font-size: 1rem;
-      line-height: 1;
     }
+
+    /* LABEL */
 
     .net-opt-label {
       flex: 1;
     }
 
-    .rooms-footer {
-      margin-top: 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      padding-top: 14px;
-      border-top: 1px solid rgba(255, 255, 255, .06);
-    }
+    /* MOBILE */
 
-    .rooms-footer-left {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--muted);
-      font-size: .76rem;
-      font-weight: 600;
-    }
+    @media(max-width:768px) {
 
-    .rooms-live-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #06d6a0;
-      box-shadow: 0 0 12px rgba(6, 214, 160, .8);
-      animation: pulse 2s infinite;
-    }
+      #networkTrigger {
+        min-width: 170px;
+        height: 44px;
+        font-size: .8rem;
+      }
 
-    .rooms-create-btn {
-      border: none;
-      padding: 10px 16px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, rgba(0, 229, 255, .18), rgba(123, 97, 255, .18));
-      border: 1px solid rgba(0, 229, 255, .18);
-      color: #dffcff;
-      font-size: .78rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all .2s ease;
-    }
-
-    .rooms-create-btn:hover {
-      transform: translateY(-2px);
-      border-color: rgba(0, 229, 255, .35);
-      box-shadow: 0 0 20px rgba(0, 229, 255, .12);
-    }
-
-    #networkMenu.open {
-      display: flex !important;
+      .net-opt {
+        height: 48px;
+        font-size: .82rem;
+      }
     }
   </style>
 </head>
