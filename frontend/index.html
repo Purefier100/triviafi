@@ -210,40 +210,35 @@
     /* Hero */
     .hero {
       position: relative;
-
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
 
       text-align: center;
 
-      padding: 40px 20px 25px;
+      padding: 24px 20px 18px;
 
-      min-height: auto;
+      min-height: 320px;
 
       overflow: hidden;
     }
 
     .hero-glow {
-      width: 320px;
-      height: 320px;
+      width: 220px;
+      height: 220px;
 
       background: radial-gradient(circle,
-          rgba(0, 229, 255, .16) 0%,
-          rgba(123, 97, 255, .10) 40%,
-          transparent 72%);
+          rgba(0, 229, 255, .12) 0%,
+          rgba(123, 97, 255, .08) 45%,
+          transparent 75%);
 
-      top: 50%;
+      filter: blur(70px);
+
+      position: absolute;
+      top: 45%;
       left: 50%;
-
       transform: translate(-50%, -50%);
-
-      filter: blur(55px);
-
-      z-index: 0;
-
-      animation: heroFloat 7s ease-in-out infinite alternate;
     }
 
     @keyframes heroFloat {
@@ -290,17 +285,15 @@
     .hero-title {
       font-family: 'Bebas Neue', sans-serif;
 
-      font-size:
-        clamp(4.5rem, 12vw, 8rem);
+      font-size: clamp(3.2rem, 8vw, 5.5rem);
 
-      line-height: .88;
+      line-height: .92;
 
-      letter-spacing: 8px;
+      letter-spacing: 4px;
 
       margin: 0;
 
-      background:
-        linear-gradient(135deg,
+      background: linear-gradient(135deg,
           #ffffff 0%,
           #9be7ff 35%,
           #00e5ff 65%,
@@ -310,14 +303,11 @@
       -webkit-text-fill-color: transparent;
 
       text-shadow:
-        0 0 30px rgba(0, 229, 255, .18);
-
-      animation:
-        heroFade .9s ease;
+        0 0 25px rgba(0, 229, 255, .18);
     }
 
     .hero-line {
-      width: 120px;
+      width: 80px;
       height: 2px;
 
       margin:
@@ -335,15 +325,15 @@
     }
 
     .hero-sub {
-      max-width: 620px;
+      max-width: 520px;
 
       color: #8d96b8;
 
-      font-size: 1rem;
+      font-size: .92rem;
 
-      line-height: 1.8;
+      line-height: 1.7;
 
-      margin: 0 auto;
+      margin-top: 6px;
     }
 
     @keyframes heroFade {
