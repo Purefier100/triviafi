@@ -2040,40 +2040,6 @@
         0 0 60px rgba(123, 97, 255, .12);
     }
 
-    .live-stats {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 14px;
-      margin: 30px 0;
-    }
-
-    .live-box {
-      background: rgba(255, 255, 255, .04);
-      border: 1px solid rgba(255, 255, 255, .08);
-      border-radius: 18px;
-      padding: 22px;
-      text-align: center;
-      backdrop-filter: blur(12px);
-    }
-
-    .live-box strong {
-      display: block;
-      font-size: 2rem;
-      color: var(--accent);
-      margin: 6px 0;
-    }
-
-    .live-box p {
-      color: var(--muted);
-      font-size: .8rem;
-    }
-
-    @media(max-width:700px) {
-      .live-stats {
-        grid-template-columns: 1fr;
-      }
-    }
-
     .rooms-footer {
       margin-top: 18px;
 
@@ -2160,6 +2126,79 @@
 
       .rooms-create-btn {
         width: 100%;
+      }
+    }
+
+    .hero-status-bar {
+      margin: 28px auto 10px;
+
+      width: fit-content;
+      max-width: 100%;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+
+      gap: 12px;
+
+      padding: 14px 18px;
+
+      border-radius: 16px;
+
+      background:
+        rgba(255, 255, 255, .03);
+
+      border:
+        1px solid rgba(255, 255, 255, .06);
+
+      backdrop-filter: blur(12px);
+    }
+
+    .hero-status-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      color: #d8e7ff;
+
+      font-size: .78rem;
+
+      font-weight: 600;
+    }
+
+    .hero-status-divider {
+      width: 1px;
+      height: 14px;
+
+      background:
+        rgba(255, 255, 255, .08);
+    }
+
+    .hero-status-dot {
+      width: 7px;
+      height: 7px;
+
+      border-radius: 50%;
+
+      background: #06d6a0;
+
+      box-shadow:
+        0 0 14px rgba(6, 214, 160, .9);
+
+      animation: pulse 2s infinite;
+    }
+
+    @media(max-width:768px) {
+
+      .hero-status-bar {
+        width: 100%;
+
+        justify-content: flex-start;
+      }
+
+      .hero-status-divider {
+        display: none;
       }
     }
   </style>
@@ -2612,24 +2651,25 @@
       </div>
     </div>
 
-    <div class="live-stats">
-      <div class="live-box">
-        <span>🔥</span>
-        <strong>1,204</strong>
-        <p>Players Online</p>
+    <div class="hero-status-bar">
+
+      <div class="hero-status-item">
+        <span class="hero-status-dot"></span>
+        <span>Onchain Trivia Arena</span>
       </div>
 
-      <div class="live-box">
-        <span>💰</span>
-        <strong>$18,420</strong>
-        <p>Total Paid</p>
+      <div class="hero-status-divider"></div>
+
+      <div class="hero-status-item">
+        ⚡ Arc + LitVM Networks
       </div>
 
-      <div class="live-box">
-        <span>🏆</span>
-        <strong>284</strong>
-        <p>Live Games</p>
+      <div class="hero-status-divider"></div>
+
+      <div class="hero-status-item">
+        🎮 Real-Time Multiplayer Rooms
       </div>
+
     </div>
 
   </main>
