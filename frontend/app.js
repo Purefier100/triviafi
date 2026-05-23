@@ -264,8 +264,6 @@ async function startGame() {
   
   // ✅ Mark as started immediately 
   sessionStorage.setItem(`playing_${currentGameId}`, "1");
-
-  localStorage.setItem(`played_${currentGameId}`, "1");
   
   // ▶️ START GAME
   showScreen("screenGame");
@@ -279,7 +277,7 @@ function selectAnswer(questionId, selected, timeLeft) {
   const q = questions[currentIndex];
 
   answers.push({
-    questionId,
+    questionIndex: questionId,
     selected,
     timeLeft,
     answeredAt: Date.now(),
@@ -363,9 +361,8 @@ async function submitScore() {
     toast("⛓️ Waiting for blockchain confirmation...", "info");
     
     await tx.wait();
-    saveScore(currentGameId, data.score);
-    
     markSubmitted(currentGameId);
+    saveScore(currentGameId, data.score);
     
     toast("✅ Score submitted onchain!", "success");
   } catch (e) {
@@ -1380,6 +1377,18 @@ function updateCountdowns() {
   });
 }
 
+async function loadPlatformStats() {
+  try {
+    const res = await fetch(`${BACKEND}/stats`);
+    const data = await res.json();
+
+    document.getElementById("gPool").innerHTML =
+      `$${Number(data.total_volume).toLocaleString()} Volume`;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
 async function startTickerLoop() {
   await updateTicker();
   setInterval(updateTicker, 60000);
@@ -1506,10 +1515,10 @@ async function loadGames() {
     const LIMIT = 100;
     const BATCH = 5;
     allGames = [];
-    let totalPool = 0n,
-      arcPool = 0n,
-      litvmPool = 0n,
-      activeCount = 0;
+    let totalVolume = 0n,
+    arcPool = 0n,
+    litvmPool = 0n,
+    activeCount = 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
     // Fetch Arc games
@@ -1562,8 +1571,13 @@ async function loadGames() {
 
     // Stats
     for (const { g, net } of allGames) {
-  if (net.decimals === 6) arcPool += BigInt(g[8]);
-  else litvmPool += BigInt(g[8]);
+      const gamePool = BigInt(g[8]);
+      totalVolume += gamePool;
+      if (net.decimals === 6) {
+        arcPool += gamePool;
+      } else {
+        litvmPool += gamePool;
+      }
       if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
     }
 
@@ -1572,10 +1586,31 @@ async function loadGames() {
     const litvmPoolFmt = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(
       4,
     );
-    document.getElementById("gPool").innerHTML = `
-      <span style="color:var(--accent)">$${arcPoolFmt} USDC</span>
-      <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span>
-      <span style="color:var(--purple)">${litvmPoolFmt} zkLTC</span>`;
+   const totalUSDC = parseFloat(
+  ethers.formatUnits(arcPool, 6)
+).toFixed(2);
+
+const totalZKLTC = parseFloat(
+  ethers.formatUnits(litvmPool, 18)
+).toFixed(4);
+
+document.getElementById("gPool").innerHTML = `
+  <span style="color:var(--accent)">
+    $${totalUSDC} USDC
+  </span>
+
+  <span style="
+    color:var(--muted);
+    font-size:.7rem;
+    margin:0 4px
+  ">
+    +
+  </span>
+
+  <span style="color:var(--purple)">
+    ${totalZKLTC} zkLTC
+  </span>
+`;
     document.getElementById("gActive").textContent = activeCount;
 
     renderGames();

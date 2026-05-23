@@ -282,6 +282,16 @@ async function initDB() {
     `);
 
     // =========================================================================
+    // // PLATFORM STATS
+    // // =========================================================================
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS platform_stats (
+      id INT PRIMARY KEY DEFAULT 1,
+      total_volume NUMERIC(36,18) DEFAULT 0
+      );
+    `);
+
+    // =========================================================================
     // GAME QUESTIONS
     // =========================================================================
     await pool.query(`
@@ -294,6 +304,12 @@ async function initDB() {
       options        TEXT,
       UNIQUE(session_id, q_index)
     );
+  `);
+  
+  await pool.query(`
+    INSERT INTO platform_stats (id, total_volume)
+    VALUES (1, 0)
+    ON CONFLICT (id) DO NOTHING
   `);
   
   // ✅ Add missing columns to existing table (safe to run multiple times)
@@ -545,6 +561,22 @@ app.post("/games/save", async (req, res) => {
 
     res.status(500).json({
       error: e.message,
+    });
+  }
+});
+
+app.get("/stats", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT total_volume
+      FROM platform_stats
+      WHERE id = 1
+    `);
+
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
     });
   }
 });
@@ -1166,12 +1198,31 @@ app.post("/game/start", async (req, res) => {
       [req.user.id, gameId]
     );
     
+    
     if (existCheck.rows.length === 0) {
       await pool.query(
         "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
         [req.user.id, wallet.toLowerCase(), gameId, chainId]
       );
     }
+
+    const game = await pool.query(
+      `SELECT entry_fee
+      FROM games
+      WHERE contract_game_id = $1
+      AND chain_id = $2
+      `,
+      [gameId, chainId]
+    );
+    
+    if (game.rows.length > 0) {
+      const entryFee = game.rows[0].entry_fee;
+      await pool.query(`
+        UPDATE platform_stats
+        SET total_volume = total_volume + $1
+        WHERE id = 1
+        `, [entryFee]);
+      }
 
     // Re-fetch to get the id whether it was just inserted or already existed
     const sessionRow = await pool.query(
@@ -1639,14 +1690,37 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     );
     
     await pool.query(
-      `UPDATE game_sessions
-      SET finished=true,
-      score=$1,
-      finished_at=NOW()
-      WHERE user_id=$2
-      AND game_id=$3`,
-      [score, req.user.id, gameId]
-    );
+  `UPDATE game_sessions
+  SET finished=true,
+  score=$1,
+  finished_at=NOW()
+  WHERE user_id=$2
+  AND game_id=$3
+  AND chain_id=$4`,
+  [score, req.user.id, gameId, chainId]
+);
+
+const game = await pool.query(
+  `
+  SELECT entry_fee
+  FROM games
+  WHERE contract_game_id = $1
+  AND chain_id = $2
+  `,
+  [gameId, chainId]
+);
+
+if (game.rows.length > 0) {
+  await pool.query(
+    `
+    UPDATE platform_stats
+    SET total_volume = total_volume + $1
+    WHERE id = 1
+    `,
+    [game.rows[0].entry_fee]
+  );
+}
+    
     
     // Increment DB nonce as fallback backup
     await pool.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
