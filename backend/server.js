@@ -587,12 +587,15 @@ app.get("/history/:wallet", async (req, res) => {
 
     const result = await pool.query(
       `
-      SELECT *
-      FROM games
-      WHERE LOWER(creator)=$1
-      ORDER BY created_at DESC
-    `,
-      [wallet],
+      SELECT g.*
+      FROM game_sessions gs
+      JOIN games g
+      ON g.contract_game_id = gs.game_id
+      AND g.chain_id = gs.chain_id
+      WHERE LOWER(gs.wallet)=LOWER($1)
+      ORDER BY gs.started_at DESC
+      `,
+      [wallet]
     );
 
     res.json(result.rows);
@@ -1678,6 +1681,11 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         }
       }
       score = Math.min(score, 1500);
+      if (score <= 0) {
+        return res.status(400).json({
+          error: "Invalid score"
+        });
+      }
     }
     
     const message = ethers.solidityPackedKeccak256(
