@@ -214,26 +214,22 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
 
       text-align: center;
 
-      padding:
-        70px 20px 50px;
+      padding: 40px 20px 25px;
 
-      min-height: 320px;
+      min-height: auto;
 
       overflow: hidden;
     }
 
     .hero-glow {
-      position: absolute;
+      width: 320px;
+      height: 320px;
 
-      width: 500px;
-      height: 500px;
-
-      background:
-        radial-gradient(circle,
+      background: radial-gradient(circle,
           rgba(0, 229, 255, .16) 0%,
           rgba(123, 97, 255, .10) 40%,
           transparent 72%);
@@ -247,8 +243,7 @@
 
       z-index: 0;
 
-      animation:
-        heroFloat 7s ease-in-out infinite alternate;
+      animation: heroFloat 7s ease-in-out infinite alternate;
     }
 
     @keyframes heroFloat {
@@ -287,7 +282,7 @@
 
       letter-spacing: .6px;
 
-      margin-bottom: 22px;
+      margin-bottom: 14px;
 
       backdrop-filter: blur(12px);
     }
@@ -326,7 +321,7 @@
       height: 2px;
 
       margin:
-        18px 0 22px;
+        10px 0 14px;
 
       background:
         linear-gradient(90deg,
