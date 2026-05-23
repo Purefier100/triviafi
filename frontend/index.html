@@ -219,62 +219,6 @@
         rgba(255, 255, 255, .05);
     }
 
-    /* NETWORK SWITCH */
-
-    #netBar {
-      display: flex;
-      align-items: center;
-
-      padding: 4px;
-
-      border-radius: 14px;
-
-      background:
-        rgba(255, 255, 255, .03);
-
-      border:
-        1px solid rgba(255, 255, 255, .05);
-
-      gap: 4px;
-    }
-
-    #netBar button {
-      height: 38px;
-
-      padding: 0 16px;
-
-      border: none;
-
-      border-radius: 10px;
-
-      background: transparent;
-
-      color: #7f8aa3;
-
-      font-size: .78rem;
-
-      font-weight: 700;
-
-      transition: .2s;
-    }
-
-    #netBar button:hover {
-      color: white;
-    }
-
-    #netArc.active-net,
-    #netLitvm.active-net {
-      background:
-        linear-gradient(135deg,
-          rgba(0, 229, 255, .12),
-          rgba(123, 97, 255, .14));
-
-      color: #00e5ff;
-
-      box-shadow:
-        inset 0 0 0 1px rgba(0, 229, 255, .18);
-    }
-
     /* GOOGLE BUTTON */
 
     #googleLoginBtn {
@@ -403,10 +347,6 @@
       }
 
       .notif-btn {
-        display: none;
-      }
-
-      #netBar {
         display: none;
       }
 
@@ -2578,18 +2518,17 @@
 
       border-radius: 14px;
 
-      border: 1px solid rgba(255, 255, 255, .06);
+      border: 1px solid rgba(255, 255, 255, .08);
 
-      background:
-        rgba(255, 255, 255, .03);
-
-      color: #dfe7ff;
+      background: rgba(255, 255, 255, .03);
 
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
 
-      font-size: .82rem;
+      color: #f5f7ff;
+
+      font-size: .84rem;
       font-weight: 700;
 
       cursor: pointer;
@@ -2598,17 +2537,15 @@
     }
 
     #networkTrigger:hover {
-      border-color:
-        rgba(0, 229, 255, .25);
+      border-color: rgba(255, 255, 255, .16);
 
-      background:
-        rgba(255, 255, 255, .05);
+      background: rgba(255, 255, 255, .05);
     }
 
     .network-arrow {
       color: #7f8aa3;
 
-      font-size: .72rem;
+      font-size: .7rem;
     }
 
     #networkMenu {
@@ -2617,19 +2554,15 @@
       top: 54px;
       left: 0;
 
-      width: 220px;
+      width: 210px;
 
       padding: 8px;
 
-      border-radius: 16px;
+      border-radius: 18px;
 
-      background:
-        rgba(18, 22, 34, .96);
+      background: #121622;
 
-      backdrop-filter: blur(18px);
-
-      border:
-        1px solid rgba(255, 255, 255, .06);
+      border: 1px solid rgba(255, 255, 255, .08);
 
       display: none;
 
@@ -2646,7 +2579,7 @@
     }
 
     #networkMenu button {
-      height: 46px;
+      height: 48px;
 
       border: none;
 
@@ -2656,7 +2589,7 @@
 
       color: #dfe7ff;
 
-      font-size: .82rem;
+      font-size: .84rem;
 
       font-weight: 700;
 
@@ -2670,8 +2603,7 @@
     }
 
     #networkMenu button:hover {
-      background:
-        rgba(255, 255, 255, .05);
+      background: rgba(255, 255, 255, .05);
 
       color: #00e5ff;
     }
@@ -2688,11 +2620,13 @@
 
       <button id="networkTrigger" onclick="toggleNetworkMenu()">
 
-        <span id="activeNetwork">
-          Faucets
+        <span class="network-label">
+          Networks
         </span>
 
-        <span class="network-arrow">▾</span>
+        <span class="network-arrow">
+          ▾
+        </span>
 
       </button>
 
