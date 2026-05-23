@@ -2564,6 +2564,117 @@
       }
 
     }
+
+    /* NETWORK DROPDOWN */
+
+    .network-dropdown {
+      position: relative;
+    }
+
+    #networkTrigger {
+      height: 44px;
+
+      padding: 0 18px;
+
+      border-radius: 14px;
+
+      border: 1px solid rgba(255, 255, 255, .06);
+
+      background:
+        rgba(255, 255, 255, .03);
+
+      color: #dfe7ff;
+
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      font-size: .82rem;
+      font-weight: 700;
+
+      cursor: pointer;
+
+      transition: .2s;
+    }
+
+    #networkTrigger:hover {
+      border-color:
+        rgba(0, 229, 255, .25);
+
+      background:
+        rgba(255, 255, 255, .05);
+    }
+
+    .network-arrow {
+      color: #7f8aa3;
+
+      font-size: .72rem;
+    }
+
+    #networkMenu {
+      position: absolute;
+
+      top: 54px;
+      left: 0;
+
+      width: 220px;
+
+      padding: 8px;
+
+      border-radius: 16px;
+
+      background:
+        rgba(18, 22, 34, .96);
+
+      backdrop-filter: blur(18px);
+
+      border:
+        1px solid rgba(255, 255, 255, .06);
+
+      display: none;
+
+      flex-direction: column;
+
+      gap: 6px;
+
+      box-shadow:
+        0 20px 40px rgba(0, 0, 0, .45);
+    }
+
+    #networkMenu.open {
+      display: flex;
+    }
+
+    #networkMenu button {
+      height: 46px;
+
+      border: none;
+
+      border-radius: 12px;
+
+      background: transparent;
+
+      color: #dfe7ff;
+
+      font-size: .82rem;
+
+      font-weight: 700;
+
+      text-align: left;
+
+      padding: 0 14px;
+
+      cursor: pointer;
+
+      transition: .2s;
+    }
+
+    #networkMenu button:hover {
+      background:
+        rgba(255, 255, 255, .05);
+
+      color: #00e5ff;
+    }
   </style>
 </head>
 
@@ -2576,15 +2687,30 @@
     <div class="hdr-r">
       <div class="notif-btn" title="Notifications" onclick="toast('No new notifications','info')">🔔</div>
 
-      <div id="netBar" style="display:flex;gap:6px;align-items:center">
-        <button id="netArc" onclick="switchToNetwork(5042002)"
-          style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(0,229,255,.4);background:rgba(0,229,255,.1);color:#00e5ff;font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s">
-          ⚡ Arc · USDC
+      <div class="network-dropdown">
+
+        <button id="networkTrigger" onclick="toggleNetworkMenu()">
+          <span id="activeNetwork">
+            ⚡ Arc · USDC
+          </span>
+
+          <span class="network-arrow">
+            ▾
+          </span>
         </button>
-        <button id="netLitvm" onclick="switchToNetwork(4441)"
-          style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s">
-          🔷 LitVM · zkLTC
-        </button>
+
+        <div id="networkMenu">
+
+          <button onclick="selectNetwork('arc')">
+            ⚡ Arc · USDC
+          </button>
+
+          <button onclick="selectNetwork('litvm')">
+            🔷 LitVM · zkLTC
+          </button>
+
+        </div>
+
       </div>
 
       <button id="googleLoginBtn" onclick="loginWithGoogle()"

@@ -3231,6 +3231,8 @@ const dp = gameDecimals === 18 ? 4 : 2;
   }
 }
 
+
+
 async function doClaimPrize() {
   if (!contract) return toast("Connect wallet first", "error");
   toast("Claiming prize...", "info");
@@ -3622,6 +3624,56 @@ async function confirmBet(gameId, playerAddr) {
     toast("Failed: " + (e.reason || e.message), "error");
   }
 }
+
+function toggleNetworkMenu(){
+
+  document
+    .getElementById("networkMenu")
+    .classList
+    .toggle("open");
+}
+
+function selectNetwork(network){
+
+  const active =
+    document.getElementById("activeNetwork");
+
+  if(network === "arc"){
+
+    active.innerHTML =
+      "⚡ Arc · USDC";
+
+    switchToNetwork(5042002);
+
+  }else{
+
+    active.innerHTML =
+      "🔷 LitVM · zkLTC";
+
+    switchToNetwork(4441);
+  }
+
+  document
+    .getElementById("networkMenu")
+    .classList
+    .remove("open");
+}
+
+/* close when clicking outside */
+
+document.addEventListener("click",(e)=>{
+
+  const dropdown =
+    document.querySelector(".network-dropdown");
+
+  if(!dropdown.contains(e.target)){
+
+    document
+      .getElementById("networkMenu")
+      .classList
+      .remove("open");
+  }
+});
 
 function fmt(addr) {
   if (!addr || addr === "0x0000000000000000000000000000000000000000")
