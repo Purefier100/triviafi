@@ -1757,15 +1757,21 @@
     /* PREMIUM FLOATING LIVE STATS BAR */
 
     #globalStatsBar {
-      position: fixed;
+      position: sticky;
 
-      top: 76px;
-      right: 22px;
+      top: 74px;
 
-      z-index: 999;
+      z-index: 850;
+
+      width: fit-content;
+
+      margin:
+        10px auto 18px;
 
       display: flex;
       align-items: center;
+      justify-content: center;
+
       gap: 14px;
 
       padding: 12px 18px;
@@ -1774,29 +1780,25 @@
 
       background:
         linear-gradient(135deg,
-          rgba(5, 10, 20, .88),
-          rgba(15, 20, 40, .78));
+          rgba(5, 10, 20, .92),
+          rgba(15, 20, 40, .88));
 
       border:
         1px solid rgba(0, 229, 255, .14);
 
-      backdrop-filter:
-        blur(18px);
+      backdrop-filter: blur(18px);
 
       box-shadow:
-        0 10px 40px rgba(0, 0, 0, .45),
-        0 0 30px rgba(0, 229, 255, .06),
-        inset 0 0 30px rgba(255, 255, 255, .02);
-
-      width: fit-content;
-
-      max-width: calc(100vw - 30px);
-
-      overflow-x: auto;
+        0 10px 35px rgba(0, 0, 0, .35),
+        0 0 25px rgba(0, 229, 255, .06);
 
       transition:
-        transform .25s ease,
-        opacity .25s ease;
+        transform .2s ease,
+        opacity .2s ease;
+    }
+
+    #globalStatsBar:hover {
+      transform: translateY(-2px);
     }
 
     /* Neon border glow */
@@ -1965,22 +1967,18 @@
     @media(max-width:768px) {
 
       #globalStatsBar {
-        left: 12px;
-        right: 12px;
+        width: calc(100% - 24px);
 
-        top: 72px;
-
-        width: auto;
+        margin:
+          10px auto 16px;
 
         justify-content: flex-start;
+
+        overflow-x: auto;
 
         padding: 10px 14px;
 
         border-radius: 14px;
-
-        gap: 10px;
-
-        overflow-x: auto;
       }
 
       .gs-item {
@@ -1988,9 +1986,8 @@
       }
 
       .gs-leaderboard {
-        padding: 7px 12px;
-
         font-size: .74rem;
+        padding: 7px 12px;
       }
     }
 
@@ -2197,10 +2194,7 @@
     </div>
   </header>
 
-  <div id="globalStatsBar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  font-size:.8rem;color:var(--muted);padding:6px 16px;
-  background:rgba(0,229,255,.04);border-bottom:1px solid var(--border)">
-  </div>
+  <div id="globalStatsBar"></div>
 
   <!-- PFP Modal — file upload + URL + drag-drop -->
   <div class="pfp-modal" id="pfpModal">
