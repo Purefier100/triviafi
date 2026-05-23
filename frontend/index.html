@@ -168,9 +168,11 @@
 
     /* Main */
     main {
-      max-width: 1100px;
+      max-width: 1280px;
+
       margin: 0 auto;
-      padding: 20px 20px 80px
+
+      padding: 0 20px 80px;
     }
 
     /* Screens */
@@ -214,34 +216,32 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
+      justify-content: center;
 
       text-align: center;
 
-      padding: 18px 20px 0;
+      padding: 8px 20px 10px;
 
-      min-height: auto;
+      margin-top: -8px;
 
-      margin-top: 0;
+      min-height: 320px;
 
       overflow: hidden;
     }
 
     .hero-glow {
-      width: 120px;
-      height: 120px;
+      width: 260px;
+      height: 260px;
 
-      background: radial-gradient(circle,
-          rgba(0, 229, 255, .12) 0%,
-          rgba(123, 97, 255, .08) 45%,
-          transparent 75%);
+      top: 42%;
 
-      filter: blur(70px);
+      background:
+        radial-gradient(circle,
+          rgba(0, 229, 255, .22) 0%,
+          rgba(123, 97, 255, .14) 45%,
+          transparent 72%);
 
-      position: absolute;
-      top: 20%;
-      left: 50%;
-      transform: translate(-50%, -50%);
+      filter: blur(90px);
     }
 
     @keyframes heroFloat {
@@ -262,51 +262,52 @@
     }
 
     .hero-mini-badge {
-      padding:
-        8px 16px;
+      padding: 12px 24px;
+
+      font-size: .95rem;
+
+      font-weight: 800;
+
+      letter-spacing: 1px;
 
       border-radius: 999px;
 
-      border:
-        1px solid rgba(0, 229, 255, .16);
+      margin-bottom: 14px;
 
-      background:
-        rgba(0, 229, 255, .06);
+      background: rgba(0, 229, 255, .08);
 
-      color: var(--accent);
+      border: 1px solid rgba(0, 229, 255, .25);
 
-      font-size: .72rem;
-      font-weight: 700;
-
-      letter-spacing: .6px;
-
-      margin-bottom: 8px;
-
-      backdrop-filter: blur(12px);
+      box-shadow:
+        0 0 25px rgba(0, 229, 255, .12);
     }
 
     .hero-title {
       font-family: 'Bebas Neue', sans-serif;
 
-      font-size: clamp(2.8rem, 6vw, 4.5rem);
+      font-size: clamp(5rem, 12vw, 9rem);
 
-      line-height: .92;
+      line-height: .88;
 
-      letter-spacing: 4px;
+      letter-spacing: 6px;
 
       margin: 0;
 
-      background: linear-gradient(135deg,
+      background:
+        linear-gradient(180deg,
           #ffffff 0%,
-          #9be7ff 35%,
-          #00e5ff 65%,
-          #7b61ff 100%);
+          #a7f3ff 20%,
+          #00e5ff 55%,
+          #5b8cff 100%);
 
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
 
       text-shadow:
-        0 0 25px rgba(0, 229, 255, .18);
+        0 0 30px rgba(0, 229, 255, .22),
+        0 0 80px rgba(0, 229, 255, .18);
+
+      transform: scale(1.02);
     }
 
     .hero-line {
@@ -328,15 +329,11 @@
     }
 
     .hero-sub {
-      max-width: 520px;
+      margin-top: 2px;
 
-      color: #8d96b8;
+      font-size: 1.05rem;
 
-      font-size: .92rem;
-
-      line-height: 1.7;
-
-      margin-top: 6px;
+      max-width: 700px;
     }
 
     @keyframes heroFade {
@@ -1759,8 +1756,8 @@
     }
 
     #globalStatsBar {
-      position: sticky;
-      top: 60px;
+      position: relative;
+      top: 0px;
       /* height of header */
       z-index: 10;
       backdrop-filter: blur(8px);
