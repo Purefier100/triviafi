@@ -209,8 +209,237 @@
 
     /* Hero */
     .hero {
+      position: relative;
+
+      padding:
+        90px 20px 70px;
+
       text-align: center;
-      padding: 44px 20px 32px
+
+      overflow: hidden;
+    }
+
+    .hero-glow {
+      position: absolute;
+
+      width: 700px;
+      height: 700px;
+
+      background:
+        radial-gradient(circle,
+          rgba(0, 229, 255, .18) 0%,
+          rgba(123, 97, 255, .08) 40%,
+          transparent 70%);
+
+      top: -250px;
+      left: 50%;
+
+      transform: translateX(-50%);
+
+      filter: blur(40px);
+
+      z-index: 0;
+
+      animation: floatGlow 8s ease-in-out infinite alternate;
+    }
+
+    @keyframes floatGlow {
+      from {
+        transform: translateX(-50%) translateY(0px);
+      }
+
+      to {
+        transform: translateX(-50%) translateY(20px);
+      }
+    }
+
+    .hero>* {
+      position: relative;
+      z-index: 2;
+    }
+
+    .hero-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+
+      padding: 10px 18px;
+
+      border-radius: 999px;
+
+      background:
+        rgba(0, 229, 255, .08);
+
+      border:
+        1px solid rgba(0, 229, 255, .18);
+
+      color: var(--accent);
+
+      font-size: .78rem;
+      font-weight: 700;
+
+      margin-bottom: 26px;
+
+      backdrop-filter: blur(12px);
+    }
+
+    .hero-title {
+      font-family: 'Bebas Neue', sans-serif;
+
+      font-size: clamp(4rem, 10vw, 7rem);
+
+      line-height: .88;
+
+      letter-spacing: 4px;
+
+      margin-bottom: 24px;
+
+      background:
+        linear-gradient(135deg,
+          #ffffff 5%,
+          #9be7ff 40%,
+          #00d9ff 75%,
+          #7b61ff 100%);
+
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+
+      text-shadow:
+        0 0 35px rgba(0, 229, 255, .15);
+
+      animation: heroFade 1s ease;
+    }
+
+    .hero-sub {
+      max-width: 680px;
+
+      margin:
+        0 auto 34px;
+
+      color: #9aa4c7;
+
+      font-size: 1.05rem;
+
+      line-height: 1.8;
+    }
+
+    .hero-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+
+      margin-bottom: 42px;
+    }
+
+    .hero-play-btn {
+      width: auto !important;
+
+      padding:
+        16px 30px !important;
+
+      font-size: .95rem;
+
+      border-radius: 14px !important;
+
+      box-shadow:
+        0 10px 35px rgba(0, 229, 255, .22);
+    }
+
+    .hero-play-btn:hover {
+      transform:
+        translateY(-3px) scale(1.02);
+    }
+
+    .hero-leader-btn {
+      width: auto !important;
+
+      padding:
+        16px 28px !important;
+
+      border-radius: 14px !important;
+
+      background:
+        rgba(255, 255, 255, .03);
+    }
+
+    .hero-stats {
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .hero-stat {
+      min-width: 170px;
+
+      padding: 18px 22px;
+
+      border-radius: 18px;
+
+      background:
+        rgba(255, 255, 255, .04);
+
+      border:
+        1px solid rgba(255, 255, 255, .06);
+
+      backdrop-filter: blur(12px);
+
+      transition:
+        transform .25s,
+        border-color .25s;
+    }
+
+    .hero-stat:hover {
+      transform: translateY(-4px);
+
+      border-color:
+        rgba(0, 229, 255, .28);
+    }
+
+    .hero-stat strong {
+      display: block;
+
+      font-family: 'Bebas Neue', sans-serif;
+
+      font-size: 2rem;
+
+      letter-spacing: 2px;
+
+      color: var(--accent);
+
+      margin-bottom: 4px;
+    }
+
+    .hero-stat span {
+      color: var(--muted);
+
+      font-size: .78rem;
+
+      text-transform: uppercase;
+
+      letter-spacing: 1px;
+    }
+
+    @media(max-width:768px) {
+
+      .hero {
+        padding-top: 70px;
+      }
+
+      .hero-title {
+        font-size: 3.8rem;
+        line-height: .95;
+      }
+
+      .hero-sub {
+        font-size: .95rem;
+      }
+
+      .hero-stat {
+        min-width: 140px;
+      }
+
     }
 
     .hero h1 {
@@ -1925,18 +2154,56 @@
 
     <!-- LOBBY -->
     <div class="screen active" id="screenLobby">
-      <div class="hero">
-        <h1>The Onchain Trivia Arena.<br />Join live trivia battles.</h1>
-        <p>Outscore players. Win USDC on Arc or zkLTC on LitVM — all onchain, all trustless.</p>
-        <div class="hero-badges">
-          <span class="hbadge hb-gold">🏆 USDC Prizes</span>
-          <span class="hbadge hb-cyan">⚡ LitVM Prizes</span>
-          <span class="hbadge hb-green">🔒 Trustless Payouts</span>
-          <span class="hbadge"
-            style="background:rgba(123,97,255,.1);color:var(--purple);border:1px solid rgba(123,97,255,.3)">🎮
-            Multichain</span>
+      <section class="hero">
+
+        <div class="hero-glow"></div>
+
+        <div class="hero-chip">
+          ⚡ Live Onchain Trivia • Arc + LitVM
         </div>
-      </div>
+
+        <h1 class="hero-title">
+          THE ONCHAIN<br>
+          TRIVIA ARENA
+        </h1>
+
+        <p class="hero-sub">
+          Join live trivia battles, outscore players,
+          and win real USDC rewards fully onchain.
+        </p>
+
+        <div class="hero-buttons">
+
+          <button class="btn btn-primary hero-play-btn play-live">
+            🎮 Play Live Now
+          </button>
+
+          <button class="btn btn-ghost hero-leader-btn">
+            🏆 View Leaderboard
+          </button>
+
+        </div>
+
+        <div class="hero-stats">
+
+          <div class="hero-stat">
+            <strong>1828+</strong>
+            <span>Games Played</span>
+          </div>
+
+          <div class="hero-stat">
+            <strong>$249</strong>
+            <span>Prize Pool</span>
+          </div>
+
+          <div class="hero-stat">
+            <strong>24 Live</strong>
+            <span>Players Online</span>
+          </div>
+
+        </div>
+
+      </section>
 
       <div class="stat-row">
         <div class="stat-box">
