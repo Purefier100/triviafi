@@ -3625,32 +3625,31 @@ async function confirmBet(gameId, playerAddr) {
   }
 }
 
-function toggleNetworkMenu(){
+function toggleNetworkMenu() {
   document
-  .getElementById("networkMenu")
-  .classList
-  .toggle("open");
+    .getElementById("networkMenu")
+    .classList.toggle("open");
 }
 
-function selectNetwork(network){
-  if(network === "arc"){
-    
-    switchToNetwork(5042002);
+function selectNetwork(network) {
 
-    toast("Switched to Arc", "success");
+  const label =
+    network === "arc"
+      ? "⚡ Arc · USDC"
+      : "🔷 LitVM · zkLTC";
 
-  }else{
-
-    switchToNetwork(4441);
-
-    toast("Switched to LitVM", "success");
-  }
+  document.getElementById(
+    "selectedNetwork"
+  ).innerText = label;
 
   document
     .getElementById("networkMenu")
-    .classList
-    .remove("open");
+    .classList.remove("open");
 }
+
+document
+  .getElementById("networkTrigger")
+  .addEventListener("click", toggleNetworkMenu);
 
 /* close dropdown outside click */
 
