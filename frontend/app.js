@@ -1240,26 +1240,24 @@ async function connectWallet() {
 }
 
 function updateNetBar() {
-  const arcBtn = document.getElementById("netArc");
-  const litvmBtn = document.getElementById("netLitvm");
-  if (!arcBtn || !litvmBtn) return;
-
-  // Update entry fee label and placeholder dynamically
+  const isArc = activeNet.decimals === 6;
+  // Update the header trigger label
+  const sel = document.getElementById("selectedNetwork");
+  if (sel) sel.textContent = isArc ? "⚡ Arc · USDC" : "🔷 LitVM · zkLTC";
+  // Update active state in dropdown
+  const arcOpt = document.getElementById("netOptArc");
+  const litvmOpt = document.getElementById("netOptLitvm");
+  if (arcOpt)   arcOpt.className  = "net-opt" + (isArc  ? " net-opt-active" : "");
+  if (litvmOpt) litvmOpt.className = "net-opt" + (!isArc ? " net-opt-active" : "");
+  // Update entry fee input
   const feeLabel = document.getElementById("entryFeeLabel");
   const feeInput = document.getElementById("cFee");
   if (feeLabel) feeLabel.textContent = `Entry Fee (${activeNet.symbol})`;
   if (feeInput) {
     feeInput.placeholder = activeNet.isNative ? "e.g. 0.01" : "e.g. 1";
-    feeInput.min = activeNet.isNative ? "0.01" : "1";
+    feeInput.min  = activeNet.isNative ? "0.01" : "1";
     feeInput.step = activeNet.isNative ? "0.001" : "0.01";
   }
-  const isArc = activeNet.decimals === 6;
-  arcBtn.style.cssText = isArc
-    ? "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(0,229,255,.5);background:rgba(0,229,255,.12);color:#00e5ff;font-size:.75rem;font-weight:700;cursor:pointer"
-    : "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer";
-  litvmBtn.style.cssText = !isArc
-    ? "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid rgba(123,97,255,.5);background:rgba(123,97,255,.12);color:#7b61ff;font-size:.75rem;font-weight:700;cursor:pointer"
-    : "display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer";
 }
 
 function showScreen(id) {

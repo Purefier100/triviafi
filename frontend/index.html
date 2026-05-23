@@ -2286,6 +2286,53 @@
     .net-opt-label {
       flex: 1;
     }
+
+    .rooms-footer {
+      margin-top: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, .06);
+    }
+
+    .rooms-footer-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: .76rem;
+      font-weight: 600;
+    }
+
+    .rooms-live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #06d6a0;
+      box-shadow: 0 0 12px rgba(6, 214, 160, .8);
+      animation: pulse 2s infinite;
+    }
+
+    .rooms-create-btn {
+      border: none;
+      padding: 10px 16px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(0, 229, 255, .18), rgba(123, 97, 255, .18));
+      border: 1px solid rgba(0, 229, 255, .18);
+      color: #dffcff;
+      font-size: .78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s ease;
+    }
+
+    .rooms-create-btn:hover {
+      transform: translateY(-2px);
+      border-color: rgba(0, 229, 255, .35);
+      box-shadow: 0 0 20px rgba(0, 229, 255, .12);
+    }
   </style>
 </head>
 
