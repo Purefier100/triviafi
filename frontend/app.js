@@ -103,18 +103,16 @@ function renderAuthState() {
     hn = document.getElementById("headerName");
   if (ha && hn) {
     const init = u
-      ? (u.username || u.display_name || "?")[0].toUpperCase()
-      : userAddress
-      ? userAddress.slice(2, 4).toUpperCase()
-      : "?";
+    ? (u.username || u.display_name || "?")[0].toUpperCase()
+    : userAddress
+    ? userAddress.slice(2, 4).toUpperCase()
+    : "?";
     ha.innerHTML = u?.avatar
-      ? `<img src="${sanitizeUrl(
-          u.avatar,
-        )}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-      : init;
+    ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+    : init;
     hn.textContent = u
-      ? "@" + (u.username || u.display_name)
-      : fmt(userAddress);
+    ? "@" + (u.username || u.display_name)
+    : fmt(userAddress);
   }
   const pa = document.getElementById("pdAvatarBig"),
     pn = document.getElementById("pdName"),
@@ -128,9 +126,11 @@ function renderAuthState() {
       ? (u.username || u.display_name || "?")[0].toUpperCase()
       : "?";
   if (pn)
-    pn.textContent = u
-      ? "@" + (u.username || u.display_name)
-      : fmt(userAddress) || "—";
+  pn.textContent = u
+    ? "@" + (u.username || u.display_name)
+    : userAddress
+    ? fmt(userAddress)
+    : "—";
   if (pe)
     pe.textContent =
       u?.email || (userAddress ? userAddress.slice(0, 14) + "..." : "—");
@@ -139,17 +139,18 @@ function renderAuthState() {
   const pwl = document.getElementById("pdWalletLabel"),
     pws = document.getElementById("pdWalletStatus");
   if (pgl && pgs) {
-    pgl.textContent = u ? u.email : "Google";
-    if (hasGoogle) {
-      pgs.className = "conn-linked";
-      pgs.textContent = "✓ Linked";
-      pgs.onclick = null;
-    } else {
-      pgs.className = "conn-link-btn";
-      pgs.textContent = "+ Link Google";
-      pgs.onclick = () => loginWithGoogle();
-    }
+  pgl.textContent = u ? u.email : "Google Account";
+  if (hasGoogle) {
+    pgs.className = "conn-linked";
+    pgs.textContent = "✓ Linked";
+    pgs.onclick = null;
+  } else {
+    pgs.className = "conn-link-btn";
+    pgs.textContent = "+ Connect Gmail";
+    pgs.style.cssText = "font-size:.7rem;background:rgba(66,133,244,.1);color:#4285F4;border:1px solid rgba(66,133,244,.3);padding:3px 10px;border-radius:10px;cursor:pointer;font-weight:700";
+    pgs.onclick = () => loginWithGoogle();
   }
+}
   if (pwl && pws) {
     pwl.textContent = hasWallet ? fmt(userAddress) : "Wallet";
     if (hasWallet) {
