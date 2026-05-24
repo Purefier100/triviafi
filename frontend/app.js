@@ -1056,6 +1056,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   loadGlobalStats();
   loadGames();
   countdownInterval = setInterval(updateCountdowns, 1000);
+  // Re-check prizes every 2 min
+  setInterval(() => {
+    if (userAddress) checkUnclaimedPrizes();
+  }, 120000);
   injectStreakStyles();
   initAuth();
   setInterval(() => {
@@ -1291,9 +1295,9 @@ async function connectWallet() {
 
     renderAuthState();
     toast("✅ Wallet connected!", "success");
-    document.body.classList.add("wallet-connected");
-    loadGames();
+    await loadGames();
     loadMyStats();
+    checkUnclaimedPrizes();
     if (currentGameId) openGame(currentGameId);
     if (window.pendingGameId) {
       openGame(window.pendingGameId);
@@ -3530,6 +3534,164 @@ async function loadGlobalStats() {
       </div>
     `;
   } catch (_) {}
+}
+
+async function checkUnclaimedPrizes() {
+  if (!userAddress) return;
+  const banner = document.getElementById("unclaimedBanner");
+  if (!banner) return;
+
+  const claims = [];
+  const now = Math.floor(Date.now() / 1000);
+
+  // ── Scan both chains for unclaimed prizes ─────────────────────────────────
+  try {
+    const arcProvider = new ethers.JsonRpcProvider(
+      "https://rpc.testnet.arc.network",
+    );
+    const litvmProvider = new ethers.JsonRpcProvider(
+      "https://liteforge.rpc.caldera.xyz/http",
+    );
+    const arcRC = new ethers.Contract(
+      NETWORKS[5042002].contractAddress,
+      ABI,
+      arcProvider,
+    );
+    const litvmRC = new ethers.Contract(
+      NETWORKS[4441].contractAddress,
+      ABI,
+      litvmProvider,
+    );
+
+    for (const [rc, net, chainId] of [
+      [arcRC, NETWORKS[5042002], 5042002],
+      [litvmRC, NETWORKS[4441], 4441],
+    ]) {
+      const count = Number(await rc.gameCounter().catch(() => 0));
+      if (count === 0) continue;
+
+      const scanFrom = Math.max(1, count - 80);
+      const checks = [];
+      for (let i = count; i >= scanFrom; i--)
+        checks.push(
+          rc
+            .getPlayerStatus(i, userAddress)
+            .then(async ([joined, finished, claimed, score]) => {
+              if (!joined || claimed) return null;
+              const g = await rc.getGame(i).catch(() => null);
+              if (!g) return null;
+              const status = Number(g.status ?? g[14]);
+              if (status !== 1) return null; // only ended games
+              const topPlayers = g.topPlayers ?? g[12];
+              const myPos = Array.from(topPlayers).findIndex(
+                (p) => p?.toLowerCase() === userAddress.toLowerCase(),
+              );
+              if (myPos < 0) return null; // not a winner
+              const prizePool = g.prizePool ?? g[8];
+              const n = Number(g.playerCount ?? g[9]);
+              const dist =
+                parseFloat(ethers.formatUnits(prizePool, net.decimals)) * 0.95;
+              const prizes =
+                n === 1
+                  ? [dist]
+                  : n === 2
+                    ? [dist * 0.7, dist * 0.3]
+                    : [dist * 0.6, dist * 0.25, dist * 0.15];
+              const prize = prizes[myPos] || 0;
+              if (prize <= 0) return null;
+              const name = g.name ?? g[1];
+              return {
+                gameId: i,
+                chainId,
+                net,
+                name,
+                prize,
+                myPos,
+                type: "prize",
+              };
+            })
+            .catch(() => null),
+        );
+      const results = (await Promise.all(checks)).filter(Boolean);
+      claims.push(...results);
+    }
+  } catch (_) {}
+
+  // ── Check unclaimed bet winnings ──────────────────────────────────────────
+  try {
+    const res = await fetch(`${BACKEND}/bets/unclaimed/${userAddress}`, {
+      credentials: "include",
+    });
+    if (res.ok) {
+      const bets = await res.json();
+      for (const b of bets || []) {
+        claims.push({
+          gameId: b.game_id,
+          chainId: b.chain_id || 5042002,
+          net: NETWORKS[b.chain_id || 5042002],
+          name: b.game_name || `Game #${b.game_id}`,
+          prize: parseFloat(b.winnings || 0),
+          type: "bet",
+          betId: b.id,
+        });
+      }
+    }
+  } catch (_) {}
+
+  if (claims.length === 0) {
+    banner.style.display = "none";
+    return;
+  }
+
+  // ── Render banner ─────────────────────────────────────────────────────────
+  const chainIcon = (cid) => (cid === 4441 ? "🔷" : "⚡");
+  const medals = ["🥇", "🥈", "🥉"];
+
+  let html = `
+    <div style="background:linear-gradient(135deg,rgba(255,209,102,.08),rgba(123,97,255,.08));border:1px solid rgba(255,209,102,.35);border-radius:16px;padding:16px 20px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <span style="font-size:1.4rem">🎁</span>
+        <div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:1.5px;color:var(--gold)">YOU HAVE UNCLAIMED PRIZES!</div>
+          <div style="font-size:.75rem;color:var(--muted)">Click a game below to claim your winnings</div>
+        </div>
+        <button onclick="document.getElementById('unclaimedBanner').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px">✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">`;
+
+  for (const c of claims) {
+    const dp = c.net.decimals === 18 ? 4 : 2;
+    const prizeStr = c.prize.toFixed(dp) + " " + c.net.symbol;
+    if (c.type === "prize") {
+      html += `
+        <div onclick="openGameReadOnly(${c.gameId}, ${c.chainId})" style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.2);border-radius:10px;padding:10px 14px;cursor:pointer;transition:background .2s" onmouseover="this.style.background='rgba(255,209,102,.12)'" onmouseout="this.style.background='rgba(255,209,102,.06)'">
+          <div>
+            <div style="font-size:.85rem;font-weight:700">${chainIcon(c.chainId)} #${c.gameId} ${sanitizeText(c.name)}</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:2px">${medals[c.myPos]} ${["1st", "2nd", "3rd"][c.myPos]} Place Winner · Game Prize</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:1rem;font-weight:700;color:var(--gold)">${prizeStr}</div>
+            <div style="font-size:.68rem;background:rgba(255,209,102,.15);color:var(--gold);border:1px solid rgba(255,209,102,.3);padding:2px 8px;border-radius:8px;margin-top:3px">Claim →</div>
+          </div>
+        </div>`;
+    } else {
+      html += `
+        <div onclick="openGameReadOnly(${c.gameId}, ${c.chainId})" style="display:flex;align-items:center;justify-content:space-between;background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.2);border-radius:10px;padding:10px 14px;cursor:pointer;transition:background .2s" onmouseover="this.style.background='rgba(123,97,255,.12)'" onmouseout="this.style.background='rgba(123,97,255,.06)'">
+          <div>
+            <div style="font-size:.85rem;font-weight:700">${chainIcon(c.chainId)} #${c.gameId} ${sanitizeText(c.name)}</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:2px">🎲 Your prediction was correct! Bet winnings</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:1rem;font-weight:700;color:var(--purple)">${prizeStr}</div>
+            <div style="font-size:.68rem;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);padding:2px 8px;border-radius:8px;margin-top:3px">Claim →</div>
+          </div>
+        </div>`;
+    }
+  }
+
+  html += `</div></div>`;
+  banner.innerHTML = html;
+  banner.style.display = "block";
 }
 
 async function showGlobalLeaderboard() {

@@ -625,6 +625,29 @@ app.get("/stats", async (req, res) => {
   }
 });
 
+// Unclaimed bet winnings for a wallet
+app.get("/bets/unclaimed/:wallet", async (req, res) => {
+  try {
+    const { wallet } = req.params;
+    const result = await pool.query(
+      `
+      SELECT b.id, b.game_id, b.amount, b.winnings, b.chain_id,
+             g.name as game_name
+      FROM bets b
+      LEFT JOIN games g ON g.contract_game_id = b.game_id AND g.chain_id = b.chain_id
+      WHERE LOWER(b.wallet) = LOWER($1)
+        AND b.won = true
+        AND b.claimed = false
+        AND b.winnings > 0
+    `,
+      [wallet],
+    );
+    res.json(result.rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
 app.get("/history/:wallet", async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
