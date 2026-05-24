@@ -2184,28 +2184,29 @@
     .rooms-footer {
       margin-top: 18px;
 
-      padding: 18px 22px;
+      padding: 16px 20px;
 
       border-radius: 18px;
 
       background:
         linear-gradient(135deg,
-          rgba(18, 24, 42, .92),
-          rgba(12, 18, 35, .88));
+          rgba(18, 24, 42, .96),
+          rgba(9, 16, 32, .94));
 
       border:
-        1px solid rgba(255, 255, 255, .06);
+        1px solid rgba(255, 255, 255, .05);
 
       display: flex;
       align-items: center;
       justify-content: space-between;
 
-      gap: 18px;
-
       position: relative;
       overflow: hidden;
+
+      min-height: 92px;
     }
 
+    /* glow */
     .rooms-footer::before {
       content: "";
 
@@ -2214,13 +2215,13 @@
 
       background:
         radial-gradient(circle at right,
-          rgba(0, 229, 255, .10),
-          transparent 45%);
+          rgba(0, 229, 255, .12),
+          transparent 42%);
 
       pointer-events: none;
     }
 
-    /* LEFT SIDE */
+    /* LEFT CONTENT */
     .rooms-footer-left {
       display: flex;
       flex-direction: column;
@@ -2230,25 +2231,68 @@
       z-index: 2;
     }
 
-    /* LIVE HEADER */
     .rooms-live-row {
       display: flex;
       align-items: center;
       gap: 8px;
 
-      font-size: .88rem;
+      font-size: .95rem;
       font-weight: 700;
 
-      color: #f4f7ff;
+      color: #f8fbff;
     }
 
-    /* SMALL TEXT */
     .rooms-subtext {
-      color: #94a3b8;
+      color: #8fa2c7;
 
-      font-size: .76rem;
+      font-size: .78rem;
 
-      line-height: 1.5;
+      line-height: 1.45;
+    }
+
+    /* BUTTON SIDE */
+    .rooms-footer-right {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      z-index: 2;
+    }
+
+    /* BUTTON */
+    .rooms-create-btn {
+      height: 48px;
+
+      padding: 0 22px;
+
+      border: none;
+      border-radius: 14px;
+
+      background:
+        linear-gradient(135deg,
+          #00cfff,
+          #5b6cff);
+
+      color: white;
+
+      font-size: .86rem;
+      font-weight: 800;
+
+      white-space: nowrap;
+
+      cursor: pointer;
+
+      box-shadow:
+        0 12px 28px rgba(0, 229, 255, .18);
+
+      transition: .22s ease;
+    }
+
+    .rooms-create-btn:hover {
+      transform: translateY(-2px);
+
+      box-shadow:
+        0 16px 34px rgba(0, 229, 255, .24);
     }
 
     /* LIVE DOT */
@@ -2263,46 +2307,7 @@
       box-shadow:
         0 0 12px rgba(6, 214, 160, .8);
 
-      animation: pulse 1.5s infinite;
-    }
-
-    /* BUTTON */
-    .rooms-create-btn {
-      height: 44px;
-
-      padding: 0 20px;
-
-      border: none;
-
-      border-radius: 14px;
-
-      background:
-        linear-gradient(135deg,
-          #00cfff,
-          #5b6cff);
-
-      color: white;
-
-      font-size: .84rem;
-      font-weight: 800;
-
-      letter-spacing: .2px;
-
-      cursor: pointer;
-
-      box-shadow:
-        0 10px 24px rgba(0, 229, 255, .18);
-
-      transition: .22s;
-
-      z-index: 2;
-    }
-
-    .rooms-create-btn:hover {
-      transform: translateY(-2px);
-
-      box-shadow:
-        0 14px 30px rgba(0, 229, 255, .24);
+      animation: pulse 1.6s infinite;
     }
 
     /* MOBILE */
@@ -2312,12 +2317,15 @@
         flex-direction: column;
         align-items: flex-start;
 
-        padding: 16px;
+        gap: 16px;
+      }
+
+      .rooms-footer-right {
+        width: 100%;
       }
 
       .rooms-create-btn {
         width: 100%;
-        justify-content: center;
       }
     }
   </style>
@@ -2593,9 +2601,11 @@
 
           </div>
 
-          <button class="rooms-create-btn">
-            + Create Room
-          </button>ooms-create-btn
+          <div class="rooms-footer-right">
+            <button class="rooms-create-btn">
+              + Create Room
+            </button>
+          </div>
 
         </div>
       </div>
