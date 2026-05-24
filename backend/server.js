@@ -1908,8 +1908,6 @@ app.post("/submit-score", csrfProtection, async (req, res) => {
     });
   }
 
-  const duration = Date.now() - new Date(session.rows[0].started_at).getTime();
-
   if (duration < 5000) {
     return res.status(400).json({
       error: "Too fast",

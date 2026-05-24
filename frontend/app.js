@@ -991,7 +991,8 @@ let readProvider, readContract;
 let userAddress = null,
   platformAddress = null;
 let currentGameId = null,
-  currentGame = null;
+  currentGame = null,
+  currentGameChainId = null;
 let selectedCatId = null,
   selectedCatName = null,
   selectedDiff = 0;
@@ -1564,7 +1565,7 @@ async function loadGames() {
   gamesLoading = true;
   const renderId = Date.now();
   lastGamesRender = renderId;
-  const grid = document.getElementById("gamesGrid");
+  const grid = document.getElementById("gamesList");
   // Only show skeleton on first load, not background refreshes
   if (grid && allGames.length === 0) {
     grid.innerHTML = skeletonCards(6);
@@ -1674,16 +1675,20 @@ async function loadGames() {
 
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
 
-    // Stats
+    // Stats — only count ACTIVE games (status=0, not expired) for "in play"
     for (const { g, net } of allGames) {
       const gamePool = BigInt(g[8]);
       totalVolume += gamePool;
-      if (net.decimals === 6) {
-        arcPool += gamePool;
-      } else {
-        litvmPool += gamePool;
+      const isActive = Number(g[14]) === 0 && Number(g[11]) > nowSec;
+      if (isActive) {
+        // Only add to "in play" pool if game is actually active
+        if (net.decimals === 6) {
+          arcPool += gamePool;
+        } else {
+          litvmPool += gamePool;
+        }
+        activeCount++;
       }
-      if (Number(g[14]) === 0 && Number(g[11]) > nowSec) activeCount++;
     }
 
     // Show combined pool
