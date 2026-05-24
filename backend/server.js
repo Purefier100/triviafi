@@ -216,17 +216,27 @@ async function initDB() {
       finished_at TIMESTAMPTZ
       );
     `);
-    
+
     // ✅ Add chain_id column if missing (existing tables)
-    await pool.query(`ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`).catch(() => {});
-    
-    await pool.query(`
+    await pool
+      .query(
+        `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`,
+      )
+      .catch(() => {});
+
+    await pool
+      .query(
+        `
       ALTER TABLE game_sessions
       ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ
-      `).catch(() => {});
+      `,
+      )
+      .catch(() => {});
 
     // ✅ Safely recreate the unique constraint with chain_id included
-    await pool.query(`
+    await pool
+      .query(
+        `
       DO $$ BEGIN
      -- Drop old constraint without chain_id if it exists
      IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'game_sessions_user_id_game_id_key') THEN
@@ -239,7 +249,9 @@ async function initDB() {
       -- Add the correct constraint
       ALTER TABLE game_sessions ADD CONSTRAINT gs_user_game_chain_unique UNIQUE(user_id, game_id, chain_id);
       END $$;
-    `).catch((e) => console.warn("Constraint migration:", e.message));
+    `,
+      )
+      .catch((e) => console.warn("Constraint migration:", e.message));
 
     // =========================================================================
     // BETS
@@ -305,17 +317,29 @@ async function initDB() {
       UNIQUE(session_id, q_index)
     );
   `);
-  
-  await pool.query(`
+
+    await pool.query(`
     INSERT INTO platform_stats (id, total_volume)
     VALUES (1, 0)
     ON CONFLICT (id) DO NOTHING
   `);
-  
-  // ✅ Add missing columns to existing table (safe to run multiple times)
-  await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`).catch(() => {});
-  await pool.query(`ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`).catch(() => {});
-  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS game_questions_session_qindex ON game_questions(session_id, q_index)`).catch(() => {});
+
+    // ✅ Add missing columns to existing table (safe to run multiple times)
+    await pool
+      .query(
+        `ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS question TEXT`,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `ALTER TABLE game_questions ADD COLUMN IF NOT EXISTS options  TEXT`,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS game_questions_session_qindex ON game_questions(session_id, q_index)`,
+      )
+      .catch(() => {});
 
     // Make google_id nullable
     await pool
@@ -346,8 +370,12 @@ async function initDB() {
     `,
       )
       .catch(() => {});
-      // ✅ Add missing columns to game_sessions (safe on existing tables)
-      await pool.query(`ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`).catch(() => {});
+    // ✅ Add missing columns to game_sessions (safe on existing tables)
+    await pool
+      .query(
+        `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS chain_id INT DEFAULT 5042002`,
+      )
+      .catch(() => {});
 
     console.log("✅ Database ready");
   } catch (e) {
@@ -443,15 +471,31 @@ passport.use(
         }
 
         // 2. Try find by email (wallet-only user upgrading to Google login)
+
         if (email) {
           existing = await pool.query("SELECT * FROM users WHERE email=$1", [
             email,
           ]);
           if (existing.rows.length > 0) {
+            // ✅ Block: this Google account already has a google_id linked (already used)
+            if (
+              existing.rows[0].google_id &&
+              existing.rows[0].google_id !== profile.id
+            ) {
+              return done(null, false, { message: "google_taken" });
+            }
+            // ✅ Block: this Google account is already linked to a DIFFERENT wallet
+            const googleAlreadyUsed = await pool.query(
+              "SELECT id, wallet FROM users WHERE google_id=$1 AND id!=$2",
+              [profile.id, existing.rows[0].id],
+            );
+            if (googleAlreadyUsed.rows.length > 0) {
+              return done(null, false, { message: "google_taken" });
+            }
             // MERGE: link Google to existing wallet-only account
             const merged = await pool.query(
               `UPDATE users SET google_id=$1, display_name=$2, avatar=$3
-             WHERE id=$4 RETURNING *`,
+              WHERE id=$4 RETURNING *`,
               [profile.id, displayName, avatar, existing.rows[0].id],
             );
             return done(null, merged.rows[0]);
@@ -576,7 +620,7 @@ app.get("/stats", async (req, res) => {
     res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({
-      error: e.message
+      error: e.message,
     });
   }
 });
@@ -595,7 +639,7 @@ app.get("/history/:wallet", async (req, res) => {
       WHERE LOWER(gs.wallet)=LOWER($1)
       ORDER BY gs.started_at DESC
       `,
-      [wallet]
+      [wallet],
     );
 
     res.json(result.rows);
@@ -609,7 +653,8 @@ app.get("/history/:wallet", async (req, res) => {
 app.get(
   "/auth/google/callback",
   passport.authenticate("google", {
-    failureRedirect: `${process.env.FRONTEND_URL}?auth=failed`,
+    failureRedirect: `${process.env.FRONTEND_URL}?auth=google_taken`,
+    failureMessage: true,
   }),
   (req, res) => {
     if (!req.user.username)
@@ -782,7 +827,7 @@ app.post("/profile/avatar", async (req, res) => {
       error: "Only HTTPS images allowed",
     });
   }
-  
+
   if (avatar.length > 500) {
     return res.status(400).json({
       error: "Avatar URL too long",
@@ -837,89 +882,89 @@ app.post("/profile/resolve", async (req, res) => {
 
 if (process.env.NODE_ENV !== "production") {
   app.get("/debug/nonce/:wallet", async (req, res) => {
-  const wallet = req.params.wallet;
-  try {
-    // Use withRetry which IS globally defined
-    const onchainNonce = await withRetry(
-      (c) => c.nonces(wallet),
-      "debugNonce",
-    );
-    const dbRow = await pool.query(
-      "SELECT nonce FROM users WHERE LOWER(wallet)=$1",
-      [wallet.toLowerCase()],
-    );
-    res.json({
-      onchain: onchainNonce.toString(),
-      db: dbRow.rows[0]?.nonce || 0,
-    });
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
+    const wallet = req.params.wallet;
+    try {
+      // Use withRetry which IS globally defined
+      const onchainNonce = await withRetry(
+        (c) => c.nonces(wallet),
+        "debugNonce",
+      );
+      const dbRow = await pool.query(
+        "SELECT nonce FROM users WHERE LOWER(wallet)=$1",
+        [wallet.toLowerCase()],
+      );
+      res.json({
+        onchain: onchainNonce.toString(),
+        db: dbRow.rows[0]?.nonce || 0,
+      });
+    } catch (e) {
+      res.json({ error: e.message });
+    }
+  });
 }
 
 if (process.env.NODE_ENV !== "production") {
   app.get("/debug/contract", async (req, res) => {
     try {
-    const p = makeProvider();
-    // Try different nonce function names
-    const tests = {};
+      const p = makeProvider();
+      // Try different nonce function names
+      const tests = {};
 
-    const wallet = "0xB2821e9a602C4Fab6d30c9A85D8F24a1935B1ed6";
+      const wallet = "0xB2821e9a602C4Fab6d30c9A85D8F24a1935B1ed6";
 
-    // Test gameCounter (we know this works)
-    try {
-      const c1 = new ethers.Contract(
-        CONTRACT_ADDRESS,
-        ["function gameCounter() view returns (uint256)"],
-        p,
-      );
-      tests.gameCounter = (await c1.gameCounter()).toString();
+      // Test gameCounter (we know this works)
+      try {
+        const c1 = new ethers.Contract(
+          CONTRACT_ADDRESS,
+          ["function gameCounter() view returns (uint256)"],
+          p,
+        );
+        tests.gameCounter = (await c1.gameCounter()).toString();
+      } catch (e) {
+        tests.gameCounter = "FAILED: " + e.message;
+      }
+
+      // Test getNonce
+      try {
+        const c2 = new ethers.Contract(
+          CONTRACT_ADDRESS,
+          ["function getNonce(address) view returns (uint256)"],
+          p,
+        );
+        tests.getNonce = (await c2.getNonce(wallet)).toString();
+      } catch (e) {
+        tests.getNonce = "FAILED: " + e.message;
+      }
+
+      // Test nonces
+      try {
+        const c3 = new ethers.Contract(
+          CONTRACT_ADDRESS,
+          ["function nonces(address) view returns (uint256)"],
+          p,
+        );
+        tests.nonces = (await c3.nonces(wallet)).toString();
+      } catch (e) {
+        tests.nonces = "FAILED: " + e.message;
+      }
+
+      // Test playerNonces
+      try {
+        const c4 = new ethers.Contract(
+          CONTRACT_ADDRESS,
+          ["function playerNonces(address) view returns (uint256)"],
+          p,
+        );
+        tests.playerNonces = (await c4.playerNonces(wallet)).toString();
+      } catch (e) {
+        tests.playerNonces = "FAILED: " + e.message;
+      }
+
+      res.json(tests);
     } catch (e) {
-      tests.gameCounter = "FAILED: " + e.message;
+      res.json({ error: e.message });
     }
-
-    // Test getNonce
-    try {
-      const c2 = new ethers.Contract(
-        CONTRACT_ADDRESS,
-        ["function getNonce(address) view returns (uint256)"],
-        p,
-      );
-      tests.getNonce = (await c2.getNonce(wallet)).toString();
-    } catch (e) {
-      tests.getNonce = "FAILED: " + e.message;
-    }
-
-    // Test nonces
-    try {
-      const c3 = new ethers.Contract(
-        CONTRACT_ADDRESS,
-        ["function nonces(address) view returns (uint256)"],
-        p,
-      );
-      tests.nonces = (await c3.nonces(wallet)).toString();
-    } catch (e) {
-      tests.nonces = "FAILED: " + e.message;
-    }
-
-    // Test playerNonces
-    try {
-      const c4 = new ethers.Contract(
-        CONTRACT_ADDRESS,
-        ["function playerNonces(address) view returns (uint256)"],
-        p,
-      );
-      tests.playerNonces = (await c4.playerNonces(wallet)).toString();
-    } catch (e) {
-      tests.playerNonces = "FAILED: " + e.message;
-    }
-
-    res.json(tests);
-  } catch (e) {
-    res.json({ error: e.message });
-  }
-});
+  });
 }
 
 app.get("/profile/check/:username", async (req, res) => {
@@ -992,7 +1037,6 @@ app.get("/game/status/:gameId", async (req, res) => {
       finished: r.rows[0]?.finished || false,
       onchain,
     });
-
   } catch (e) {
     console.error("Game status error:", e.message);
     return res.status(500).json({ error: "Server error" });
@@ -1001,139 +1045,537 @@ app.get("/game/status/:gameId", async (req, res) => {
 
 if (process.env.NODE_ENV !== "production") {
   app.get("/debug/rpc", async (req, res) => {
-  const results = {};
-  const rpcs = [
-    "https://rpc.testnet.arc.network",
-    "https://arc-testnet.drpc.org",
-  ];
-  for (const rpc of rpcs) {
-    try {
-      const p = new ethers.JsonRpcProvider(rpc, {
-        chainId: 5042002,
-        name: "arc-testnet",
-      });
-      const block = await Promise.race([
-        p.getBlockNumber(),
-        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 5000)),
-      ]);
-      const c = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, p);
-      const nonce = await Promise.race([
-        c.getNonce("0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50"),
-        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 5000)),
-      ]);
-      results[rpc] = { ok: true, block, nonce: nonce.toString() };
-    } catch (e) {
-      results[rpc] = { ok: false, error: e.message };
+    const results = {};
+    const rpcs = [
+      "https://rpc.testnet.arc.network",
+      "https://arc-testnet.drpc.org",
+    ];
+    for (const rpc of rpcs) {
+      try {
+        const p = new ethers.JsonRpcProvider(rpc, {
+          chainId: 5042002,
+          name: "arc-testnet",
+        });
+        const block = await Promise.race([
+          p.getBlockNumber(),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 5000),
+          ),
+        ]);
+        const c = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, p);
+        const nonce = await Promise.race([
+          c.getNonce("0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50"),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 5000),
+          ),
+        ]);
+        results[rpc] = { ok: true, block, nonce: nonce.toString() };
+      } catch (e) {
+        results[rpc] = { ok: false, error: e.message };
+      }
     }
-  }
-  res.json(results);
-});
+    res.json(results);
+  });
 }
 
 // ✅ LOCAL QUESTION BANK — 200 questions across categories
 // Used when OpenTDB is unavailable. Prevents "No questions available" errors.
 const LOCAL_QUESTIONS = {
-  9: [ // General Knowledge
-    { q: "What is the capital of Australia?", correct: "Canberra", wrong: ["Sydney", "Melbourne", "Perth"] },
-    { q: "How many sides does a hexagon have?", correct: "6", wrong: ["5", "7", "8"] },
-    { q: "Which planet is known as the Red Planet?", correct: "Mars", wrong: ["Jupiter", "Venus", "Saturn"] },
-    { q: "What is the largest ocean on Earth?", correct: "Pacific Ocean", wrong: ["Atlantic Ocean", "Indian Ocean", "Arctic Ocean"] },
-    { q: "Who painted the Mona Lisa?", correct: "Leonardo da Vinci", wrong: ["Michelangelo", "Raphael", "Donatello"] },
-    { q: "What is the chemical symbol for gold?", correct: "Au", wrong: ["Go", "Gd", "Ag"] },
-    { q: "How many bones are in the adult human body?", correct: "206", wrong: ["195", "213", "220"] },
-    { q: "What year did World War II end?", correct: "1945", wrong: ["1943", "1944", "1946"] },
-    { q: "What is the smallest country in the world?", correct: "Vatican City", wrong: ["Monaco", "San Marino", "Liechtenstein"] },
-    { q: "Which element has the atomic number 1?", correct: "Hydrogen", wrong: ["Helium", "Oxygen", "Carbon"] },
-    { q: "What is the fastest land animal?", correct: "Cheetah", wrong: ["Lion", "Leopard", "Gazelle"] },
-    { q: "In what country was pizza invented?", correct: "Italy", wrong: ["Greece", "France", "Spain"] },
-    { q: "What is the longest river in the world?", correct: "Nile", wrong: ["Amazon", "Mississippi", "Yangtze"] },
-    { q: "How many continents are there?", correct: "7", wrong: ["5", "6", "8"] },
-    { q: "What gas do plants absorb from the atmosphere?", correct: "Carbon Dioxide", wrong: ["Oxygen", "Nitrogen", "Hydrogen"] },
+  9: [
+    // General Knowledge
+    {
+      q: "What is the capital of Australia?",
+      correct: "Canberra",
+      wrong: ["Sydney", "Melbourne", "Perth"],
+    },
+    {
+      q: "How many sides does a hexagon have?",
+      correct: "6",
+      wrong: ["5", "7", "8"],
+    },
+    {
+      q: "Which planet is known as the Red Planet?",
+      correct: "Mars",
+      wrong: ["Jupiter", "Venus", "Saturn"],
+    },
+    {
+      q: "What is the largest ocean on Earth?",
+      correct: "Pacific Ocean",
+      wrong: ["Atlantic Ocean", "Indian Ocean", "Arctic Ocean"],
+    },
+    {
+      q: "Who painted the Mona Lisa?",
+      correct: "Leonardo da Vinci",
+      wrong: ["Michelangelo", "Raphael", "Donatello"],
+    },
+    {
+      q: "What is the chemical symbol for gold?",
+      correct: "Au",
+      wrong: ["Go", "Gd", "Ag"],
+    },
+    {
+      q: "How many bones are in the adult human body?",
+      correct: "206",
+      wrong: ["195", "213", "220"],
+    },
+    {
+      q: "What year did World War II end?",
+      correct: "1945",
+      wrong: ["1943", "1944", "1946"],
+    },
+    {
+      q: "What is the smallest country in the world?",
+      correct: "Vatican City",
+      wrong: ["Monaco", "San Marino", "Liechtenstein"],
+    },
+    {
+      q: "Which element has the atomic number 1?",
+      correct: "Hydrogen",
+      wrong: ["Helium", "Oxygen", "Carbon"],
+    },
+    {
+      q: "What is the fastest land animal?",
+      correct: "Cheetah",
+      wrong: ["Lion", "Leopard", "Gazelle"],
+    },
+    {
+      q: "In what country was pizza invented?",
+      correct: "Italy",
+      wrong: ["Greece", "France", "Spain"],
+    },
+    {
+      q: "What is the longest river in the world?",
+      correct: "Nile",
+      wrong: ["Amazon", "Mississippi", "Yangtze"],
+    },
+    {
+      q: "How many continents are there?",
+      correct: "7",
+      wrong: ["5", "6", "8"],
+    },
+    {
+      q: "What gas do plants absorb from the atmosphere?",
+      correct: "Carbon Dioxide",
+      wrong: ["Oxygen", "Nitrogen", "Hydrogen"],
+    },
   ],
-  17: [ // Science
-    { q: "What is the speed of light?", correct: "299,792,458 m/s", wrong: ["300,000,000 m/s", "199,792,458 m/s", "399,792,458 m/s"] },
-    { q: "What is the powerhouse of the cell?", correct: "Mitochondria", wrong: ["Nucleus", "Ribosome", "Golgi Apparatus"] },
-    { q: "What planet has the most moons?", correct: "Saturn", wrong: ["Jupiter", "Uranus", "Neptune"] },
-    { q: "What is the hardest natural substance?", correct: "Diamond", wrong: ["Ruby", "Quartz", "Topaz"] },
-    { q: "What force keeps planets in orbit?", correct: "Gravity", wrong: ["Magnetism", "Friction", "Centripetal force"] },
-    { q: "How many chromosomes do humans have?", correct: "46", wrong: ["23", "48", "44"] },
-    { q: "What is H2O commonly known as?", correct: "Water", wrong: ["Hydrogen Peroxide", "Oxygen", "Salt water"] },
-    { q: "What is the center of an atom called?", correct: "Nucleus", wrong: ["Electron", "Proton", "Neutron"] },
-    { q: "Which gas makes up most of Earth's atmosphere?", correct: "Nitrogen", wrong: ["Oxygen", "Carbon Dioxide", "Argon"] },
-    { q: "What is the boiling point of water at sea level?", correct: "100°C", wrong: ["90°C", "110°C", "95°C"] },
-    { q: "What type of energy does the sun produce?", correct: "Nuclear energy", wrong: ["Chemical energy", "Mechanical energy", "Electrical energy"] },
-    { q: "What is DNA short for?", correct: "Deoxyribonucleic acid", wrong: ["Dioxyribonucleic acid", "Diribonucleic acid", "Deoxyribose acid"] },
-    { q: "What is the process by which plants make food?", correct: "Photosynthesis", wrong: ["Respiration", "Fermentation", "Digestion"] },
-    { q: "How many planets are in our solar system?", correct: "8", wrong: ["7", "9", "10"] },
-    { q: "What is the study of earthquakes called?", correct: "Seismology", wrong: ["Geology", "Volcanology", "Meteorology"] },
+  17: [
+    // Science
+    {
+      q: "What is the speed of light?",
+      correct: "299,792,458 m/s",
+      wrong: ["300,000,000 m/s", "199,792,458 m/s", "399,792,458 m/s"],
+    },
+    {
+      q: "What is the powerhouse of the cell?",
+      correct: "Mitochondria",
+      wrong: ["Nucleus", "Ribosome", "Golgi Apparatus"],
+    },
+    {
+      q: "What planet has the most moons?",
+      correct: "Saturn",
+      wrong: ["Jupiter", "Uranus", "Neptune"],
+    },
+    {
+      q: "What is the hardest natural substance?",
+      correct: "Diamond",
+      wrong: ["Ruby", "Quartz", "Topaz"],
+    },
+    {
+      q: "What force keeps planets in orbit?",
+      correct: "Gravity",
+      wrong: ["Magnetism", "Friction", "Centripetal force"],
+    },
+    {
+      q: "How many chromosomes do humans have?",
+      correct: "46",
+      wrong: ["23", "48", "44"],
+    },
+    {
+      q: "What is H2O commonly known as?",
+      correct: "Water",
+      wrong: ["Hydrogen Peroxide", "Oxygen", "Salt water"],
+    },
+    {
+      q: "What is the center of an atom called?",
+      correct: "Nucleus",
+      wrong: ["Electron", "Proton", "Neutron"],
+    },
+    {
+      q: "Which gas makes up most of Earth's atmosphere?",
+      correct: "Nitrogen",
+      wrong: ["Oxygen", "Carbon Dioxide", "Argon"],
+    },
+    {
+      q: "What is the boiling point of water at sea level?",
+      correct: "100°C",
+      wrong: ["90°C", "110°C", "95°C"],
+    },
+    {
+      q: "What type of energy does the sun produce?",
+      correct: "Nuclear energy",
+      wrong: ["Chemical energy", "Mechanical energy", "Electrical energy"],
+    },
+    {
+      q: "What is DNA short for?",
+      correct: "Deoxyribonucleic acid",
+      wrong: [
+        "Dioxyribonucleic acid",
+        "Diribonucleic acid",
+        "Deoxyribose acid",
+      ],
+    },
+    {
+      q: "What is the process by which plants make food?",
+      correct: "Photosynthesis",
+      wrong: ["Respiration", "Fermentation", "Digestion"],
+    },
+    {
+      q: "How many planets are in our solar system?",
+      correct: "8",
+      wrong: ["7", "9", "10"],
+    },
+    {
+      q: "What is the study of earthquakes called?",
+      correct: "Seismology",
+      wrong: ["Geology", "Volcanology", "Meteorology"],
+    },
   ],
-  23: [ // History
-    { q: "In what year did the Berlin Wall fall?", correct: "1989", wrong: ["1987", "1991", "1985"] },
-    { q: "Who was the first President of the United States?", correct: "George Washington", wrong: ["John Adams", "Thomas Jefferson", "Benjamin Franklin"] },
-    { q: "Which empire was the largest in history?", correct: "British Empire", wrong: ["Roman Empire", "Mongol Empire", "Ottoman Empire"] },
-    { q: "In what year did World War I begin?", correct: "1914", wrong: ["1912", "1916", "1918"] },
-    { q: "Who discovered America?", correct: "Christopher Columbus", wrong: ["Amerigo Vespucci", "Leif Erikson", "Vasco da Gama"] },
-    { q: "What ancient wonder was located in Alexandria?", correct: "The Lighthouse of Alexandria", wrong: ["The Colossus", "The Hanging Gardens", "The Temple of Artemis"] },
-    { q: "When was the Magna Carta signed?", correct: "1215", wrong: ["1066", "1314", "1415"] },
-    { q: "Who was Napoleon Bonaparte?", correct: "French Emperor", wrong: ["British General", "Russian Tsar", "Spanish King"] },
-    { q: "In what year did the Titanic sink?", correct: "1912", wrong: ["1910", "1914", "1916"] },
-    { q: "Which country first landed on the moon?", correct: "United States", wrong: ["Soviet Union", "China", "United Kingdom"] },
-    { q: "Who wrote the Declaration of Independence?", correct: "Thomas Jefferson", wrong: ["George Washington", "John Adams", "Benjamin Franklin"] },
-    { q: "What was the name of Hitler's political party?", correct: "Nazi Party", wrong: ["Communist Party", "Fascist Party", "Conservative Party"] },
-    { q: "When did the French Revolution begin?", correct: "1789", wrong: ["1776", "1799", "1804"] },
-    { q: "Who was Cleopatra?", correct: "Queen of Egypt", wrong: ["Queen of Rome", "Queen of Greece", "Queen of Persia"] },
-    { q: "What year did the Cold War end?", correct: "1991", wrong: ["1989", "1985", "1993"] },
+  23: [
+    // History
+    {
+      q: "In what year did the Berlin Wall fall?",
+      correct: "1989",
+      wrong: ["1987", "1991", "1985"],
+    },
+    {
+      q: "Who was the first President of the United States?",
+      correct: "George Washington",
+      wrong: ["John Adams", "Thomas Jefferson", "Benjamin Franklin"],
+    },
+    {
+      q: "Which empire was the largest in history?",
+      correct: "British Empire",
+      wrong: ["Roman Empire", "Mongol Empire", "Ottoman Empire"],
+    },
+    {
+      q: "In what year did World War I begin?",
+      correct: "1914",
+      wrong: ["1912", "1916", "1918"],
+    },
+    {
+      q: "Who discovered America?",
+      correct: "Christopher Columbus",
+      wrong: ["Amerigo Vespucci", "Leif Erikson", "Vasco da Gama"],
+    },
+    {
+      q: "What ancient wonder was located in Alexandria?",
+      correct: "The Lighthouse of Alexandria",
+      wrong: ["The Colossus", "The Hanging Gardens", "The Temple of Artemis"],
+    },
+    {
+      q: "When was the Magna Carta signed?",
+      correct: "1215",
+      wrong: ["1066", "1314", "1415"],
+    },
+    {
+      q: "Who was Napoleon Bonaparte?",
+      correct: "French Emperor",
+      wrong: ["British General", "Russian Tsar", "Spanish King"],
+    },
+    {
+      q: "In what year did the Titanic sink?",
+      correct: "1912",
+      wrong: ["1910", "1914", "1916"],
+    },
+    {
+      q: "Which country first landed on the moon?",
+      correct: "United States",
+      wrong: ["Soviet Union", "China", "United Kingdom"],
+    },
+    {
+      q: "Who wrote the Declaration of Independence?",
+      correct: "Thomas Jefferson",
+      wrong: ["George Washington", "John Adams", "Benjamin Franklin"],
+    },
+    {
+      q: "What was the name of Hitler's political party?",
+      correct: "Nazi Party",
+      wrong: ["Communist Party", "Fascist Party", "Conservative Party"],
+    },
+    {
+      q: "When did the French Revolution begin?",
+      correct: "1789",
+      wrong: ["1776", "1799", "1804"],
+    },
+    {
+      q: "Who was Cleopatra?",
+      correct: "Queen of Egypt",
+      wrong: ["Queen of Rome", "Queen of Greece", "Queen of Persia"],
+    },
+    {
+      q: "What year did the Cold War end?",
+      correct: "1991",
+      wrong: ["1989", "1985", "1993"],
+    },
   ],
-  15: [ // Video Games
-    { q: "What company created Mario?", correct: "Nintendo", wrong: ["Sega", "Atari", "Sony"] },
-    { q: "In what game do you 'catch them all'?", correct: "Pokémon", wrong: ["Digimon", "Yo-kai Watch", "Monster Hunter"] },
-    { q: "What is the best-selling video game of all time?", correct: "Minecraft", wrong: ["Tetris", "GTA V", "Wii Sports"] },
-    { q: "Who is the main character in The Legend of Zelda?", correct: "Link", wrong: ["Zelda", "Ganon", "Impa"] },
-    { q: "What color is Sonic the Hedgehog?", correct: "Blue", wrong: ["Red", "Green", "Yellow"] },
-    { q: "In Fortnite, how many players compete in a match?", correct: "100", wrong: ["50", "150", "200"] },
-    { q: "What is the currency in Animal Crossing?", correct: "Bells", wrong: ["Coins", "Rupees", "Gold"] },
-    { q: "Which game features the character Master Chief?", correct: "Halo", wrong: ["Call of Duty", "Gears of War", "Destiny"] },
-    { q: "What year was the original PlayStation released?", correct: "1994", wrong: ["1993", "1995", "1996"] },
-    { q: "Which company makes the Xbox?", correct: "Microsoft", wrong: ["Sony", "Nintendo", "Sega"] },
-    { q: "What game popularized the battle royale genre?", correct: "PUBG", wrong: ["Fortnite", "Apex Legends", "H1Z1"] },
-    { q: "What is the max level in most Pokémon games?", correct: "100", wrong: ["50", "99", "150"] },
-    { q: "In Minecraft, what do you need to create a Nether portal?", correct: "Obsidian", wrong: ["Diamond", "Gold", "Lava"] },
-    { q: "What genre is Dark Souls?", correct: "Action RPG", wrong: ["Turn-based RPG", "Strategy", "Platformer"] },
-    { q: "Who is the villain in most Mario games?", correct: "Bowser", wrong: ["Wario", "Koopa", "Kamek"] },
+  15: [
+    // Video Games
+    {
+      q: "What company created Mario?",
+      correct: "Nintendo",
+      wrong: ["Sega", "Atari", "Sony"],
+    },
+    {
+      q: "In what game do you 'catch them all'?",
+      correct: "Pokémon",
+      wrong: ["Digimon", "Yo-kai Watch", "Monster Hunter"],
+    },
+    {
+      q: "What is the best-selling video game of all time?",
+      correct: "Minecraft",
+      wrong: ["Tetris", "GTA V", "Wii Sports"],
+    },
+    {
+      q: "Who is the main character in The Legend of Zelda?",
+      correct: "Link",
+      wrong: ["Zelda", "Ganon", "Impa"],
+    },
+    {
+      q: "What color is Sonic the Hedgehog?",
+      correct: "Blue",
+      wrong: ["Red", "Green", "Yellow"],
+    },
+    {
+      q: "In Fortnite, how many players compete in a match?",
+      correct: "100",
+      wrong: ["50", "150", "200"],
+    },
+    {
+      q: "What is the currency in Animal Crossing?",
+      correct: "Bells",
+      wrong: ["Coins", "Rupees", "Gold"],
+    },
+    {
+      q: "Which game features the character Master Chief?",
+      correct: "Halo",
+      wrong: ["Call of Duty", "Gears of War", "Destiny"],
+    },
+    {
+      q: "What year was the original PlayStation released?",
+      correct: "1994",
+      wrong: ["1993", "1995", "1996"],
+    },
+    {
+      q: "Which company makes the Xbox?",
+      correct: "Microsoft",
+      wrong: ["Sony", "Nintendo", "Sega"],
+    },
+    {
+      q: "What game popularized the battle royale genre?",
+      correct: "PUBG",
+      wrong: ["Fortnite", "Apex Legends", "H1Z1"],
+    },
+    {
+      q: "What is the max level in most Pokémon games?",
+      correct: "100",
+      wrong: ["50", "99", "150"],
+    },
+    {
+      q: "In Minecraft, what do you need to create a Nether portal?",
+      correct: "Obsidian",
+      wrong: ["Diamond", "Gold", "Lava"],
+    },
+    {
+      q: "What genre is Dark Souls?",
+      correct: "Action RPG",
+      wrong: ["Turn-based RPG", "Strategy", "Platformer"],
+    },
+    {
+      q: "Who is the villain in most Mario games?",
+      correct: "Bowser",
+      wrong: ["Wario", "Koopa", "Kamek"],
+    },
   ],
-  22: [ // Geography
-    { q: "What is the capital of Japan?", correct: "Tokyo", wrong: ["Osaka", "Kyoto", "Hiroshima"] },
-    { q: "Which country has the most natural lakes?", correct: "Canada", wrong: ["Russia", "United States", "Brazil"] },
-    { q: "What is the tallest mountain in the world?", correct: "Mount Everest", wrong: ["K2", "Mont Blanc", "Kilimanjaro"] },
-    { q: "Which country is the largest by area?", correct: "Russia", wrong: ["Canada", "China", "United States"] },
-    { q: "What is the capital of Brazil?", correct: "Brasília", wrong: ["São Paulo", "Rio de Janeiro", "Salvador"] },
-    { q: "Which desert is the largest in the world?", correct: "Sahara", wrong: ["Gobi", "Arabian", "Antarctic"] },
-    { q: "What river flows through Egypt?", correct: "Nile", wrong: ["Amazon", "Congo", "Tigris"] },
-    { q: "Which country has the most population?", correct: "India", wrong: ["China", "United States", "Indonesia"] },
-    { q: "What is the capital of France?", correct: "Paris", wrong: ["Lyon", "Marseille", "Bordeaux"] },
-    { q: "Which ocean is the smallest?", correct: "Arctic Ocean", wrong: ["Indian Ocean", "Atlantic Ocean", "Southern Ocean"] },
-    { q: "What country has the longest coastline?", correct: "Canada", wrong: ["Russia", "Australia", "Norway"] },
-    { q: "What is the capital of Germany?", correct: "Berlin", wrong: ["Munich", "Hamburg", "Frankfurt"] },
-    { q: "In which continent is the Amazon rainforest?", correct: "South America", wrong: ["Africa", "Asia", "Central America"] },
-    { q: "What is the smallest continent?", correct: "Australia", wrong: ["Europe", "Antarctica", "South America"] },
-    { q: "Which country owns Greenland?", correct: "Denmark", wrong: ["Norway", "Iceland", "Canada"] },
+  22: [
+    // Geography
+    {
+      q: "What is the capital of Japan?",
+      correct: "Tokyo",
+      wrong: ["Osaka", "Kyoto", "Hiroshima"],
+    },
+    {
+      q: "Which country has the most natural lakes?",
+      correct: "Canada",
+      wrong: ["Russia", "United States", "Brazil"],
+    },
+    {
+      q: "What is the tallest mountain in the world?",
+      correct: "Mount Everest",
+      wrong: ["K2", "Mont Blanc", "Kilimanjaro"],
+    },
+    {
+      q: "Which country is the largest by area?",
+      correct: "Russia",
+      wrong: ["Canada", "China", "United States"],
+    },
+    {
+      q: "What is the capital of Brazil?",
+      correct: "Brasília",
+      wrong: ["São Paulo", "Rio de Janeiro", "Salvador"],
+    },
+    {
+      q: "Which desert is the largest in the world?",
+      correct: "Sahara",
+      wrong: ["Gobi", "Arabian", "Antarctic"],
+    },
+    {
+      q: "What river flows through Egypt?",
+      correct: "Nile",
+      wrong: ["Amazon", "Congo", "Tigris"],
+    },
+    {
+      q: "Which country has the most population?",
+      correct: "India",
+      wrong: ["China", "United States", "Indonesia"],
+    },
+    {
+      q: "What is the capital of France?",
+      correct: "Paris",
+      wrong: ["Lyon", "Marseille", "Bordeaux"],
+    },
+    {
+      q: "Which ocean is the smallest?",
+      correct: "Arctic Ocean",
+      wrong: ["Indian Ocean", "Atlantic Ocean", "Southern Ocean"],
+    },
+    {
+      q: "What country has the longest coastline?",
+      correct: "Canada",
+      wrong: ["Russia", "Australia", "Norway"],
+    },
+    {
+      q: "What is the capital of Germany?",
+      correct: "Berlin",
+      wrong: ["Munich", "Hamburg", "Frankfurt"],
+    },
+    {
+      q: "In which continent is the Amazon rainforest?",
+      correct: "South America",
+      wrong: ["Africa", "Asia", "Central America"],
+    },
+    {
+      q: "What is the smallest continent?",
+      correct: "Australia",
+      wrong: ["Europe", "Antarctica", "South America"],
+    },
+    {
+      q: "Which country owns Greenland?",
+      correct: "Denmark",
+      wrong: ["Norway", "Iceland", "Canada"],
+    },
   ],
-  18: [ // Computers
-    { q: "What does CPU stand for?", correct: "Central Processing Unit", wrong: ["Computer Processing Unit", "Central Program Unit", "Core Processing Unit"] },
-    { q: "Who founded Microsoft?", correct: "Bill Gates", wrong: ["Steve Jobs", "Mark Zuckerberg", "Elon Musk"] },
-    { q: "What does HTML stand for?", correct: "HyperText Markup Language", wrong: ["HyperText Machine Language", "HighText Markup Language", "HyperText Model Language"] },
-    { q: "What programming language is known for web development?", correct: "JavaScript", wrong: ["Python", "Java", "C++"] },
-    { q: "What is the most popular operating system?", correct: "Windows", wrong: ["macOS", "Linux", "Android"] },
-    { q: "What does RAM stand for?", correct: "Random Access Memory", wrong: ["Read Access Memory", "Random Application Memory", "Read Application Memory"] },
-    { q: "Who invented the World Wide Web?", correct: "Tim Berners-Lee", wrong: ["Bill Gates", "Steve Jobs", "Vint Cerf"] },
-    { q: "What is the binary representation of the number 5?", correct: "101", wrong: ["110", "100", "111"] },
-    { q: "What does URL stand for?", correct: "Uniform Resource Locator", wrong: ["Universal Resource Locator", "Unified Resource Link", "Universal Reference Link"] },
-    { q: "What company created the Android operating system?", correct: "Google", wrong: ["Apple", "Samsung", "Microsoft"] },
-    { q: "What is the shortcut to copy in most applications?", correct: "Ctrl+C", wrong: ["Ctrl+V", "Ctrl+X", "Ctrl+Z"] },
-    { q: "Which programming language was created by Guido van Rossum?", correct: "Python", wrong: ["Ruby", "Perl", "Java"] },
-    { q: "What does USB stand for?", correct: "Universal Serial Bus", wrong: ["Unified Serial Bus", "Universal System Bus", "Unified System Bus"] },
-    { q: "What is the file extension for a Python file?", correct: ".py", wrong: [".python", ".pt", ".pyc"] },
-    { q: "What does SSD stand for?", correct: "Solid State Drive", wrong: ["Super Speed Drive", "Static Storage Device", "System Storage Drive"] },
+  18: [
+    // Computers
+    {
+      q: "What does CPU stand for?",
+      correct: "Central Processing Unit",
+      wrong: [
+        "Computer Processing Unit",
+        "Central Program Unit",
+        "Core Processing Unit",
+      ],
+    },
+    {
+      q: "Who founded Microsoft?",
+      correct: "Bill Gates",
+      wrong: ["Steve Jobs", "Mark Zuckerberg", "Elon Musk"],
+    },
+    {
+      q: "What does HTML stand for?",
+      correct: "HyperText Markup Language",
+      wrong: [
+        "HyperText Machine Language",
+        "HighText Markup Language",
+        "HyperText Model Language",
+      ],
+    },
+    {
+      q: "What programming language is known for web development?",
+      correct: "JavaScript",
+      wrong: ["Python", "Java", "C++"],
+    },
+    {
+      q: "What is the most popular operating system?",
+      correct: "Windows",
+      wrong: ["macOS", "Linux", "Android"],
+    },
+    {
+      q: "What does RAM stand for?",
+      correct: "Random Access Memory",
+      wrong: [
+        "Read Access Memory",
+        "Random Application Memory",
+        "Read Application Memory",
+      ],
+    },
+    {
+      q: "Who invented the World Wide Web?",
+      correct: "Tim Berners-Lee",
+      wrong: ["Bill Gates", "Steve Jobs", "Vint Cerf"],
+    },
+    {
+      q: "What is the binary representation of the number 5?",
+      correct: "101",
+      wrong: ["110", "100", "111"],
+    },
+    {
+      q: "What does URL stand for?",
+      correct: "Uniform Resource Locator",
+      wrong: [
+        "Universal Resource Locator",
+        "Unified Resource Link",
+        "Universal Reference Link",
+      ],
+    },
+    {
+      q: "What company created the Android operating system?",
+      correct: "Google",
+      wrong: ["Apple", "Samsung", "Microsoft"],
+    },
+    {
+      q: "What is the shortcut to copy in most applications?",
+      correct: "Ctrl+C",
+      wrong: ["Ctrl+V", "Ctrl+X", "Ctrl+Z"],
+    },
+    {
+      q: "Which programming language was created by Guido van Rossum?",
+      correct: "Python",
+      wrong: ["Ruby", "Perl", "Java"],
+    },
+    {
+      q: "What does USB stand for?",
+      correct: "Universal Serial Bus",
+      wrong: [
+        "Unified Serial Bus",
+        "Universal System Bus",
+        "Unified System Bus",
+      ],
+    },
+    {
+      q: "What is the file extension for a Python file?",
+      correct: ".py",
+      wrong: [".python", ".pt", ".pyc"],
+    },
+    {
+      q: "What does SSD stand for?",
+      correct: "Solid State Drive",
+      wrong: [
+        "Super Speed Drive",
+        "Static Storage Device",
+        "System Storage Drive",
+      ],
+    },
   ],
 };
 
@@ -1198,14 +1640,13 @@ app.post("/game/start", async (req, res) => {
 
     const existCheck = await pool.query(
       "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId]
+      [req.user.id, gameId],
     );
-    
-    
+
     if (existCheck.rows.length === 0) {
       await pool.query(
         "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
-        [req.user.id, wallet.toLowerCase(), gameId, chainId]
+        [req.user.id, wallet.toLowerCase(), gameId, chainId],
       );
     }
 
@@ -1215,22 +1656,25 @@ app.post("/game/start", async (req, res) => {
       WHERE contract_game_id = $1
       AND chain_id = $2
       `,
-      [gameId, chainId]
+      [gameId, chainId],
     );
-    
+
     if (game.rows.length > 0) {
       const entryFee = game.rows[0].entry_fee;
-      await pool.query(`
+      await pool.query(
+        `
         UPDATE platform_stats
         SET total_volume = total_volume + $1
         WHERE id = 1
-        `, [entryFee]);
-      }
+        `,
+        [entryFee],
+      );
+    }
 
     // Re-fetch to get the id whether it was just inserted or already existed
     const sessionRow = await pool.query(
       "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId]
+      [req.user.id, gameId],
     );
     const sessionId = sessionRow.rows[0]?.id;
 
@@ -1251,77 +1695,93 @@ app.post("/game/start", async (req, res) => {
     // ✅ Fetch questions SERVER-SIDE — correct answers never sent to client
     const { correctAnswers } = req.body;
 
-if (correctAnswers && Array.isArray(correctAnswers) && correctAnswers.length >= 5) {
-  // Client sent correct answers — store them server-side for scoring
-  for (const qa of correctAnswers) {
-    await pool.query(
-      `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+    if (
+      correctAnswers &&
+      Array.isArray(correctAnswers) &&
+      correctAnswers.length >= 5
+    ) {
+      // Client sent correct answers — store them server-side for scoring
+      for (const qa of correctAnswers) {
+        await pool.query(
+          `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
        VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-      [sessionId, qa.index, qa.correct, "client-fetched", "[]"]
-    );
-  }
-  // ✅ Return ok — questions already rendered client-side
-  return res.json({ ok: true, questions: [] });
-}
+          [sessionId, qa.index, qa.correct, "client-fetched", "[]"],
+        );
+      }
+      // ✅ Return ok — questions already rendered client-side
+      return res.json({ ok: true, questions: [] });
+    }
 
-// ✅ Server-side fetch fallback (when client didn't send correctAnswers)
-const catId = categoryId || 9;
-const diff = parseInt(difficulty) || 0;
-const diffParam = diff > 0 ? `&difficulty=${["","easy","medium","hard"][diff]}` : "";
+    // ✅ Server-side fetch fallback (when client didn't send correctAnswers)
+    const catId = categoryId || 9;
+    const diff = parseInt(difficulty) || 0;
+    const diffParam =
+      diff > 0 ? `&difficulty=${["", "easy", "medium", "hard"][diff]}` : "";
 
-let useLocal = false;
-let qtResults = [];
+    let useLocal = false;
+    let qtResults = [];
 
-try {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  const qtRes = await fetch(
-    `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
-    { signal: controller.signal }
-  );
-  clearTimeout(timeout);
-  const qtData = await qtRes.json();
-  if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
-    qtResults = qtData.results.map(q => ({
-      question: decodeURIComponent(q.question),
-      correct: decodeURIComponent(q.correct_answer),
-      incorrect: q.incorrect_answers.map(a => decodeURIComponent(a)),
-      difficulty: q.difficulty,
-    }));
-  } else { useLocal = true; }
-} catch (e) { useLocal = true; }
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const qtRes = await fetch(
+        `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
+        { signal: controller.signal },
+      );
+      clearTimeout(timeout);
+      const qtData = await qtRes.json();
+      if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
+        qtResults = qtData.results.map((q) => ({
+          question: decodeURIComponent(q.question),
+          correct: decodeURIComponent(q.correct_answer),
+          incorrect: q.incorrect_answers.map((a) => decodeURIComponent(a)),
+          difficulty: q.difficulty,
+        }));
+      } else {
+        useLocal = true;
+      }
+    } catch (e) {
+      useLocal = true;
+    }
 
-if (useLocal) {
-  const localQs = getLocalQuestions(catId, diff, 10);
-  qtResults = localQs.map(q => ({
-    question: q.q, correct: q.correct, incorrect: q.wrong,
-    difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : "easy",
-  }));
-}
+    if (useLocal) {
+      const localQs = getLocalQuestions(catId, diff, 10);
+      qtResults = localQs.map((q) => ({
+        question: q.q,
+        correct: q.correct,
+        incorrect: q.wrong,
+        difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : "easy",
+      }));
+    }
 
-if (!qtResults.length) {
-  return res.status(503).json({ error: "Could not load questions." });
-}
+    if (!qtResults.length) {
+      return res.status(503).json({ error: "Could not load questions." });
+    }
 
-const clientQuestions = [];
-for (let i = 0; i < qtResults.length; i++) {
-  const q = qtResults[i];
-  const options = [q.correct, ...q.incorrect].sort(() => Math.random() - 0.5);
-  await pool.query(
-    `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+    const clientQuestions = [];
+    for (let i = 0; i < qtResults.length; i++) {
+      const q = qtResults[i];
+      const options = [q.correct, ...q.incorrect].sort(
+        () => Math.random() - 0.5,
+      );
+      await pool.query(
+        `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
      VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-    [sessionId, i, q.correct, q.question, JSON.stringify(options)]
-  );
-  clientQuestions.push({ questionIndex: i, question: q.question, options, diff: q.difficulty });
-}
-return res.json({ ok: true, questions: clientQuestions });
-
+        [sessionId, i, q.correct, q.question, JSON.stringify(options)],
+      );
+      clientQuestions.push({
+        questionIndex: i,
+        question: q.question,
+        options,
+        diff: q.difficulty,
+      });
+    }
+    return res.json({ ok: true, questions: clientQuestions });
   } catch (e) {
     console.error("Game start error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
-
 
 // =============================================================================
 // SUBMIT SCORE
@@ -1377,24 +1837,24 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     const p = makeLitvmProvider();
     return new ethers.Contract(LITVM_CONTRACT_ADDRESS, CONTRACT_ABI, p);
   }
-  
+
   const played = await pool.query(
     `SELECT finished_at
     FROM game_sessions
     WHERE user_id=$1
     AND game_id=$2`,
-    [req.user.id, gameId]
+    [req.user.id, gameId],
   );
-  
+
   if (played.rows[0]?.finished_at) {
     const finishedAt = new Date(played.rows[0].finished_at).getTime();
     const now = Date.now();
-    
+
     const diff = now - finishedAt;
-    
+
     if (diff > 3600000) {
       return res.status(400).json({
-        error: "Submission window expired"
+        error: "Submission window expired",
       });
     }
   }
@@ -1479,12 +1939,12 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       try {
         await pool.query(
           "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
-          [req.user.id, effectiveWallet, gameId, chainId]
+          [req.user.id, effectiveWallet, gameId, chainId],
         );
         // Re-fetch after insert
         sessionCheck = await pool.query(
           "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-          [req.user.id, gameId]
+          [req.user.id, gameId],
         );
       } catch (_) {}
     }
@@ -1532,7 +1992,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
           AND game_id=$3
           AND chain_id=$4
           `,
-          [score, req.user.id, gameId, chainId]
+          [score, req.user.id, gameId, chainId],
         );
         return res.json({
           score: cachedScore,
@@ -1544,72 +2004,75 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Score already submitted" });
     }
 
-    
     // Always fetch fresh onchain nonce — stale nonce causes estimateGas revert
     let nonce;
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
         nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
         await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
-          nonce.toString(), req.user.id,
+          nonce.toString(),
+          req.user.id,
         ]);
         console.log(`✅ Onchain nonce: ${nonce} (attempt ${attempt})`);
         break;
       } catch (e) {
         console.warn(`nonce attempt ${attempt}/4 failed: ${e.message}`);
         if (attempt === 4) {
-          return res.status(503).json({ error: "Could not fetch nonce. Try again." });
+          return res
+            .status(503)
+            .json({ error: "Could not fetch nonce. Try again." });
         }
-        await new Promise(r => setTimeout(r, 1000 * attempt));
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
     }
-    
+
     // Check game is still open before signing
     try {
       const gameStatus = await activeRpcCall(
         (c) => c.getPlayerStatus(gameId, effectiveWallet),
-        "recheck"
+        "recheck",
       );
       if (gameStatus[1] === true) {
-        return res.status(400).json({ error: "Score already submitted onchain" });
+        return res
+          .status(400)
+          .json({ error: "Score already submitted onchain" });
       }
     } catch (_) {}
     const sessionId = sessionCheck.rows[0]?.id;
     if (!sessionId) {
-      return res.status(400).json({ error: "No game session found. Play the game first." });
+      return res
+        .status(400)
+        .json({ error: "No game session found. Play the game first." });
     }
 
     const sessionData = await pool.query(
       `SELECT started_at, finished
       FROM game_sessions
       WHERE id=$1`,
-      [sessionId]
+      [sessionId],
     );
-    
+
     if (!sessionData.rows.length) {
       return res.status(400).json({
         error: "Session not found",
       });
     }
-    
+
     if (sessionData.rows[0].finished) {
       return res.status(400).json({
-         error: "Game already submitted",
-        });
-      }
-      
-      const startedAt = new Date(
-        sessionData.rows[0].started_at
-      ).getTime();
-      const totalSeconds =
-      (Date.now() - startedAt) / 1000;
-      
-      // Minimum realistic time
-      if (totalSeconds < 15) {
-        return res.status(400).json({
-          error: "Impossible completion speed detected",
-        });
-      }
+        error: "Game already submitted",
+      });
+    }
+
+    const startedAt = new Date(sessionData.rows[0].started_at).getTime();
+    const totalSeconds = (Date.now() - startedAt) / 1000;
+
+    // Minimum realistic time
+    if (totalSeconds < 15) {
+      return res.status(400).json({
+        error: "Impossible completion speed detected",
+      });
+    }
 
     const sessionAge = (Date.now() - new Date(startedAt).getTime()) / 1000;
 
@@ -1625,7 +2088,10 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Too many answers" });
     }
     for (const ans of answers) {
-      if (typeof ans.questionIndex !== "number" && typeof ans.questionIndex !== "string") {
+      if (
+        typeof ans.questionIndex !== "number" &&
+        typeof ans.questionIndex !== "string"
+      ) {
         return res.status(400).json({ error: "Invalid answer format" });
       }
       if (ans.selected !== null && typeof ans.selected !== "string") {
@@ -1647,11 +2113,15 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     // ✅ Answer timestamp gap check — blocks bots answering in <300ms
-    const sorted = [...answers].sort((a, b) => (a.answeredAt || 0) - (b.answeredAt || 0));
+    const sorted = [...answers].sort(
+      (a, b) => (a.answeredAt || 0) - (b.answeredAt || 0),
+    );
     for (let i = 1; i < sorted.length; i++) {
       const gap = (sorted[i].answeredAt || 0) - (sorted[i - 1].answeredAt || 0);
       if (gap > 0 && gap < 300) {
-        return res.status(400).json({ error: "Bot-like answering speed detected" });
+        return res
+          .status(400)
+          .json({ error: "Bot-like answering speed detected" });
       }
     }
 
@@ -1660,12 +2130,13 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
       [sessionId],
     );
-    
-    
+
     let score = 0;
-    
-   if (storedQs.rows.length === 0) {
-      return res.status(400).json({ error: "No questions found. Play the game first." });
+
+    if (storedQs.rows.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No questions found. Play the game first." });
     } else {
       // ✅ Validate answer count — prevent skipping questions
       if (answers.length < storedQs.rows.length * 0.5) {
@@ -1673,72 +2144,73 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       }
       // ✅ Server-side scoring — q_index coerced, speed bonus capped
       for (const stored of storedQs.rows) {
-        const userAnswer = answers.find(a => Number(a.questionIndex) === Number(stored.q_index));
+        const userAnswer = answers.find(
+          (a) => Number(a.questionIndex) === Number(stored.q_index),
+        );
         if (!userAnswer || !userAnswer.selected) continue;
         if (userAnswer.selected === stored.correct_answer) {
           const tl = Math.max(0, Math.min(10, userAnswer.timeLeft || 0)); // cap at 10s not 15
-          score += 100 + Math.floor((tl / 15) * 50);                      // max ~133 per questio
+          score += 100 + Math.floor((tl / 15) * 50); // max ~133 per questio
         }
       }
       score = Math.min(score, 1500);
       if (score <= 0) {
         return res.status(400).json({
-          error: "Invalid score"
+          error: "Invalid score",
         });
       }
     }
-    
+
     const message = ethers.solidityPackedKeccak256(
       ["address", "uint256", "uint256", "uint256"],
       [effectiveWallet, gameId, score, nonce],
     );
-    
+
     const signature = await verifierWallet.signMessage(
       ethers.getBytes(message),
     );
-    
+
     await pool.query(
-  `UPDATE game_sessions
+      `UPDATE game_sessions
   SET finished=true,
   score=$1,
   finished_at=NOW()
   WHERE user_id=$2
   AND game_id=$3
   AND chain_id=$4`,
-  [score, req.user.id, gameId, chainId]
-);
+      [score, req.user.id, gameId, chainId],
+    );
 
-const game = await pool.query(
-  `
+    const game = await pool.query(
+      `
   SELECT entry_fee
   FROM games
   WHERE contract_game_id = $1
   AND chain_id = $2
   `,
-  [gameId, chainId]
-);
+      [gameId, chainId],
+    );
 
-if (game.rows.length > 0) {
-  await pool.query(
-    `
+    if (game.rows.length > 0) {
+      await pool.query(
+        `
     UPDATE platform_stats
     SET total_volume = total_volume + $1
     WHERE id = 1
     `,
-    [game.rows[0].entry_fee]
-  );
-}
-    
-    
+        [game.rows[0].entry_fee],
+      );
+    }
+
     // Increment DB nonce as fallback backup
     await pool.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
       req.user.id,
     ]);
-    
+
     console.log(
       `✅ Score: game=${gameId} score=${score} wallet=${effectiveWallet}`,
     );
-    
+
     res.json({ score, signature, nonce: nonce.toString() });
   } catch (e) {
     console.error("Submit error:", e.message);
@@ -1872,12 +2344,15 @@ app.get("/health", (req, res) =>
 
 // Self-ping to prevent Render sleep
 if (process.env.NODE_ENV === "production") {
-  setInterval(async () => {
-    try {
-      await fetch(`https://name-triviafi-backend.onrender.com/health`);
-      console.log("🏓 Self-ping OK");
-    } catch (_) {}
-  }, 8 * 60 * 1000); // every 8 minutes
+  setInterval(
+    async () => {
+      try {
+        await fetch(`https://name-triviafi-backend.onrender.com/health`);
+        console.log("🏓 Self-ping OK");
+      } catch (_) {}
+    },
+    8 * 60 * 1000,
+  ); // every 8 minutes
 }
 
 // =============================================================================

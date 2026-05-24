@@ -51,6 +51,13 @@ async function initAuth() {
       toast("✅ Logged in as @" + d.user.username, "success");
     }
     history.replaceState({}, "", location.pathname);
+  } else if (auth === "google_taken") {
+    toast(
+      "⚠️ This Google account is already linked to another wallet. Please use a different Google account.",
+      "error",
+    );
+
+    history.replaceState({}, "", location.pathname);
   }
 }
 
@@ -79,8 +86,8 @@ function sanitizeText(str) {
 
 function renderAuthState() {
   const u = currentProfile,
-  hasGoogle = !!(u && u.google_id), 
-  hasWallet = !!userAddress,
+    hasGoogle = !!(u && u.google_id),
+    hasWallet = !!userAddress,
     isLoggedIn = hasGoogle || hasWallet;
   const trigger = document.getElementById("profileTrigger");
   const connectBtn = document.getElementById("connectBtn");
@@ -100,21 +107,21 @@ function renderAuthState() {
     if (gBtn) gBtn.style.display = "flex";
   }
   const ha = document.getElementById("headerAvatar"),
-  hn = document.getElementById("headerName");
+    hn = document.getElementById("headerName");
   if (ha && hn) {
     const hasName = u && (u.username || u.display_name);
     const init = hasName
-    ? (u.username || u.display_name)[0].toUpperCase()
-    : userAddress
-    ? userAddress.slice(2, 4).toUpperCase()
-    : "?";
+      ? (u.username || u.display_name)[0].toUpperCase()
+      : userAddress
+        ? userAddress.slice(2, 4).toUpperCase()
+        : "?";
     ha.innerHTML = u?.avatar
-    ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-    : init;
+      ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+      : init;
     // Never show "@null" or "@undefined" — fall back to wallet address
     hn.textContent = hasName
-    ? "@" + (u.username || u.display_name)
-    : fmt(userAddress);
+      ? "@" + (u.username || u.display_name)
+      : fmt(userAddress);
   }
   const pa = document.getElementById("pdAvatarBig"),
     pn = document.getElementById("pdName"),
@@ -122,20 +129,20 @@ function renderAuthState() {
   if (pa) {
     const hasName = u && (u.username || u.display_name);
     pa.innerHTML = u?.avatar
-    ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-    : hasName
-    ? (u.username || u.display_name)[0].toUpperCase()
-    : userAddress
-    ? userAddress.slice(2, 4).toUpperCase()
-    : "?";
+      ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+      : hasName
+        ? (u.username || u.display_name)[0].toUpperCase()
+        : userAddress
+          ? userAddress.slice(2, 4).toUpperCase()
+          : "?";
   }
   if (pn) {
     const hasName = u && (u.username || u.display_name);
     pn.textContent = hasName
-    ? "@" + (u.username || u.display_name)
-    : userAddress
-    ? fmt(userAddress)
-    : "—";
+      ? "@" + (u.username || u.display_name)
+      : userAddress
+        ? fmt(userAddress)
+        : "—";
   }
   if (pe)
     pe.textContent =
@@ -145,18 +152,19 @@ function renderAuthState() {
   const pwl = document.getElementById("pdWalletLabel"),
     pws = document.getElementById("pdWalletStatus");
   if (pgl && pgs) {
-  pgl.textContent = u ? u.email : "Google Account";
-  if (hasGoogle) {
-    pgs.className = "conn-linked";
-    pgs.textContent = "✓ Linked";
-    pgs.onclick = null;
-  } else {
-    pgs.className = "conn-link-btn";
-    pgs.textContent = "+ Connect Gmail";
-    pgs.style.cssText = "font-size:.7rem;background:rgba(66,133,244,.1);color:#4285F4;border:1px solid rgba(66,133,244,.3);padding:3px 10px;border-radius:10px;cursor:pointer;font-weight:700";
-    pgs.onclick = () => loginWithGoogle();
+    pgl.textContent = u ? u.email : "Google Account";
+    if (hasGoogle) {
+      pgs.className = "conn-linked";
+      pgs.textContent = "✓ Linked";
+      pgs.onclick = null;
+    } else {
+      pgs.className = "conn-link-btn";
+      pgs.textContent = "+ Connect Gmail";
+      pgs.style.cssText =
+        "font-size:.7rem;background:rgba(66,133,244,.1);color:#4285F4;border:1px solid rgba(66,133,244,.3);padding:3px 10px;border-radius:10px;cursor:pointer;font-weight:700";
+      pgs.onclick = () => loginWithGoogle();
+    }
   }
-}
   if (pwl && pws) {
     pwl.textContent = hasWallet ? fmt(userAddress) : "Wallet";
     if (hasWallet) {
@@ -191,15 +199,15 @@ async function startGame() {
   // 🔒 BLOCK replay after refresh
   if (
     sessionStorage.getItem(`playing_${currentGameId}`) ||
-    localStorage.getItem(`played_${currentGameId}`)) {
+    localStorage.getItem(`played_${currentGameId}`)
+  ) {
     toast("You already played this game!", "error");
 
     showScreen("screenResults");
 
     score = loadSavedScore(currentGameId);
 
-    document.getElementById("resScore").textContent =
-      score || "...";
+    document.getElementById("resScore").textContent = score || "...";
 
     document.getElementById("resSub").textContent =
       `Already played · ${score || "pending"} pts`;
@@ -264,10 +272,10 @@ async function startGame() {
     alert("Server error. Try again.");
     return;
   }
-  
-  // ✅ Mark as started immediately 
+
+  // ✅ Mark as started immediately
   sessionStorage.setItem(`playing_${currentGameId}`, "1");
-  
+
   // ▶️ START GAME
   showScreen("screenGame");
   loadQuestions();
@@ -295,11 +303,10 @@ function selectAnswer(questionId, selected, timeLeft) {
 // ========================
 function loadQuestions() {
   const q = questions[currentIndex];
-  
-  if (!q) {
 
+  if (!q) {
     submitScore();
-    
+
     return;
   }
 
@@ -349,24 +356,23 @@ async function submitScore() {
       toast(data.error || "Submit failed", "error");
       return;
     }
-    
+
     // ✅ Show score instantly
     document.getElementById("resScore").textContent = data.score;
-    
-    
+
     const tx = await contract.submitScore(
       currentGameId,
       data.score,
       data.nonce,
       data.signature,
     );
-    
+
     toast("⛓️ Waiting for blockchain confirmation...", "info");
-    
+
     await tx.wait();
     markSubmitted(currentGameId);
     saveScore(currentGameId, data.score);
-    
+
     toast("✅ Score submitted onchain!", "success");
   } catch (e) {
     console.error(e);
@@ -417,9 +423,8 @@ async function loadGameStatus(gameId) {
 async function loadDropdownStats() {
   if (!userAddress) return;
   try {
-    const [played, won, earned] = await readContract.getPlayerStats(
-      userAddress,
-    );
+    const [played, won, earned] =
+      await readContract.getPlayerStats(userAddress);
     const map = {
       dpPlayed: played,
       dpWon: won,
@@ -962,12 +967,11 @@ async function getGame(id) {
       readContract.getGame(id),
 
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 4000)
+        setTimeout(() => reject(new Error("timeout")), 4000),
       ),
     ]);
 
     return gameToArray(raw);
-
   } catch (e) {
     console.warn("Game load failed:", id);
 
@@ -1022,9 +1026,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   injectStreakStyles();
   initAuth();
   setInterval(() => {
-  const screen = document.querySelector(".screen.active");
-  if (screen?.id === "screenLobby") loadGames();
-}, 10000);
+    const screen = document.querySelector(".screen.active");
+    if (screen?.id === "screenLobby") loadGames();
+  }, 10000);
 });
 
 function checkUrlGame() {
@@ -1208,9 +1212,12 @@ async function connectWallet() {
     }
 
     const netBadge = document.querySelector(".pd-online");
-    if (netBadge) netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
+    if (netBadge)
+      netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
 
-    try { platformAddress = await readContract.platform(); } catch (_) {}
+    try {
+      platformAddress = await readContract.platform();
+    } catch (_) {}
 
     const message = `Login to ${activeNet.name}`;
     const signature = await signer.signMessage(message);
@@ -1218,16 +1225,23 @@ async function connectWallet() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ wallet: userAddress, signature, networkName: activeNet.name }),
+      body: JSON.stringify({
+        wallet: userAddress,
+        signature,
+        networkName: activeNet.name,
+      }),
     });
     const authData = await authRes.json();
 
-    const meData = await fetch(`${BACKEND}/auth/me`, { credentials: "include" }).then(r => r.json());
+    const meData = await fetch(`${BACKEND}/auth/me`, {
+      credentials: "include",
+    }).then((r) => r.json());
     if (meData.user) currentProfile = meData.user;
     if (authData.user) currentProfile = authData.user;
 
     const activeScreen = document.querySelector(".screen.active");
-    if (activeScreen?.id === "screenJoin" && currentGameId) await openGame(currentGameId);
+    if (activeScreen?.id === "screenJoin" && currentGameId)
+      await openGame(currentGameId);
 
     renderAuthState();
     toast("✅ Wallet connected!", "success");
@@ -1235,7 +1249,10 @@ async function connectWallet() {
     loadGames();
     loadMyStats();
     if (currentGameId) openGame(currentGameId);
-    if (window.pendingGameId) { openGame(window.pendingGameId); window.pendingGameId = null; }
+    if (window.pendingGameId) {
+      openGame(window.pendingGameId);
+      window.pendingGameId = null;
+    }
     updateNetBar();
   } catch (e) {
     toast("Connection failed: " + e.message, "error");
@@ -1250,15 +1267,16 @@ function updateNetBar() {
   // Update active state in dropdown
   const arcOpt = document.getElementById("netOptArc");
   const litvmOpt = document.getElementById("netOptLitvm");
-  if (arcOpt)   arcOpt.className  = "net-opt" + (isArc  ? " net-opt-active" : "");
-  if (litvmOpt) litvmOpt.className = "net-opt" + (!isArc ? " net-opt-active" : "");
+  if (arcOpt) arcOpt.className = "net-opt" + (isArc ? " net-opt-active" : "");
+  if (litvmOpt)
+    litvmOpt.className = "net-opt" + (!isArc ? " net-opt-active" : "");
   // Update entry fee input
   const feeLabel = document.getElementById("entryFeeLabel");
   const feeInput = document.getElementById("cFee");
   if (feeLabel) feeLabel.textContent = `Entry Fee (${activeNet.symbol})`;
   if (feeInput) {
     feeInput.placeholder = activeNet.isNative ? "e.g. 0.01" : "e.g. 1";
-    feeInput.min  = activeNet.isNative ? "0.01" : "1";
+    feeInput.min = activeNet.isNative ? "0.01" : "1";
     feeInput.step = activeNet.isNative ? "0.001" : "0.01";
   }
 }
@@ -1426,7 +1444,6 @@ async function updateTicker() {
         g[12] &&
         g[12][0] !== "0x0000000000000000000000000000000000000000"
       ) {
-        
         // ✅ Only show a few ended games
         if (items.length < 6) {
           items.push(
@@ -1499,27 +1516,27 @@ async function loadGames() {
     const totalCount = arcCount + litvmCount;
     document.getElementById("gTotal").textContent = totalCount;
 
-   if (totalCount === 0) {
-  grid.innerHTML = `
+    if (totalCount === 0) {
+      grid.innerHTML = `
     <p style="color:var(--muted);text-align:center;padding:30px">
       No games yet! Create the first one.
     </p>
   `;
 
-  document.getElementById("gPool").textContent = "$0";
-  document.getElementById("gActive").textContent = "0";
+      document.getElementById("gPool").textContent = "$0";
+      document.getElementById("gActive").textContent = "0";
 
-  gamesLoading = false;
+      gamesLoading = false;
 
-  return;
-}
+      return;
+    }
     const LIMIT = 100;
     const BATCH = 5;
     allGames = [];
     let totalVolume = 0n,
-    arcPool = 0n,
-    litvmPool = 0n,
-    activeCount = 0;
+      arcPool = 0n,
+      litvmPool = 0n,
+      activeCount = 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
     // Fetch Arc games
@@ -1587,15 +1604,11 @@ async function loadGames() {
     const litvmPoolFmt = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(
       4,
     );
-   const totalUSDC = parseFloat(
-  ethers.formatUnits(arcPool, 6)
-).toFixed(2);
+    const totalUSDC = parseFloat(ethers.formatUnits(arcPool, 6)).toFixed(2);
 
-const totalZKLTC = parseFloat(
-  ethers.formatUnits(litvmPool, 18)
-).toFixed(4);
+    const totalZKLTC = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(4);
 
-document.getElementById("gPool").innerHTML = `
+    document.getElementById("gPool").innerHTML = `
   <span style="color:var(--accent)">
     $${totalUSDC} USDC
   </span>
@@ -1617,7 +1630,7 @@ document.getElementById("gPool").innerHTML = `
     renderGames();
     updateTicker();
     gamesLoading = false;
-    } catch (e) {
+  } catch (e) {
     gamesLoading = false;
 
     grid.innerHTML = `
@@ -1888,8 +1901,8 @@ function renderGames() {
 
     html += `<div class="gcard" onclick="${clickAction}">
       <div class="gcard-title">#${i} ${sanitizeText(name)} <span class="badge ${
-      STATUS_BADGE[s]
-    }">${STATUS_LABEL[s]}</span>${agentBadge}${chainBadge}</div>
+        STATUS_BADGE[s]
+      }">${STATUS_LABEL[s]}</span>${agentBadge}${chainBadge}</div>
       <div style="font-size:.75rem;color:${phaseColor};margin-bottom:8px;font-weight:600">${phase}</div>
       <div class="gmeta">💰 Entry: <strong>${feeFormatted} ${tokenSymbol}</strong> | 🏆 Pool: <strong>${poolFormatted} ${tokenSymbol}</strong></div>
       <div class="gmeta">👥 <strong>${n}/${maxPlayers}</strong> joined | ✅ <strong>${finishedCount}</strong> done</div>
@@ -1940,20 +1953,24 @@ async function openGameReadOnly(gameId, gameChainId) {
       status,
     ] = g;
     const gameNet = NETWORKS[gameChainId] || activeNet;
-  const gameDecimals = gameNet.decimals;
-  const gameSymbol = gameNet.symbol;
-  const dp = gameDecimals === 18 ? 4 : 2;
-  const s = Number(status);
-  const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(dp);
-  const pool = parseFloat(ethers.formatUnits(prizePool, gameDecimals)).toFixed(dp);
-  const n = Number(playerCount);
+    const gameDecimals = gameNet.decimals;
+    const gameSymbol = gameNet.symbol;
+    const dp = gameDecimals === 18 ? 4 : 2;
+    const s = Number(status);
+    const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(
+      dp,
+    );
+    const pool = parseFloat(
+      ethers.formatUnits(prizePool, gameDecimals),
+    ).toFixed(dp);
+    const n = Number(playerCount);
     const dist = parseFloat(pool) * 0.95;
     const prizes =
       n === 1
         ? [dist, 0, 0]
         : n === 2
-        ? [dist * 0.7, dist * 0.3, 0]
-        : [dist * 0.6, dist * 0.25, dist * 0.15];
+          ? [dist * 0.7, dist * 0.3, 0]
+          : [dist * 0.6, dist * 0.25, dist * 0.15];
     let myWinnerPos = -1,
       myPrize = 0,
       alreadyClaimed = false;
@@ -1974,9 +1991,8 @@ async function openGameReadOnly(gameId, gameChainId) {
     }
     let lbHtml = "";
     try {
-      const [addrs, scoreList, finished] = await readContract.getLeaderboard(
-        gameId,
-      );
+      const [addrs, scoreList, finished] =
+        await readContract.getLeaderboard(gameId);
       const rows = addrs
         .map((a, i) => ({ a, sc: Number(scoreList[i]), fin: finished[i] }))
         .sort((a, b) => b.sc - a.sc);
@@ -1993,8 +2009,8 @@ async function openGameReadOnly(gameId, gameChainId) {
           i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)
         }</span>
         <span class="lb-addr">${fmt(r.a)}${
-            r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
-          }</span>
+          r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
+        }</span>
         <span class="lb-score">${r.sc > 0 ? r.sc + " pts" : "—"}</span>
         ${
           i < 3 && prizes[i] > 0
@@ -2004,8 +2020,8 @@ async function openGameReadOnly(gameId, gameChainId) {
             : ""
         }
         <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
-            r.fin ? "Done" : "—"
-          }</span>
+          r.fin ? "Done" : "—"
+        }</span>
       </div>`,
         )
         .join("");
@@ -2076,12 +2092,12 @@ async function openGameReadOnly(gameId, gameChainId) {
     }
     document.getElementById("joinContent").innerHTML = `
       <div style="margin-bottom:16px"><h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">#${gameId} — ${sanitizeText(
-      name,
-    )}</h2><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><span class="badge ${
-      STATUS_BADGE[s]
-    }">${STATUS_LABEL[s]}</span><span class="cat-pill">📚 ${sanitizeText(
-      catName,
-    )}</span></div></div>
+        name,
+      )}</h2><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><span class="badge ${
+        STATUS_BADGE[s]
+      }">${STATUS_LABEL[s]}</span><span class="cat-pill">📚 ${sanitizeText(
+        catName,
+      )}</span></div></div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (${gameSymbol})</div></div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
@@ -2101,50 +2117,62 @@ async function openGameReadOnly(gameId, gameChainId) {
 }
 
 async function openGame(gameId, gameChainId) {
-  const targetChainId = gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+  const targetChainId =
+    gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   currentGameChainId = targetChainId;
 
-const userChainId = provider ? Number((await provider.getNetwork()).chainId) : null;
-if (userAddress && userChainId && userChainId !== targetChainId) {
-  toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
-  try {
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
-    });
-  } catch (e) {
-    if (e.code === 4902) {
-      try {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{ chainId: NETWORKS[targetChainId].hexChainId, ...NETWORKS[targetChainId].addParams }],
-        });
-      } catch (_) {}
+  const userChainId = provider
+    ? Number((await provider.getNetwork()).chainId)
+    : null;
+  if (userAddress && userChainId && userChainId !== targetChainId) {
+    toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
+      });
+    } catch (e) {
+      if (e.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: NETWORKS[targetChainId].hexChainId,
+                ...NETWORKS[targetChainId].addParams,
+              },
+            ],
+          });
+        } catch (_) {}
+      }
     }
+    // ✅ Always rebuild after switch — wait for provider to reflect new chain
+    await new Promise((r) => setTimeout(r, 500));
+    activeNet = NETWORKS[targetChainId];
+    CONTRACT_ADDRESS = activeNet.contractAddress;
+    USDC_ADDRESS = activeNet.tokenAddress;
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    if (!activeNet.isNative) {
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+    } else {
+      usdcContract = null;
+    }
+    readProvider = await createProvider(targetChainId);
+    readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
+    updateNetBar();
+    toast(`✅ Switched to ${activeNet.name}`, "success");
   }
-  // ✅ Always rebuild after switch — wait for provider to reflect new chain
-  await new Promise(r => setTimeout(r, 500));
-  activeNet = NETWORKS[targetChainId];
-  CONTRACT_ADDRESS = activeNet.contractAddress;
-  USDC_ADDRESS = activeNet.tokenAddress;
-  provider = new ethers.BrowserProvider(window.ethereum);
-  signer = await provider.getSigner();
-  contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-  if (!activeNet.isNative) {
-    usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-  } else {
-    usdcContract = null;
-  }
-  readProvider = await createProvider(targetChainId);
-  readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
-  updateNetBar();
-  toast(`✅ Switched to ${activeNet.name}`, "success");
-}
 
   const targetNet = NETWORKS[targetChainId];
   if (targetNet) {
     const tempProvider = new ethers.JsonRpcProvider(targetNet.rpc);
-    readContract = new ethers.Contract(targetNet.contractAddress, ABI, tempProvider);
+    readContract = new ethers.Contract(
+      targetNet.contractAddress,
+      ABI,
+      tempProvider,
+    );
   }
 
   if (!userAddress) {
@@ -2194,16 +2222,19 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
   );
 
   if (finished || alreadySubmitted(gameId)) {
-  showScreen("screenResults");
-  score = loadSavedScore(gameId);
-  document.getElementById("resScore").textContent = score || "—";
-  document.getElementById("resIcon").textContent = score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-  document.getElementById("resSub").textContent = `You already played this game · ${score} pts`;
-  document.getElementById("submitSection").style.display = score > 0 ? "block" : "none";
-  await refreshResults();
-  startAutoRefresh(gameId);
-  return;
-}
+    showScreen("screenResults");
+    score = loadSavedScore(gameId);
+    document.getElementById("resScore").textContent = score || "—";
+    document.getElementById("resIcon").textContent =
+      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+    document.getElementById("resSub").textContent =
+      `You already played this game · ${score} pts`;
+    document.getElementById("submitSection").style.display =
+      score > 0 ? "block" : "none";
+    await refreshResults();
+    startAutoRefresh(gameId);
+    return;
+  }
   // Server-authoritative check — localStorage can be cleared
   try {
     const chk = await fetch(
@@ -2227,9 +2258,8 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
     document.getElementById("resScore").textContent = score;
     document.getElementById("resIcon").textContent =
       score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById(
-      "resSub",
-    ).textContent = `Score locked in · ${score} pts`;
+    document.getElementById("resSub").textContent =
+      `Score locked in · ${score} pts`;
     document.getElementById("submitSection").style.display = "none";
     await refreshResults();
     startAutoRefresh(gameId);
@@ -2239,8 +2269,12 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
   const gameDecimals = gameNet.decimals;
   const gameSymbol = gameNet.symbol;
   const dp = gameDecimals === 18 ? 4 : 2;
-  const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(dp);
-  const pool = parseFloat(ethers.formatUnits(prizePool, gameDecimals)).toFixed(dp);
+  const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(
+    dp,
+  );
+  const pool = parseFloat(ethers.formatUnits(prizePool, gameDecimals)).toFixed(
+    dp,
+  );
   const n = Number(playerCount);
   const regSecs = Number(regEnd) - now,
     playSecs = Number(playDeadline) - now;
@@ -2304,31 +2338,28 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
       regSecs,
     )}</span></p></div>`;
   else if (inPlayPhase && joined && !finished) {
-  // ✅ Check server-side if already played
-  let serverPlayed = false;
+    // ✅ Check server-side if already played
+    let serverPlayed = false;
 
-  try {
-    const chk = await fetch(
-      `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
-      { credentials: "include" }
-    );
-
-    const chkData = await chk.json();
-
-    if (chkData.finished || chkData.played) {
-      serverPlayed = true;
-
-      markSubmitted(currentGameId);
-
-      saveScore(
-        currentGameId,
-        loadSavedScore(currentGameId) || 0
+    try {
+      const chk = await fetch(
+        `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
+        { credentials: "include" },
       );
-    }
-  } catch (_) {}
 
-  if (alreadySubmitted(currentGameId) || serverPlayed) {
-    actionHtml = `
+      const chkData = await chk.json();
+
+      if (chkData.finished || chkData.played) {
+        serverPlayed = true;
+
+        markSubmitted(currentGameId);
+
+        saveScore(currentGameId, loadSavedScore(currentGameId) || 0);
+      }
+    } catch (_) {}
+
+    if (alreadySubmitted(currentGameId) || serverPlayed) {
+      actionHtml = `
       <div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)">
         <p style="color:var(--green);font-weight:600">
           ✅ You already played this game!
@@ -2347,8 +2378,8 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
         </button>
       </div>
     `;
-  } else {
-    actionHtml = `
+    } else {
+      actionHtml = `
       <button
         class="btn btn-primary"
         onclick="startPlay()"
@@ -2361,9 +2392,8 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
         ⚠️ Deadline in ${fmtTime(playSecs)}
       </p>
     `;
-  }
-}
-  else if (inPlayPhase && !joined)
+    }
+  } else if (inPlayPhase && !joined)
     actionHtml = `<p style="color:var(--muted);text-align:center;padding:10px">Registration closed.</p>`;
   else if (finished)
     actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)"><p style="color:var(--green);font-weight:600">✅ Score submitted!</p><button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="doTriggerEnd(${gameId})">Check if game can end</button></div>`;
@@ -2376,18 +2406,18 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
   const discordMsg = `Join "${name}" activeNet.name\nCategory: ${catName} | Entry: ${fee} USDC | Pool: ${pool} USDC\n${n}/${maxPlayers} players\n${shareUrl}`;
   document.getElementById("joinContent").innerHTML = `
     <div style="margin-bottom:16px"><h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">#${gameId} — ${sanitizeText(
-    name,
-  )}</h2><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><span class="badge ${
-    STATUS_BADGE[s]
-  }">${STATUS_LABEL[s]}</span><span class="cat-pill">📚 ${sanitizeText(
-    catName,
-  )}</span>${
-    Number(difficulty) > 0
-      ? `<span style="font-size:.75rem;color:var(--${
-          DIFF_CLASSES[Number(difficulty)] || "accent"
-        })">· ${DIFF_LABELS[Number(difficulty)]}</span>`
-      : ""
-  }</div></div>
+      name,
+    )}</h2><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><span class="badge ${
+      STATUS_BADGE[s]
+    }">${STATUS_LABEL[s]}</span><span class="cat-pill">📚 ${sanitizeText(
+      catName,
+    )}</span>${
+      Number(difficulty) > 0
+        ? `<span style="font-size:.75rem;color:var(--${
+            DIFF_CLASSES[Number(difficulty)] || "accent"
+          })">· ${DIFF_LABELS[Number(difficulty)]}</span>`
+        : ""
+    }</div></div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (${gameSymbol})</div>
 </div>
@@ -2395,8 +2425,8 @@ if (userAddress && userChainId && userChainId !== targetChainId) {
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
     </div>
     <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">🔥</span><div><div style="font-size:.82rem;font-weight:600;color:var(--gold)">Streak Nanopayments Active</div><div style="font-size:.75rem;color:var(--muted);margin-top:2px">${STREAK_THRESHOLD}+ correct in a row → <strong style="color:var(--gold)">${STREAK_BONUS_USDC} USDC</strong> onchain via Circle · ${
-    activeNet.name
-  }</div></div></div>
+      activeNet.name
+    }</div></div></div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px"><div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Breakdown</div>${breakdownHtml}</div>
     <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Players (${n}/${maxPlayers})</div>
     <div style="margin-bottom:14px">${playerRows}</div>
@@ -2452,8 +2482,8 @@ async function showMyGames() {
         s === 1 || s === 2 ? `openGameReadOnly(${i})` : `openGame(${i})`;
       html += `<div class="gcard" onclick="${clickAction}">
         <div class="gcard-title">#${i} ${sanitizeText(
-        g[1],
-      )} <span class="badge ${STATUS_BADGE[s]}">${STATUS_LABEL[s]}</span>
+          g[1],
+        )} <span class="badge ${STATUS_BADGE[s]}">${STATUS_LABEL[s]}</span>
         ${
           isWinner && s === 1
             ? `<span style="font-size:.7rem;background:rgba(255,209,102,.15);color:var(--gold);border:1px solid rgba(255,209,102,.3);padding:1px 6px;border-radius:10px;margin-left:4px">🥇 Won</span>`
@@ -2462,8 +2492,8 @@ async function showMyGames() {
         </div>
         <div class="gmeta">💰 Entry: <strong>${fee} USDC</strong> | 🏆 Pool: <strong>${pool} USDC</strong></div>
         <div class="gmeta">📚 ${sanitizeText(g[4])} · 👥 ${Number(
-        g[9],
-      )} players</div>
+          g[9],
+        )} players</div>
       </div>`;
     }
     html += "</div>";
@@ -2636,65 +2666,65 @@ async function startPlay() {
     showScreen("screenResults");
     score = loadSavedScore(currentGameId);
     document.getElementById("resScore").textContent = score;
-    document.getElementById("resIcon").textContent = score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById("resSub").textContent = `Score already submitted · ${score} pts`;
+    document.getElementById("resIcon").textContent =
+      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+    document.getElementById("resSub").textContent =
+      `Score already submitted · ${score} pts`;
     document.getElementById("submitSection").style.display = "none";
     await refreshResults();
     return;
   }
-  
+
   try {
     const chainId =
-    currentGameChainId ||
-    (activeNet.decimals === 18 ? 4441 : 5042002);
-    
+      currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+
     const chk = await fetch(
       `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
       {
         credentials: "include",
-      }
+      },
     );
-    
+
     const chkData = await chk.json();
-    
+
     if (chkData.finished || chkData.played) {
-      
       markSubmitted(currentGameId);
-      
+
       toast("You already played this game!", "error");
-      
+
       showScreen("screenResults");
-      
+
       score = loadSavedScore(currentGameId);
-      
-      document.getElementById("resScore").textContent =
-      
-      score || "...";
-      
+
+      document.getElementById("resScore").textContent = score || "...";
+
       document.getElementById("resIcon").textContent =
-      score >= 800 ? "🏆" :
-      score >= 500 ? "🎯" : "💪";
-      
+        score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+
       document.getElementById("resSub").textContent =
-      `Already played · ${score || "pending"} pts`;
-      
+        `Already played · ${score || "pending"} pts`;
+
       document.getElementById("submitSection").style.display =
-      score > 0 ? "block" : "none";
-      
+        score > 0 ? "block" : "none";
+
       await refreshResults();
-      
+
       return;
     }
   } catch (_) {}
 
   const g = currentGame || (await getGame(currentGameId));
-  const catId = Number(g[3]), diff = Number(g[5]);
-  const chainId = currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+  const catId = Number(g[3]),
+    diff = Number(g[5]);
+  const chainId =
+    currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   toast("Loading questions...", "info");
 
   try {
     // ✅ Fetch questions directly from OpenTDB (fast, no backend needed)
-    const diffParam = diff > 0 ? `&difficulty=${["","easy","medium","hard"][diff]}` : "";
+    const diffParam =
+      diff > 0 ? `&difficulty=${["", "easy", "medium", "hard"][diff]}` : "";
     let qtData;
 
     for (const url of [
@@ -2707,20 +2737,26 @@ async function startPlay() {
         const r = await fetch(url, { signal: controller.signal });
         clearTimeout(t);
         const d = await r.json();
-        if (d.response_code === 0 && d.results?.length > 0) { qtData = d; break; }
+        if (d.response_code === 0 && d.results?.length > 0) {
+          qtData = d;
+          break;
+        }
       } catch (_) {}
     }
 
-    if (!qtData) { toast("Could not load questions. Try again.", "error"); return; }
+    if (!qtData) {
+      toast("Could not load questions. Try again.", "error");
+      return;
+    }
 
     // ✅ Build questions — store correct answers in a hidden session token
     // The token is a hash stored server-side via /game/start
     const rawQuestions = qtData.results.map((q, idx) => {
       const correct = decodeURIComponent(q.correct_answer);
-      const incorrect = q.incorrect_answers.map(a => decodeURIComponent(a));
+      const incorrect = q.incorrect_answers.map((a) => decodeURIComponent(a));
       return {
         question: decodeURIComponent(q.question),
-        correct,                              // stored client-side temporarily
+        correct, // stored client-side temporarily
         answers: shuffle([correct, ...incorrect]),
         diff: q.difficulty,
         id: idx,
@@ -2739,7 +2775,10 @@ async function startPlay() {
           chainId,
           categoryId: catId,
           difficulty: diff,
-          correctAnswers: rawQuestions.map((q, i) => ({ index: i, correct: q.correct })),
+          correctAnswers: rawQuestions.map((q, i) => ({
+            index: i,
+            correct: q.correct,
+          })),
         }),
       });
       if (!startRes.ok) {
@@ -2764,7 +2803,6 @@ async function startPlay() {
     showScreen("screenPlay");
     loadQ();
     hideToast();
-
   } catch (e) {
     toast("Error: " + e.message, "error");
   }
@@ -2864,7 +2902,12 @@ function pickAnswer(idx) {
   const pts = isCorrect ? 100 + speed : 0;
   score += pts;
 
-  answers.push({ questionIndex: currentQ, selected, correct: isCorrect, timeLeft });
+  answers.push({
+    questionIndex: currentQ,
+    selected,
+    correct: isCorrect,
+    timeLeft,
+  });
 
   if (isCorrect) {
     streakCount++;
@@ -2880,34 +2923,44 @@ function pickAnswer(idx) {
   });
 
   document.getElementById("qPts").textContent =
-    streakCount >= STREAK_THRESHOLD ? `⭐ ${score} 🔥x${streakCount}` : `⭐ ${score}`;
+    streakCount >= STREAK_THRESHOLD
+      ? `⭐ ${score} 🔥x${streakCount}`
+      : `⭐ ${score}`;
 
   const fb = document.getElementById("qFeedback");
   fb.style.display = "block";
   if (isCorrect) {
-    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
+    fb.style.cssText =
+      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
     fb.textContent = `✓ Correct! +${pts} pts${speed > 0 ? " (⚡ speed bonus!)" : ""}`;
   } else {
-    fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+    fb.style.cssText =
+      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
     fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
   }
 
-  setTimeout(() => { currentQ++; loadQ(); }, 1500);
+  setTimeout(() => {
+    currentQ++;
+    loadQ();
+  }, 1500);
 }
 
 function timeUp() {
   answered = true;
   answers.push({ questionIndex: currentQ, selected: null, timeLeft: 0 });
 
-  document.querySelectorAll(".ans-btn").forEach((b) => b.disabled = true);
+  document.querySelectorAll(".ans-btn").forEach((b) => (b.disabled = true));
 
   const fb = document.getElementById("qFeedback");
-  fb.style.cssText = "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+  fb.style.cssText =
+    "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
   fb.textContent = "⏰ Time's up!";
 
-  setTimeout(() => { currentQ++; loadQ(); }, 1200);
+  setTimeout(() => {
+    currentQ++;
+    loadQ();
+  }, 1200);
 }
-
 
 async function getAIHint() {
   if (!contract || !userAddress) return toast("Connect wallet first", "error");
@@ -2978,8 +3031,10 @@ async function doClaimRefund(gameId) {
 async function finishTrivia() {
   clearInterval(timerInt);
   document.getElementById("resScore").textContent = score;
-  document.getElementById("resIcon").textContent = score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-  document.getElementById("resSub").textContent = `${questions.length} questions answered — submitting...`;
+  document.getElementById("resIcon").textContent =
+    score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+  document.getElementById("resSub").textContent =
+    `${questions.length} questions answered — submitting...`;
   document.getElementById("winnerBanner").innerHTML = "";
   document.getElementById("submitSection").style.display = "none";
   showScreen("screenResults");
@@ -2999,14 +3054,18 @@ async function submitMyScore() {
     return;
   }
   const btn = document.getElementById("submitBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "⏳ Getting signature..."; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Getting signature...";
+  }
 
   try {
     toast("Step 1/2: Getting score signature...", "info");
 
     // ✅ Ask backend to sign the locally-computed score
     // Backend just needs to verify the player is joined onchain
-    const chainId = currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+    const chainId =
+      currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
     const res = await fetch(`${BACKEND}/submit-score`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3024,7 +3083,7 @@ async function submitMyScore() {
     // ✅ If backend fails, use client score directly with a workaround
     let verifiedScore = score;
     let signature = data?.signature;
-    
+
     if (!res.ok || data?.error) {
       const errMsg = data?.error || "Server error";
       toast("Server error: " + errMsg, "error");
@@ -3049,10 +3108,10 @@ async function submitMyScore() {
       verifiedScore,
       data.signature,
     );
-    
+
     toast("⛓️ Waiting for confirmation...", "info");
     await tx.wait();
-    
+
     localStorage.setItem(`arc_onchain_${currentGameId}`, "1"); // onchain confirmed
     markSubmitted(currentGameId);
     saveScore(currentGameId, verifiedScore);
@@ -3074,12 +3133,11 @@ async function submitMyScore() {
     document.getElementById("submitSection").style.display = "none";
     await refreshResults();
     await doTriggerEnd(currentGameId);
-
   } catch (e) {
     if (btn) {
-       btn.disabled = false;
-       btn.textContent = "📡 Submit Score Onchain";
-      }
+      btn.disabled = false;
+      btn.textContent = "📡 Submit Score Onchain";
+    }
     toast("Failed: " + (e.reason || e.message), "error");
   }
 }
@@ -3133,9 +3191,9 @@ async function doTriggerEnd(gameId) {
 
 async function refreshResults() {
   const gameNet = NETWORKS[currentGameChainId] || activeNet;
-const gameDecimals = gameNet.decimals;
-const gameSymbol = gameNet.symbol;
-const dp = gameDecimals === 18 ? 4 : 2;
+  const gameDecimals = gameNet.decimals;
+  const gameSymbol = gameNet.symbol;
+  const dp = gameDecimals === 18 ? 4 : 2;
   if (!currentGameId) return;
   try {
     const g = await getGame(currentGameId);
@@ -3149,36 +3207,33 @@ const dp = gameDecimals === 18 ? 4 : 2;
         )
       : -1;
     if (myPos >= 0 && s === 1 && loadSavedScore(currentGameId) > 0) {
-
-      const dist = parseFloat(ethers.formatUnits(prizePool, gameDecimals)) * 0.95;
+      const dist =
+        parseFloat(ethers.formatUnits(prizePool, gameDecimals)) * 0.95;
       const prizes =
         n === 1
           ? [dist]
           : n === 2
-          ? [dist * 0.7, dist * 0.3]
-          : [dist * 0.6, dist * 0.25, dist * 0.15];
+            ? [dist * 0.7, dist * 0.3]
+            : [dist * 0.6, dist * 0.25, dist * 0.15];
       const prize = (prizes[myPos] || 0).toFixed(2);
       const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
       const [, , claimed_] = userAddress
         ? await readContract.getPlayerStatus(currentGameId, userAddress)
         : [false, false, false];
-      document.getElementById(
-        "winnerBanner",
-      ).innerHTML = `<div class="winner-banner"><h3>${
-        medals[myPos]
-      } — YOU WON!</h3><div class="winner-prize">${prize} ${gameSymbol}</div>${
-        !claimed_
-          ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
-          : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`
-      }</div>`;
+      document.getElementById("winnerBanner").innerHTML =
+        `<div class="winner-banner"><h3>${
+          medals[myPos]
+        } — YOU WON!</h3><div class="winner-prize">${prize} ${gameSymbol}</div>${
+          !claimed_
+            ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
+            : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`
+        }</div>`;
     } else if (s === 1) {
-      document.getElementById(
-        "winnerBanner",
-      ).innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px"><p style="color:var(--muted)">Game ended. See leaderboard below.</p></div>`;
+      document.getElementById("winnerBanner").innerHTML =
+        `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px"><p style="color:var(--muted)">Game ended. See leaderboard below.</p></div>`;
     } else if (s === 0) {
-      document.getElementById(
-        "winnerBanner",
-      ).innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px"><p style="color:var(--accent)">⏳ Waiting for all players to finish...</p><p style="color:var(--muted);font-size:.8rem;margin-top:6px">Auto-refreshing every 12s</p></div>`;
+      document.getElementById("winnerBanner").innerHTML =
+        `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px"><p style="color:var(--accent)">⏳ Waiting for all players to finish...</p><p style="color:var(--muted);font-size:.8rem;margin-top:6px">Auto-refreshing every 12s</p></div>`;
     }
     const [addrs, scoreList, finished, claimedList] =
       await readContract.getLeaderboard(currentGameId);
@@ -3188,8 +3243,8 @@ const dp = gameDecimals === 18 ? 4 : 2;
       n === 1
         ? [dist, 0, 0]
         : n === 2
-        ? [dist * 0.7, dist * 0.3, 0]
-        : [dist * 0.6, dist * 0.25, dist * 0.15];
+          ? [dist * 0.7, dist * 0.3, 0]
+          : [dist * 0.6, dist * 0.25, dist * 0.15];
     const rows = addrs
       .map((a, i) => ({
         a,
@@ -3211,8 +3266,8 @@ const dp = gameDecimals === 18 ? 4 : 2;
         i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)
       }</span>
       <span class="lb-addr">${fmt(r.a)}${
-          r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
-        }</span>
+        r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
+      }</span>
       <span class="lb-score">${r.sc > 0 ? r.sc + " pts" : "—"}</span>
       ${
         i < 3 && s === 1 && prizes[i] > 0
@@ -3222,8 +3277,8 @@ const dp = gameDecimals === 18 ? 4 : 2;
           : ""
       }
       <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
-          r.fin ? "Done" : "Playing"
-        }</span>
+        r.fin ? "Done" : "Playing"
+      }</span>
     </div>`,
       )
       .join("");
@@ -3231,8 +3286,6 @@ const dp = gameDecimals === 18 ? 4 : 2;
     console.error(e);
   }
 }
-
-
 
 async function doClaimPrize() {
   if (!contract) return toast("Connect wallet first", "error");
@@ -3499,9 +3552,8 @@ async function showGlobalLeaderboard() {
 async function loadMyStats() {
   if (!userAddress) return;
   try {
-    const [played, won, earned] = await readContract.getPlayerStats(
-      userAddress,
-    );
+    const [played, won, earned] =
+      await readContract.getPlayerStats(userAddress);
     const vals = {
       myPlayed: played.toString(),
       myWon: won.toString(),
@@ -3626,20 +3678,15 @@ async function confirmBet(gameId, playerAddr) {
   }
 }
 
-const networkMenu =
-  document.getElementById("networkMenu");
+const networkMenu = document.getElementById("networkMenu");
 
-const networkSwitcher =
-  document.querySelector(".network-switcher");
+const networkSwitcher = document.querySelector(".network-switcher");
 
-const selectedNetwork =
-  document.getElementById("selectedNetwork");
+const selectedNetwork = document.getElementById("selectedNetwork");
 
-const netOptArc =
-  document.getElementById("netOptArc");
+const netOptArc = document.getElementById("netOptArc");
 
-const netOptLitvm =
-  document.getElementById("netOptLitvm");
+const netOptLitvm = document.getElementById("netOptLitvm");
 
 /* TOGGLE MENU */
 
@@ -3650,24 +3697,14 @@ function toggleNetworkMenu() {
 
 /* SELECT NETWORK */
 
-function selectNetwork(network){
-
+function selectNetwork(network) {
   const isArc = network === "arc";
 
-  selectedNetwork.textContent =
-    isArc
-      ? "⚡ Arc · USDC"
-      : "🔷 LitVM · zkLTC";
+  selectedNetwork.textContent = isArc ? "⚡ Arc · USDC" : "🔷 LitVM · zkLTC";
 
-  netOptArc.classList.toggle(
-    "net-opt-active",
-    isArc
-  );
+  netOptArc.classList.toggle("net-opt-active", isArc);
 
-  netOptLitvm.classList.toggle(
-    "net-opt-active",
-    !isArc
-  );
+  netOptLitvm.classList.toggle("net-opt-active", !isArc);
 
   networkMenu.classList.remove("open");
 
@@ -3678,7 +3715,12 @@ function selectNetwork(network){
 document.addEventListener("click", (e) => {
   const trigger = document.getElementById("networkTrigger");
   const menu = document.getElementById("networkMenu");
-  if (menu && trigger && !trigger.contains(e.target) && !menu.contains(e.target)) {
+  if (
+    menu &&
+    trigger &&
+    !trigger.contains(e.target) &&
+    !menu.contains(e.target)
+  ) {
     menu.style.display = "none";
   }
   const profile = document.getElementById("profileTrigger");

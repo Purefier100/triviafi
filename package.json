@@ -3,24 +3,24 @@
   "version": "1.0.0",
   "description": "TriviaFi — Onchain trivia game to play and earn USDC",
   "main": "index.js",
-
   "scripts": {
     "dev:backend": "node backend/server.js",
     "dev:agent": "node frontend/agent.js",
     "start": "npm run dev:backend",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-
   "keywords": [],
   "author": "",
   "license": "ISC",
-
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "dotenv": "^17.4.2",
-    "hardhat": "^2.28.6"
+    "eslint": "^10.4.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "hardhat": "^2.28.6",
+    "prettier": "^3.8.3"
   },
-
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.3.0",
     "@walletconnect/web3-provider": "^1.8.0",
@@ -28,7 +28,6 @@
     "express-rate-limit": "^8.3.2",
     "web3modal": "^1.9.12"
   },
-
   "directories": {
     "test": "test"
   }
