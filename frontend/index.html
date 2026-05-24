@@ -2182,16 +2182,16 @@
     }
 
     .rooms-footer {
-      margin-top: 22px;
+      margin-top: 18px;
 
-      padding: 22px;
+      padding: 18px 22px;
 
       border-radius: 18px;
 
       background:
         linear-gradient(135deg,
-          rgba(255, 255, 255, .03),
-          rgba(255, 255, 255, .01));
+          rgba(18, 24, 42, .92),
+          rgba(12, 18, 35, .88));
 
       border:
         1px solid rgba(255, 255, 255, .06);
@@ -2200,10 +2200,9 @@
       align-items: center;
       justify-content: space-between;
 
-      gap: 24px;
+      gap: 18px;
 
       position: relative;
-
       overflow: hidden;
     }
 
@@ -2214,69 +2213,68 @@
       inset: 0;
 
       background:
-        radial-gradient(circle at top right,
-          rgba(0, 229, 255, .12),
-          transparent 40%);
+        radial-gradient(circle at right,
+          rgba(0, 229, 255, .10),
+          transparent 45%);
 
       pointer-events: none;
     }
 
+    /* LEFT SIDE */
+    .rooms-footer-left {
+      display: flex;
+      flex-direction: column;
+
+      gap: 6px;
+
+      z-index: 2;
+    }
+
+    /* LIVE HEADER */
     .rooms-live-row {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
 
-      font-size: .95rem;
+      font-size: .88rem;
       font-weight: 700;
 
       color: #f4f7ff;
     }
 
+    /* SMALL TEXT */
     .rooms-subtext {
       color: #94a3b8;
 
-      font-size: .82rem;
+      font-size: .76rem;
 
-      line-height: 1.7;
-    }
-
-    /* LEFT SIDE */
-
-    .rooms-footer-left {
-      display: flex;
-      flex-direction: column;
-
-      gap: 10px;
-
-      z-index: 2;
+      line-height: 1.5;
     }
 
     /* LIVE DOT */
-
     .rooms-live-dot {
-      width: 8px;
-      height: 8px;
+      width: 7px;
+      height: 7px;
 
       border-radius: 50%;
 
       background: #06d6a0;
 
       box-shadow:
-        0 0 14px rgba(6, 214, 160, .9);
+        0 0 12px rgba(6, 214, 160, .8);
 
       animation: pulse 1.5s infinite;
     }
 
     /* BUTTON */
-
     .rooms-create-btn {
-      height: 52px;
+      height: 44px;
 
-      padding: 0 24px;
+      padding: 0 20px;
 
       border: none;
 
-      border-radius: 16px;
+      border-radius: 14px;
 
       background:
         linear-gradient(135deg,
@@ -2285,40 +2283,41 @@
 
       color: white;
 
-      font-size: .92rem;
+      font-size: .84rem;
       font-weight: 800;
 
-      letter-spacing: .3px;
+      letter-spacing: .2px;
 
       cursor: pointer;
 
       box-shadow:
-        0 12px 30px rgba(0, 229, 255, .22);
+        0 10px 24px rgba(0, 229, 255, .18);
 
-      transition: .25s;
+      transition: .22s;
 
       z-index: 2;
     }
 
     .rooms-create-btn:hover {
-      transform:
-        translateY(-3px) scale(1.02);
+      transform: translateY(-2px);
 
       box-shadow:
-        0 18px 38px rgba(0, 229, 255, .28);
+        0 14px 30px rgba(0, 229, 255, .24);
     }
 
     /* MOBILE */
-
     @media(max-width:680px) {
 
       .rooms-footer {
         flex-direction: column;
         align-items: flex-start;
+
+        padding: 16px;
       }
 
       .rooms-create-btn {
         width: 100%;
+        justify-content: center;
       }
     }
   </style>
@@ -2593,10 +2592,6 @@
             </div>
 
           </div>
-
-          <button class="rooms-create-btn">
-            + Create Room
-          </button>
 
         </div>
 
