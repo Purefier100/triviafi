@@ -2180,6 +2180,102 @@
         transform: scale(1);
       }
     }
+
+    .rooms-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      gap: 16px;
+
+      margin-top: 18px;
+      padding-top: 18px;
+
+      border-top:
+        1px solid rgba(255, 255, 255, .06);
+    }
+
+    /* LEFT SIDE */
+
+    .rooms-footer-left {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+
+      color: #d8e7ff;
+
+      font-size: .84rem;
+
+      line-height: 1.5;
+    }
+
+    /* LIVE DOT */
+
+    .rooms-live-dot {
+      width: 8px;
+      height: 8px;
+
+      border-radius: 50%;
+
+      background: #06d6a0;
+
+      box-shadow:
+        0 0 14px rgba(6, 214, 160, .9);
+
+      animation: pulse 1.5s infinite;
+    }
+
+    /* BUTTON */
+
+    .rooms-create-btn {
+      height: 44px;
+
+      padding: 0 18px;
+
+      border: none;
+
+      border-radius: 12px;
+
+      background:
+        linear-gradient(135deg,
+          #00cfff,
+          #5b6cff);
+
+      color: white;
+
+      font-size: .84rem;
+      font-weight: 800;
+
+      cursor: pointer;
+
+      flex-shrink: 0;
+
+      box-shadow:
+        0 10px 24px rgba(0, 229, 255, .18);
+
+      transition: .2s;
+    }
+
+    .rooms-create-btn:hover {
+      transform: translateY(-2px);
+
+      box-shadow:
+        0 14px 28px rgba(0, 229, 255, .24);
+    }
+
+    /* MOBILE */
+
+    @media(max-width:680px) {
+
+      .rooms-footer {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .rooms-create-btn {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 
@@ -2437,52 +2533,63 @@
             <div class="skeleton skeleton-card"></div>
           </div>
         </div>
-        <div class="rooms-footer">
-          <div class="rooms-footer-left">
+        <div class="rooms-footer-left">
+
+          <div style="display:flex;align-items:center;gap:8px">
             <span class="rooms-live-dot"></span>
             <span>Live rooms updating in real-time</span>
           </div>
 
-          <button class="rooms-create-btn" onclick="showScreen('screenCreate')">
-            ＋ Create Room
-          </button>
-        </div>
-      </div>
+          <div style="font-size:.75rem;color:var(--muted)">
+            Onchain Trivia Arena
+            <br>
+            ⚡ Arc + LitVM Networks
+            <br>
+            🎮 Real-Time Multiplayer Rooms
+          </div>
 
-      <!-- Activity feed -->
-      <div class="card" id="activityCard" style="display:none">
-        <div class="card-title">⚡ Recent Activity</div>
-        <div id="activityFeed"></div>
-      </div>
+        </div>
 
-      <div class="card" id="profileCard" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <div class="card-title" style="margin:0">👤 My Profile</div>
-          <button onclick="logoutAll()"
-            style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:8px;cursor:pointer;font-size:.78rem">Sign
-            Out</button>
+        <button class="rooms-create-btn" onclick="showScreen('screenCreate')">
+          ＋ Create Room
+        </button>
+      </div>
+    </div>
+
+    <!-- Activity feed -->
+    <div class="card" id="activityCard" style="display:none">
+      <div class="card-title">⚡ Recent Activity</div>
+      <div id="activityFeed"></div>
+    </div>
+
+    <div class="card" id="profileCard" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div class="card-title" style="margin:0">👤 My Profile</div>
+        <button onclick="logoutAll()"
+          style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:8px;cursor:pointer;font-size:.78rem">Sign
+          Out</button>
+      </div>
+      <div id="profileGoogleSection"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+      </div>
+      <div id="profileWalletSection"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
+      </div>
+      <div class="profile-grid">
+        <div class="pstat">
+          <div class="pstat-n" id="myPlayed">0</div>
+          <div class="pstat-l">Played</div>
         </div>
-        <div id="profileGoogleSection"
-          style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+        <div class="pstat">
+          <div class="pstat-n" id="myWon">0</div>
+          <div class="pstat-l">Won</div>
         </div>
-        <div id="profileWalletSection"
-          style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
-        </div>
-        <div class="profile-grid">
-          <div class="pstat">
-            <div class="pstat-n" id="myPlayed">0</div>
-            <div class="pstat-l">Played</div>
-          </div>
-          <div class="pstat">
-            <div class="pstat-n" id="myWon">0</div>
-            <div class="pstat-l">Won</div>
-          </div>
-          <div class="pstat">
-            <div class="pstat-n" id="myEarned">$0</div>
-            <div class="pstat-l">Earned</div>
-          </div>
+        <div class="pstat">
+          <div class="pstat-n" id="myEarned">$0</div>
+          <div class="pstat-l">Earned</div>
         </div>
       </div>
+    </div>
     </div>
 
     <!-- CREATE -->
