@@ -729,6 +729,8 @@ async function logoutAll() {
     });
   } catch (_) {}
 
+  window._bannerDismissed = false;
+  window._bannerShowAll = false;
   // RESET EVERYTHING
   currentProfile = null;
   provider = null;
@@ -1058,7 +1060,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   countdownInterval = setInterval(updateCountdowns, 1000);
   // Re-check prizes every 2 min
   setInterval(() => {
-    if (userAddress) checkUnclaimedPrizes();
+    if (userAddress) window._bannerDismissed = false;
+    checkUnclaimedPrizes();
   }, 120000);
   injectStreakStyles();
   initAuth();
@@ -3681,6 +3684,7 @@ async function loadGlobalStats() {
 
 async function checkUnclaimedPrizes() {
   if (!userAddress) return;
+  if (window._bannerDismissed) return;
   const banner = document.getElementById("unclaimedBanner");
   if (!banner) return;
 
@@ -3797,7 +3801,7 @@ async function checkUnclaimedPrizes() {
   const positions = ["1st", "2nd", "3rd"];
 
   const rows = claims
-    .slice(0, 6)
+    .slice(0, window._bannerShowAll ? claims.length : 6)
     .map((c) => {
       const dp = c.net?.decimals === 18 ? 4 : 2;
       const chainIcon = c.chainId === 4441 ? "🔷" : "⚡";
@@ -3856,7 +3860,7 @@ async function checkUnclaimedPrizes() {
             border:1px solid rgba(239,71,111,.25)">${claims.length}</span>
           <span style="font-size:.8rem;font-weight:700;color:var(--green)">${totalStr}</span>
         </div>
-        <button onclick="document.getElementById('unclaimedBanner').style.display='none'"
+        <button onclick="window._bannerDismissed=true;document.getElementById('unclaimedBanner').style.display='none'"
           style="background:none;border:none;color:var(--muted);cursor:pointer;
             font-size:.95rem;padding:2px 6px;border-radius:6px;line-height:1"
           onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">✕</button>
@@ -3864,8 +3868,10 @@ async function checkUnclaimedPrizes() {
       <div style="padding:8px 10px">${rows}</div>
       ${
         moreCount > 0
-          ? `<div style="text-align:center;padding:4px 0 10px;
-        font-size:.73rem;color:var(--muted)">+${moreCount} more</div>`
+          ? `<div onclick="window._bannerShowAll=!window._bannerShowAll;checkUnclaimedPrizes()"
+              style="text-align:center;padding:6px 0 10px;font-size:.73rem;
+              color:var(--accent);cursor:pointer;text-decoration:underline">
+              +${moreCount} more — click to show all</div>`
           : ""
       }
     </div>`;
