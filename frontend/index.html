@@ -2329,126 +2329,65 @@
       }
     }
 
-    /* PREMIUM FOOTER */
-
-    .premium-footer {
-      margin-top: 80px;
-
-      height: 110px;
-
+    .app-footer {
       display: flex;
       align-items: center;
       justify-content: space-between;
-
-      padding: 0 60px;
-
-      background: #020202;
-
-      border-top:
-        1px solid rgba(255, 255, 255, .05);
-
-      position: relative;
+      padding: 0 32px;
+      height: 64px;
+      background: rgba(5, 7, 14, 0.95);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      margin-top: 40px;
     }
 
-    /* subtle glow */
-    .premium-footer::before {
-      content: "";
-
-      position: absolute;
-      inset: 0;
-
-      background:
-        radial-gradient(circle at center,
-          rgba(255, 255, 255, .02),
-          transparent 60%);
-
-      pointer-events: none;
-    }
-
-    .footer-left,
-    .footer-center,
-    .footer-right {
-      position: relative;
-      z-index: 2;
-    }
-
-    .footer-brand {
+    .footer-logo {
       font-family: 'Bebas Neue', sans-serif;
-
-      font-size: 2.2rem;
-
+      font-size: 1.1rem;
       letter-spacing: 3px;
+      color: rgba(255, 255, 255, 0.55);
+    }
 
-      color: #f2f2f2;
-
-      opacity: .92;
+    .footer-text {
+      display: none;
     }
 
     .footer-center {
-      color: #666;
-
-      font-size: 1rem;
-
-      font-weight: 600;
+      font-size: .73rem;
+      color: rgba(255, 255, 255, 0.25);
+      letter-spacing: .3px;
     }
 
     .footer-right {
       display: flex;
       align-items: center;
-
-      gap: 18px;
+      gap: 14px;
     }
 
-    .footer-icon {
-      width: 42px;
-      height: 42px;
-
-      border-radius: 12px;
-
+    .footer-social {
       display: flex;
       align-items: center;
       justify-content: center;
-
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.35);
       text-decoration: none;
-
-      color: #d9d9d9;
-
-      font-size: 1.4rem;
-
-      transition: .22s ease;
+      font-size: .9rem;
+      transition: color .2s, background .2s;
     }
 
-    .footer-icon:hover {
-      transform: translateY(-2px);
-
-      color: white;
-
-      background:
-        rgba(255, 255, 255, .05);
+    .footer-social:hover {
+      color: rgba(255, 255, 255, 0.8);
+      background: rgba(255, 255, 255, 0.06);
     }
 
-    /* MOBILE */
-
-    @media(max-width:768px) {
-
-      .premium-footer {
-        height: auto;
-
-        flex-direction: column;
-
-        gap: 18px;
-
-        padding: 28px 20px;
-
-        text-align: center;
-      }
-
-      .footer-brand {
-        font-size: 1.8rem;
+    @media(max-width:600px) {
+      .app-footer {
+        padding: 0 16px;
       }
 
       .footer-center {
-        font-size: .9rem;
+        display: none;
       }
     }
   </style>
