@@ -3684,10 +3684,6 @@ async function loadGlobalStats() {
 
 async function checkUnclaimedPrizes() {
   if (!userAddress) return;
-  if (window._bannerDismissed) return;
-  const banner = document.getElementById("unclaimedBanner");
-  if (!banner) return;
-
   const claims = [];
 
   try {
@@ -3780,12 +3776,27 @@ async function checkUnclaimedPrizes() {
     }
   } catch (_) {}
 
-  if (claims.length === 0) {
-    banner.style.display = "none";
-    return;
-  }
+  // Store globally for modal
+  window._unclaimedPrizes = claims;
 
-  // Totals
+  // Update header button
+  const btn = document.getElementById("claimPrizesBtn");
+  const badge = document.getElementById("claimBadge");
+  if (btn && badge) {
+    if (claims.length > 0) {
+      btn.style.display = "flex";
+      badge.textContent = claims.length;
+    } else {
+      btn.style.display = "none";
+    }
+  }
+}
+
+function showUnclaimedModal() {
+  const claims = window._unclaimedPrizes || [];
+  const existing = document.getElementById("claimPrizesModal");
+  if (existing) existing.remove();
+
   const totalUSDC = claims
     .filter((c) => c.net?.decimals === 6)
     .reduce((s, c) => s + c.prize, 0);
@@ -3801,81 +3812,63 @@ async function checkUnclaimedPrizes() {
   const positions = ["1st", "2nd", "3rd"];
 
   const rows = claims
-    .slice(0, window._bannerShowAll ? claims.length : 6)
     .map((c) => {
       const dp = c.net?.decimals === 18 ? 4 : 2;
       const chainIcon = c.chainId === 4441 ? "🔷" : "⚡";
       const isPrize = c.type === "prize";
-      const accentColor = isPrize ? "var(--gold)" : "var(--purple)";
-      const rowBg = isPrize ? "rgba(255,209,102,.05)" : "rgba(123,97,255,.05)";
-      const rowBorder = isPrize
-        ? "rgba(255,209,102,.15)"
-        : "rgba(123,97,255,.15)";
       const label = isPrize
         ? `${medals[c.myPos] || "🏆"} ${positions[c.myPos] || ""} Place · Game #${c.gameId}`
         : `🎲 Bet won · Game #${c.gameId}`;
-      return `
-      <div onclick="openGameReadOnly(${c.gameId},${c.chainId})"
-        style="display:flex;align-items:center;justify-content:space-between;
-          padding:9px 12px;border-radius:8px;cursor:pointer;
-          background:${rowBg};border:1px solid ${rowBorder};
-          transition:opacity .15s;gap:12px;margin-bottom:4px"
-        onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
-          <span style="font-size:.75rem;flex-shrink:0">${chainIcon}</span>
-          <div style="min-width:0">
-            <div style="font-size:.8rem;font-weight:600;color:var(--text);
-              white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div>
-            <div style="font-size:.71rem;color:var(--muted);margin-top:1px">
-              ${sanitizeText(c.name)}</div>
-          </div>
+      return `<div style="display:flex;align-items:center;justify-content:space-between;
+        padding:12px 14px;border-radius:10px;cursor:pointer;
+        background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.12);
+        margin-bottom:8px;gap:12px;transition:background .15s"
+      onmouseover="this.style.background='rgba(255,209,102,.08)'"
+      onmouseout="this.style.background='rgba(255,209,102,.04)'"
+      onclick="document.getElementById('claimPrizesModal').remove();openGameReadOnly(${c.gameId},${c.chainId})">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+        <span style="font-size:.8rem;flex-shrink:0">${chainIcon}</span>
+        <div style="min-width:0">
+          <div style="font-size:.85rem;font-weight:700;color:#ffd166;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div>
+          <div style="font-size:.73rem;color:var(--muted);margin-top:2px">${sanitizeText(c.name)}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <span style="font-size:.88rem;font-weight:700;color:${accentColor}">
-            ${c.prize.toFixed(dp)} ${c.net?.symbol || "USDC"}</span>
-          <button onclick="event.stopPropagation();openGameReadOnly(${c.gameId},${c.chainId})"
-            style="background:${accentColor};color:#000;border:none;
-              padding:4px 12px;border-radius:20px;font-size:.72rem;
-              font-weight:700;cursor:pointer;white-space:nowrap;
-              font-family:inherit">
-            Claim →
-          </button>
-        </div>
-      </div>`;
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        <span style="font-size:.95rem;font-weight:700;color:var(--green)">
+          ${c.prize.toFixed(dp)} ${c.net?.symbol || "USDC"}</span>
+        <button onclick="event.stopPropagation();document.getElementById('claimPrizesModal').remove();openGameReadOnly(${c.gameId},${c.chainId})"
+          style="background:linear-gradient(135deg,#ffd166,#ff9d3a);color:#000;border:none;
+            padding:6px 14px;border-radius:20px;font-size:.75rem;font-weight:800;
+            cursor:pointer;white-space:nowrap;font-family:inherit">
+          Claim →
+        </button>
+      </div>
+    </div>`;
     })
     .join("");
 
-  const moreCount = claims.length > 6 ? claims.length - 6 : 0;
-
-  banner.innerHTML = `
-    <div style="background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.18);
-      border-radius:12px;margin-bottom:16px;overflow:hidden">
-      <div style="display:flex;align-items:center;justify-content:space-between;
-        padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.05)">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-size:.85rem;font-weight:700;color:var(--gold);
-            text-transform:uppercase;letter-spacing:.5px">🎁 Unclaimed prizes</span>
-          <span style="font-size:.72rem;font-weight:700;padding:1px 8px;
-            border-radius:20px;background:rgba(239,71,111,.15);color:var(--red);
-            border:1px solid rgba(239,71,111,.25)">${claims.length}</span>
-          <span style="font-size:.8rem;font-weight:700;color:var(--green)">${totalStr}</span>
-        </div>
-        <button onclick="window._bannerDismissed=true;document.getElementById('unclaimedBanner').style.display='none'"
-          style="background:none;border:none;color:var(--muted);cursor:pointer;
-            font-size:.95rem;padding:2px 6px;border-radius:6px;line-height:1"
-          onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">✕</button>
+  const modal = document.createElement("div");
+  modal.id = "claimPrizesModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `<div class="bet-modal-box" style="max-width:520px;width:95%;max-height:80vh;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div>
+        <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.4rem;
+          letter-spacing:2px;color:var(--gold)">🎁 Unclaimed Prizes</h3>
+        <div style="font-size:.8rem;color:var(--green);font-weight:700;margin-top:4px">${totalStr}</div>
       </div>
-      <div style="padding:8px 10px">${rows}</div>
-      ${
-        moreCount > 0
-          ? `<div onclick="window._bannerShowAll=!window._bannerShowAll;checkUnclaimedPrizes()"
-              style="text-align:center;padding:6px 0 10px;font-size:.73rem;
-              color:var(--accent);cursor:pointer;text-decoration:underline">
-              +${moreCount} more — click to show all</div>`
-          : ""
-      }
-    </div>`;
-  banner.style.display = "block";
+      <button onclick="document.getElementById('claimPrizesModal').remove()"
+        style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">✕</button>
+    </div>
+    <p style="font-size:.78rem;color:var(--muted);margin-bottom:16px">
+      Click any prize to go to the game and claim it.</p>
+    <div style="overflow-y:auto;flex:1;padding-right:4px">${rows}</div>
+  </div>`;
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
 }
 
 async function showGlobalLeaderboard() {

@@ -2433,6 +2433,15 @@
         Login with Google
       </button>
 
+      <!-- Claim Prizes Button -->
+       <button id="claimPrizesBtn" onclick="showUnclaimedModal()" 
+       style="display:none;position:relative;height:40px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,209,102,.25);background:rgba(255,209,102,.08);color:#ffd166;font-size:.82rem;font-weight:700;cursor:pointer;
+        align-items:center;gap:8px;transition:.18s;">
+       🎁 Claim
+       <span id="claimBadge" style="background:#ef476f;color:white;font-size:.65rem; font-weight:800;padding:1px 6px;border-radius:20px;min-width:18px;
+       text-align:center;line-height:1.6">0</span>
+      </button>
+
       <!-- Connect Wallet -->
       <button id="connectBtn" onclick="connectWallet()"
         style="height:40px;padding:0 20px;border:none;border-radius:12px;background:linear-gradient(135deg,#00cfff,#5b6cff);color:white;font-size:.88rem;font-weight:800;cursor:pointer;box-shadow:0 8px 20px rgba(0,229,255,0.18);transition:.2s;">
@@ -2628,8 +2637,6 @@
           <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
           <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
         </div>
-        <!-- Skeleton shown until games load -->
-        <div id="unclaimedBanner" style="display:none"></div>
         <div id="gamesList">
           <div class="game-grid">
             <div class="skeleton skeleton-card"></div>
