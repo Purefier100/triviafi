@@ -710,13 +710,18 @@ app.post("/auth/wallet", async (req, res) => {
       if (!currentUser.wallet) {
         // Check wallet isn't taken by another account
         const taken = await pool.query(
-          "SELECT id FROM users WHERE LOWER(wallet)=$1 AND id!=$2",
+          "SELECT id, google_id FROM users WHERE LOWER(wallet)=$1 AND id!=$2",
           [walletLower, currentUser.id],
         );
-        if (taken.rows.length > 0)
+        if (taken.rows.length > 0) {
+          // ✅ If that account has a Google linked, block with specific message
+          if (taken.rows[0].google_id) {
+            return res.status(400).json({ error: "wallet_google_taken" });
+          }
           return res
             .status(400)
             .json({ error: "Wallet already linked to another account" });
+        }
 
         await pool.query("UPDATE users SET wallet=$1 WHERE id=$2", [
           walletLower,
@@ -739,6 +744,14 @@ app.post("/auth/wallet", async (req, res) => {
     );
 
     if (userRow.rows.length === 0) {
+      // ✅ Check if this wallet is already in a Google-linked account
+      const googleLinked = await pool.query(
+        "SELECT id FROM users WHERE LOWER(wallet)=$1 AND google_id IS NOT NULL",
+        [walletLower],
+      );
+      if (googleLinked.rows.length > 0) {
+        return res.status(400).json({ error: "wallet_google_taken" });
+      }
       // Create new wallet-only user
       userRow = await pool.query(
         "INSERT INTO users (wallet) VALUES ($1) RETURNING *",

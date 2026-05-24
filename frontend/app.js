@@ -1232,6 +1232,19 @@ async function connectWallet() {
       }),
     });
     const authData = await authRes.json();
+    if (authData.error === "wallet_google_taken") {
+      toast(
+        "⚠️ This wallet is already linked to a Google account. Sign in with Google first.",
+        "error",
+      );
+      userAddress = null;
+      provider = signer = contract = usdcContract = null;
+      return;
+    }
+    if (authData.error) {
+      toast("Auth failed: " + authData.error, "error");
+      return;
+    }
 
     const meData = await fetch(`${BACKEND}/auth/me`, {
       credentials: "include",
