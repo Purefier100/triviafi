@@ -104,7 +104,7 @@ function renderAuthState() {
       connectBtn.style.background =
         "linear-gradient(135deg,var(--accent),var(--purple))";
     }
-    if (gBtn) gBtn.style.display = "flex";
+    if (gBtn) gBtn.style.display = "none";
   }
   const ha = document.getElementById("headerAvatar"),
     hn = document.getElementById("headerName");
