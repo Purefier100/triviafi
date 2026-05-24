@@ -79,8 +79,8 @@ function sanitizeText(str) {
 
 function renderAuthState() {
   const u = currentProfile,
-    hasGoogle = !!u,
-    hasWallet = !!userAddress,
+  hasGoogle = !!(u && u.google_id), 
+  hasWallet = !!userAddress,
     isLoggedIn = hasGoogle || hasWallet;
   const trigger = document.getElementById("profileTrigger");
   const connectBtn = document.getElementById("connectBtn");
