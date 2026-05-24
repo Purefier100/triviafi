@@ -100,37 +100,43 @@ function renderAuthState() {
     if (gBtn) gBtn.style.display = "flex";
   }
   const ha = document.getElementById("headerAvatar"),
-    hn = document.getElementById("headerName");
+  hn = document.getElementById("headerName");
   if (ha && hn) {
-    const init = u
-    ? (u.username || u.display_name || "?")[0].toUpperCase()
+    const hasName = u && (u.username || u.display_name);
+    const init = hasName
+    ? (u.username || u.display_name)[0].toUpperCase()
     : userAddress
     ? userAddress.slice(2, 4).toUpperCase()
     : "?";
     ha.innerHTML = u?.avatar
     ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
     : init;
-    hn.textContent = u
+    // Never show "@null" or "@undefined" — fall back to wallet address
+    hn.textContent = hasName
     ? "@" + (u.username || u.display_name)
     : fmt(userAddress);
   }
   const pa = document.getElementById("pdAvatarBig"),
     pn = document.getElementById("pdName"),
     pe = document.getElementById("pdEmail");
-  if (pa)
+  if (pa) {
+    const hasName = u && (u.username || u.display_name);
     pa.innerHTML = u?.avatar
-      ? `<img src="${sanitizeUrl(
-          u.avatar,
-        )}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
-      : u
-      ? (u.username || u.display_name || "?")[0].toUpperCase()
-      : "?";
-  if (pn)
-  pn.textContent = u
+    ? `<img src="${sanitizeUrl(u.avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
+    : hasName
+    ? (u.username || u.display_name)[0].toUpperCase()
+    : userAddress
+    ? userAddress.slice(2, 4).toUpperCase()
+    : "?";
+  }
+  if (pn) {
+    const hasName = u && (u.username || u.display_name);
+    pn.textContent = hasName
     ? "@" + (u.username || u.display_name)
     : userAddress
     ? fmt(userAddress)
     : "—";
+  }
   if (pe)
     pe.textContent =
       u?.email || (userAddress ? userAddress.slice(0, 14) + "..." : "—");
