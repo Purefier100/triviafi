@@ -2328,6 +2328,68 @@
         width: 100%;
       }
     }
+
+    .app-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 64px;
+      background: rgba(5, 7, 14, 0.95);
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      margin-top: 40px;
+    }
+
+    .footer-logo {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 1.1rem;
+      letter-spacing: 3px;
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    .footer-text {
+      display: none;
+    }
+
+    .footer-center {
+      font-size: .73rem;
+      color: rgba(255, 255, 255, 0.25);
+      letter-spacing: .3px;
+    }
+
+    .footer-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .footer-social {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.35);
+      text-decoration: none;
+      font-size: .9rem;
+      transition: color .2s, background .2s;
+    }
+
+    .footer-social:hover {
+      color: rgba(255, 255, 255, 0.8);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    @media(max-width:600px) {
+      .app-footer {
+        padding: 0 16px;
+      }
+
+      .footer-center {
+        display: none;
+      }
+    }
   </style>
 </head>
 
