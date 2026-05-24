@@ -7,6 +7,13 @@ const cors = require("cors");
 const { Pool } = require("pg");
 const { ethers } = require("ethers");
 const rateLimit = require("express-rate-limit");
+const walletCooldowns = new Map();
+const sanitizeHtml = require("sanitize-html");
+const csrf = require("csurf");
+const cookieParser = require("cookie-parser");
+const csrfProtection = csrf({
+  cookie: true,
+});
 
 const app = express();
 app.set("trust proxy", 1);
@@ -396,8 +403,12 @@ app.use(
 
 const scoreLimiter = rateLimit({
   windowMs: 60000,
-  max: 10, // was 5
-  message: { error: "Too many score submissions" },
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Too many submissions",
+  },
 });
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
@@ -417,6 +428,8 @@ app.use(
     credentials: true,
   }),
 );
+
+app.use(cookieParser());
 
 app.use(express.json({ limit: "512kb" }));
 
@@ -530,6 +543,12 @@ passport.deserializeUser(async (id, done) => {
 // AUTH ROUTES
 // =============================================================================
 
+app.get("/csrf-token", (req, res) => {
+  res.json({
+    csrfToken: req.csrfToken(),
+  });
+});
+
 app.get(
   "/auth/google",
   passport.authenticate("google", { scope: ["profile", "email"] }),
@@ -554,7 +573,7 @@ app.get("/games", async (req, res) => {
   }
 });
 
-app.post("/games/save", async (req, res) => {
+app.post("/games/save", csrfProtection, async (req, res) => {
   try {
     const {
       chainId,
@@ -568,6 +587,11 @@ app.post("/games/save", async (req, res) => {
       maxPlayers,
       txHash,
     } = req.body;
+
+    const cleanName = sanitizeHtml(name, {
+      allowedTags: [],
+      allowedAttributes: {},
+    });
 
     await pool.query(
       `
@@ -589,7 +613,7 @@ app.post("/games/save", async (req, res) => {
         chainId,
         contractGameId,
         creator,
-        name,
+        cleanName,
         category,
         difficulty,
         entryFee,
@@ -611,13 +635,25 @@ app.post("/games/save", async (req, res) => {
 
 app.get("/stats", async (req, res) => {
   try {
-    const result = await pool.query(`
+    // TOTAL EVER VOLUME
+    const totalVolumeResult = await pool.query(`
       SELECT total_volume
       FROM platform_stats
       WHERE id = 1
     `);
 
-    res.json(result.rows[0]);
+    // ACTIVE POOLS
+    const activePoolsResult = await pool.query(`
+      SELECT COALESCE(SUM(prize_pool),0) AS total_in_play
+      FROM games
+      WHERE status = 0
+    `);
+
+    res.json({
+      totalVolume: totalVolumeResult.rows[0]?.total_volume || 0,
+
+      totalInPlay: activePoolsResult.rows[0]?.total_in_play || 0,
+    });
   } catch (e) {
     res.status(500).json({
       error: e.message,
@@ -816,7 +852,7 @@ app.post("/profile/setup", async (req, res) => {
 });
 
 // Link wallet to existing Google account (requires signature)
-app.post("/profile/wallet", async (req, res) => {
+app.post("/profile/wallet", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet, signature } = req.body;
 
@@ -854,16 +890,29 @@ app.post("/profile/wallet", async (req, res) => {
   }
 });
 
-app.post("/profile/avatar", async (req, res) => {
+app.post("/profile/avatar", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { avatar } = req.body;
   if (!avatar) return res.status(400).json({ error: "No avatar" });
-  if (!avatar.startsWith("https://")) {
+  const allowedDomains = [
+    "i.imgur.com",
+    "cdn.discordapp.com",
+    "lh3.googleusercontent.com",
+  ];
+
+  const url = new URL(avatar);
+
+  if (url.protocol !== "https:") {
     return res.status(400).json({
       error: "Only HTTPS images allowed",
     });
   }
 
+  if (!allowedDomains.includes(url.hostname)) {
+    return res.status(400).json({
+      error: "Invalid image host",
+    });
+  }
   if (avatar.length > 500) {
     return res.status(400).json({
       error: "Avatar URL too long",
@@ -1625,7 +1674,7 @@ function getLocalQuestions(catId, diff, count = 10) {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-app.post("/game/start", async (req, res) => {
+app.post("/game/start", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
   const {
@@ -1823,7 +1872,9 @@ app.post("/game/start", async (req, res) => {
 // SUBMIT SCORE
 // =============================================================================
 
-app.post("/submit-score", scoreLimiter, async (req, res) => {
+app.post("/submit-score", csrfProtection, async (req, res) => {
+  const client = await pool.connect();
+
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
   const { gameId, wallet, answers, chainId: reqChainId } = req.body;
@@ -1846,6 +1897,26 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
   if (![5042002, 4441].includes(Number(chainId))) {
     return res.status(400).json({ error: "Invalid chain" });
   }
+
+  const now = Date.now();
+
+  const last = walletCooldowns.get(wallet) || 0;
+
+  if (now - last < 10000) {
+    return res.status(429).json({
+      error: "Slow down",
+    });
+  }
+
+  const duration = Date.now() - new Date(session.rows[0].started_at).getTime();
+
+  if (duration < 5000) {
+    return res.status(400).json({
+      error: "Too fast",
+    });
+  }
+
+  walletCooldowns.set(wallet, now);
 
   const effectiveWallet = (req.user.wallet || wallet || "").toLowerCase();
   if (!effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet))
@@ -1874,7 +1945,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     return new ethers.Contract(LITVM_CONTRACT_ADDRESS, CONTRACT_ABI, p);
   }
 
-  const played = await pool.query(
+  const played = await client.query(
     `SELECT finished_at
     FROM game_sessions
     WHERE user_id=$1
@@ -1967,20 +2038,40 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Score already submitted onchain" });
 
     // ✅ Check DB session
-    let sessionCheck = await pool.query(
-      "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId],
+
+    await client.query("BEGIN");
+
+    sessionCheck = await client.query(
+      `
+      SELECT id, finished, score
+      FROM game_sessions
+      WHERE user_id=$1
+      AND game_id=$2
+      AND chain_id=$3
+      FOR UPDATE
+
+      `,
+      [req.user.id, gameId, chainId],
     );
+
     if (sessionCheck.rows.length === 0) {
       try {
-        await pool.query(
+        await client.query(
           "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
           [req.user.id, effectiveWallet, gameId, chainId],
         );
         // Re-fetch after insert
-        sessionCheck = await pool.query(
-          "SELECT id, finished, score FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-          [req.user.id, gameId],
+        sessionCheck = await client.query(
+          `
+          SELECT id, finished, score
+          FROM game_sessions
+          WHERE user_id=$1
+          AND game_id=$2
+          AND chain_id=$3
+          FOR UPDATE
+
+          `,
+          [req.user.id, gameId, chainId],
         );
       } catch (_) {}
     }
@@ -1997,12 +2088,12 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
             "nonces-retry",
           );
 
-          await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
+          await client.query("UPDATE users SET nonce=$1 WHERE id=$2", [
             nonce.toString(),
             req.user.id,
           ]);
         } catch (e) {
-          const nonceRow = await pool.query(
+          const nonceRow = await client.query(
             "SELECT nonce FROM users WHERE id=$1",
             [req.user.id],
           );
@@ -2018,7 +2109,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         console.log(
           `🔄 Retry signature: game=${gameId} score=${cachedScore} nonce=${nonce}`,
         );
-        await pool.query(
+        await client.query(
           `
           UPDATE game_sessions
           SET finished=true,
@@ -2028,7 +2119,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
           AND game_id=$3
           AND chain_id=$4
           `,
-          [score, req.user.id, gameId, chainId],
+          [cachedScore, req.user.id, gameId, chainId],
         );
         return res.json({
           score: cachedScore,
@@ -2045,7 +2136,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
         nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
-        await pool.query("UPDATE users SET nonce=$1 WHERE id=$2", [
+        client.query("UPDATE users SET nonce=$1 WHERE id=$2", [
           nonce.toString(),
           req.user.id,
         ]);
@@ -2060,6 +2151,28 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         }
         await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
+    }
+
+    // ✅ Verify game deadline from blockchain
+    let gameData;
+
+    try {
+      gameData = await activeRpcCall((c) => c.getGame(gameId), "getGame");
+    } catch (e) {
+      return res.status(503).json({
+        error: "Could not verify game",
+      });
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // playDeadline index from contract struct
+    const playDeadline = Number(gameData.playDeadline || gameData[11]);
+
+    if (now > playDeadline) {
+      return res.status(400).json({
+        error: "Game already ended",
+      });
     }
 
     // Check game is still open before signing
@@ -2081,7 +2194,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         .json({ error: "No game session found. Play the game first." });
     }
 
-    const sessionData = await pool.query(
+    const sessionData = await client.query(
       `SELECT started_at, finished
       FROM game_sessions
       WHERE id=$1`,
@@ -2148,21 +2261,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       seenIdx.add(key);
     }
 
-    // ✅ Answer timestamp gap check — blocks bots answering in <300ms
-    const sorted = [...answers].sort(
-      (a, b) => (a.answeredAt || 0) - (b.answeredAt || 0),
-    );
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = (sorted[i].answeredAt || 0) - (sorted[i - 1].answeredAt || 0);
-      if (gap > 0 && gap < 300) {
-        return res
-          .status(400)
-          .json({ error: "Bot-like answering speed detected" });
-      }
-    }
-
     // In /submit-score, replace the scoring section:
-    const storedQs = await pool.query(
+    const storedQs = await client.query(
       "SELECT q_index, correct_answer FROM game_questions WHERE session_id=$1 ORDER BY q_index",
       [sessionId],
     );
@@ -2185,8 +2285,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         );
         if (!userAnswer || !userAnswer.selected) continue;
         if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(0, Math.min(10, userAnswer.timeLeft || 0)); // cap at 10s not 15
-          score += 100 + Math.floor((tl / 15) * 50); // max ~133 per questio
+          score += 100;
         }
       }
       score = Math.min(score, 1500);
@@ -2206,18 +2305,18 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       ethers.getBytes(message),
     );
 
-    await pool.query(
+    await client.query(
       `UPDATE game_sessions
-  SET finished=true,
-  score=$1,
-  finished_at=NOW()
-  WHERE user_id=$2
-  AND game_id=$3
-  AND chain_id=$4`,
+      SET finished=true,
+      score=$1,
+      finished_at=NOW()
+      WHERE user_id=$2
+      AND game_id=$3
+      AND chain_id=$4`,
       [score, req.user.id, gameId, chainId],
     );
 
-    const game = await pool.query(
+    const game = await client.query(
       `
   SELECT entry_fee
   FROM games
@@ -2228,7 +2327,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     );
 
     if (game.rows.length > 0) {
-      await pool.query(
+      await client.query(
         `
     UPDATE platform_stats
     SET total_volume = total_volume + $1
@@ -2239,7 +2338,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     }
 
     // Increment DB nonce as fallback backup
-    await pool.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
+    await client.query("UPDATE users SET nonce = nonce + 1 WHERE id=$1", [
       req.user.id,
     ]);
 
@@ -2247,10 +2346,14 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       `✅ Score: game=${gameId} score=${score} wallet=${effectiveWallet}`,
     );
 
+    await client.query("COMMIT");
     res.json({ score, signature, nonce: nonce.toString() });
   } catch (e) {
+    await client.query("ROLLBACK");
     console.error("Submit error:", e.message);
     res.status(500).json({ error: "Server error: " + e.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -2288,6 +2391,16 @@ app.get("/stats/global", async (req, res) => {
         COALESCE(SUM(score) FILTER (WHERE finished = true), 0) as total_score
       FROM game_sessions
     `);
+
+    // ✅ ADD THIS
+    const inPlayResult = await pool.query(`
+      SELECT COALESCE(SUM(prize_pool),0) AS total_in_play
+      FROM games
+      WHERE status = 0
+    `);
+
+    const totalInPlay = inPlayResult.rows[0]?.total_in_play || 0;
+
     const topPlayers = await pool.query(`
       SELECT u.username, u.wallet, u.avatar,
              COUNT(gs.id) as games_played,
@@ -2300,11 +2413,15 @@ app.get("/stats/global", async (req, res) => {
       ORDER BY best_score DESC
       LIMIT 10
     `);
+
     res.json({
       totalPlayers: parseInt(r.rows[0].total_players) || 0,
       totalGamesPlayed: parseInt(r.rows[0].total_games_played) || 0,
       totalFinished: parseInt(r.rows[0].total_finished) || 0,
       topPlayers: topPlayers.rows,
+
+      // ✅ NOW WORKS
+      totalInPlay,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

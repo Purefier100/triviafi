@@ -284,14 +284,12 @@ async function startGame() {
 // ========================
 // ANSWER SELECTION
 // ========================
-function selectAnswer(questionId, selected, timeLeft) {
+function selectAnswer(questionId, selected) {
   const q = questions[currentIndex];
 
   answers.push({
     questionIndex: questionId,
     selected,
-    timeLeft,
-    answeredAt: Date.now(),
   });
 
   currentIndex++;
@@ -318,8 +316,7 @@ function loadQuestions() {
     btn.textContent = option;
 
     btn.onclick = () => {
-      const timeLeft = getRemainingTime(); // your timer function
-      selectAnswer(q.id, option, timeLeft);
+      selectAnswer(q.id, option);
     };
 
     container.appendChild(btn);
@@ -338,9 +335,18 @@ async function submitScore() {
 
     console.log("SENDING ANSWERS:", answers);
 
+    const csrfRes = await fetch(`${BACKEND}/csrf-token`, {
+      credentials: "include",
+    });
+
+    const csrfData = await csrfRes.json();
+
     const res = await fetch(`${BACKEND}/submit-score`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "CSRF-Token": csrfData.csrfToken,
+      },
       credentials: "include",
       body: JSON.stringify({
         gameId: currentGameId,
@@ -374,6 +380,11 @@ async function submitScore() {
     saveScore(currentGameId, data.score);
 
     toast("✅ Score submitted onchain!", "success");
+    await loadGames();
+
+    await loadGlobalStats();
+
+    await refreshResults();
   } catch (e) {
     console.error(e);
     toast("Submit failed", "error");
@@ -825,6 +836,54 @@ async function resolveUsernames(wallets) {
   return result;
 }
 
+function startAutoRefresh() {
+  stopAutoRefresh();
+
+  autoRefreshInterval = setInterval(async () => {
+    try {
+      // refresh games
+      if (typeof loadGames === "function") {
+        await loadGames();
+      }
+
+      // refresh lobby stats
+      if (typeof loadGlobalStats === "function") {
+        await loadGlobalStats();
+      }
+
+      // refresh prizes
+      if (userAddress && typeof loadUnclaimedPrizes === "function") {
+        await loadUnclaimedPrizes();
+      }
+
+      // refresh history
+      const historyScreen = document.getElementById("screenHistory");
+
+      if (
+        historyScreen &&
+        historyScreen.classList.contains("active") &&
+        typeof loadHistoryScreen === "function"
+      ) {
+        await loadHistoryScreen();
+      }
+
+      // refresh results if inside game
+      if (currentGameId && typeof refreshResults === "function") {
+        await refreshResults();
+      }
+    } catch (e) {
+      console.log("Auto refresh error:", e.message);
+    }
+  }, 10000);
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
+}
+
 function displayName(wallet) {
   if (!wallet || wallet === "0x0000000000000000000000000000000000000000")
     return "—";
@@ -927,6 +986,7 @@ const STATUS_LABEL = ["Open", "Ended", "Cancelled"];
 const STATUS_BADGE = ["b-wait", "b-ended", "b-cancel"];
 
 let provider, signer, contract, usdcContract;
+let autoRefreshInterval = null;
 let readProvider, readContract;
 let userAddress = null,
   platformAddress = null;
@@ -949,8 +1009,7 @@ let streakCount = 0,
   streakBonusPending = false;
 const STREAK_THRESHOLD = 3,
   STREAK_BONUS_USDC = "0.002";
-let autoRefreshInterval = null,
-  countdownInterval = null;
+countdownInterval = null;
 
 function submittedKey(gid) {
   return `arc_submitted_${gid}`;
@@ -1075,31 +1134,6 @@ function checkUrlGame() {
   const p = new URLSearchParams(location.search);
   const g = p.get("game");
   if (g && /^\d+$/.test(g)) window.pendingGameId = parseInt(g);
-}
-
-function startAutoRefresh(gameId) {
-  stopAutoRefresh();
-  autoRefreshInterval = setInterval(async () => {
-    const screen = document.querySelector(".screen.active");
-    if (!screen) return;
-    if (screen.id === "screenResults") await refreshResults();
-    else if (screen.id === "screenJoin" && gameId) {
-      try {
-        currentGame = await getGame(gameId);
-        document.querySelectorAll(".gmeta strong").forEach((el) => {
-          if (el.textContent.includes("/"))
-            el.textContent = `${Number(currentGame[9])}/${currentGame[7]}`;
-        });
-      } catch (_) {}
-    }
-  }, 12000);
-}
-
-function stopAutoRefresh() {
-  if (autoRefreshInterval) {
-    clearInterval(autoRefreshInterval);
-    autoRefreshInterval = null;
-  }
 }
 
 const providerOptions = {
@@ -3638,6 +3672,7 @@ async function loadGlobalStats() {
     const players = data.totalPlayers || 0;
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
+    const inPlay = Number(data.totalInPlay || 0).toFixed(2);
 
     el.innerHTML = `
       <div class="gs-live-dot"></div>
@@ -3658,6 +3693,20 @@ async function loadGlobalStats() {
           ${games}
         </strong>
         games played
+      </div>
+
+      <div class="gs-divider"></div>
+      
+      <div class="gs-item">
+      
+      <strong class="live-counter">
+      
+      ${inPlay}
+      
+      </strong>
+      
+      in play
+      
       </div>
 
       <div class="gs-divider"></div>
