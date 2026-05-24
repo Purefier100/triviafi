@@ -1528,8 +1528,8 @@ async function loadGames() {
   const renderId = Date.now();
   lastGamesRender = renderId;
   const grid = document.getElementById("gamesGrid");
-
-  if (grid) {
+  // Only show skeleton on first load, not background refreshes
+  if (grid && allGames.length === 0) {
     grid.innerHTML = skeletonCards(6);
   }
 
@@ -2557,16 +2557,27 @@ async function showMyGames() {
 
 async function doJoin() {
   if (!contract || !userAddress) return toast("Connect wallet first", "error");
+  const joinBtn = document.querySelector('[onclick="doJoin()"]');
+  if (joinBtn) {
+    joinBtn.disabled = true;
+    joinBtn.textContent = "⏳ Processing...";
+  }
   try {
     const entryFee = currentGame[6];
-
     if (activeNet.isNative) {
-      // ✅ LitVM — send zkLTC as native token value
       toast("Joining with zkLTC...", "info");
       const tx = await contract.joinGame(currentGameId, { value: entryFee });
+      // Optimistic UI update — no refresh needed
+      const newCount = Number(currentGame[9]) + 1;
+      document.querySelectorAll(".gmeta strong").forEach((el) => {
+        if (el.textContent.includes("/"))
+          el.textContent = `${newCount}/${currentGame[7]}`;
+      });
+      // Update allGames cache
+      const entry = allGames.find((g) => g.i === currentGameId);
+      if (entry) entry.g[9] = BigInt(newCount);
       await tx.wait();
     } else {
-      // ✅ Arc — ERC20 USDC approve + join
       const allowance = await usdcContract.allowance(
         userAddress,
         CONTRACT_ADDRESS,
@@ -2578,16 +2589,30 @@ async function doJoin() {
       }
       toast("Step 2/2: Joining game...", "info");
       const tx2 = await contract.joinGame(currentGameId);
+      // Optimistic update
+      const newCount = Number(currentGame[9]) + 1;
+      document.querySelectorAll(".gmeta strong").forEach((el) => {
+        if (el.textContent.includes("/"))
+          el.textContent = `${newCount}/${currentGame[7]}`;
+      });
+      const entry = allGames.find((g) => g.i === currentGameId);
+      if (entry) entry.g[9] = BigInt(newCount);
       await tx2.wait();
     }
-
     toast("✅ Joined successfully!", "success");
     currentGame = await getGame(currentGameId);
-    await openGame(currentGameId);
+    await openGame(
+      currentGameId,
+      activeNet === NETWORKS[4441] ? 4441 : 5042002,
+    );
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
+    if (joinBtn) {
+      joinBtn.disabled = false;
+      joinBtn.textContent = `💰 Pay & Reserve Spot`;
+    }
   }
-  await loadGames();
+  loadGames(); // background refresh, non-blocking
 }
 
 async function doJoin_withGuestMode() {
@@ -3068,14 +3093,38 @@ async function getAIHint() {
 
 async function doClaimRefund(gameId) {
   if (!contract) return toast("Connect wallet first", "error");
+  const refundBtn = document.querySelector(
+    `[onclick="doClaimRefund(${gameId})"]`,
+  );
+  if (refundBtn) {
+    refundBtn.disabled = true;
+    refundBtn.textContent = "⏳ Claiming...";
+  }
   toast("Claiming refund...", "info");
   try {
     const tx = await contract.claimRefund(gameId);
     await tx.wait();
     toast("✅ Refund claimed!", "success");
+    // Update card badge in lobby grid without reloading
+    document.querySelectorAll(".gcard").forEach((card) => {
+      const onclick = card.getAttribute("onclick") || "";
+      if (onclick.includes(`(${gameId}`)) {
+        const badge = card.querySelector(".badge");
+        if (badge) {
+          badge.className = "badge b-cancel";
+          badge.textContent = "Cancelled";
+        }
+      }
+    });
+    const entry = allGames.find((g) => g.i === gameId);
+    if (entry) entry.g[14] = 2;
     showScreen("screenLobby");
-    await loadGames();
+    loadGames();
   } catch (e) {
+    if (refundBtn) {
+      refundBtn.disabled = false;
+      refundBtn.textContent = "💸 Claim Refund";
+    }
     toast("Failed: " + (e.reason || e.message), "error");
   }
 }
@@ -3149,6 +3198,37 @@ async function submitMyScore() {
 
     verifiedScore = data.score ?? score;
     signature = data.signature;
+    // Optimistic leaderboard update — shows score before tx confirms
+    const lbEl = document.getElementById("leaderboard");
+    if (lbEl && userAddress) {
+      let found = false;
+      lbEl.querySelectorAll(".lb-row").forEach((row) => {
+        if (
+          row.querySelector(".lb-addr")?.textContent.includes(fmt(userAddress))
+        ) {
+          const sc = row.querySelector(".lb-score");
+          const tag = row.querySelector(".lb-tag");
+          if (sc) {
+            sc.textContent = (data.score ?? score) + " pts";
+            sc.style.color = "var(--gold)";
+          }
+          if (tag) {
+            tag.className = "lb-tag lb-done";
+            tag.textContent = "Done";
+          }
+          found = true;
+        }
+      });
+      if (!found) {
+        const row = document.createElement("div");
+        row.className = "lb-row";
+        row.innerHTML = `<span class="lb-rank">—</span>
+          <span class="lb-addr">${fmt(userAddress)} (you)</span>
+          <span class="lb-score" style="color:var(--gold)">${data.score ?? score} pts</span>
+          <span class="lb-tag lb-done">Done</span>`;
+        lbEl.prepend(row);
+      }
+    }
 
     toast(`Step 2/2: Submitting ${verifiedScore} pts onchain...`, "info");
     if (btn) {
@@ -3341,16 +3421,28 @@ async function refreshResults() {
 
 async function doClaimPrize() {
   if (!contract) return toast("Connect wallet first", "error");
+  const claimBtn = document.querySelector(
+    '.btn-gold[onclick="doClaimPrize()"]',
+  );
+  if (claimBtn) {
+    claimBtn.disabled = true;
+    claimBtn.textContent = "⏳ Claiming...";
+  }
   toast("Claiming prize...", "info");
   try {
     const tx = await contract.claimPrize(currentGameId);
     await tx.wait();
     toast("🎉 Prize claimed! USDC sent to your wallet.", "success");
     loadMyStats();
+    checkUnclaimedPrizes(); // refresh banner immediately
     const active = document.querySelector(".screen.active")?.id;
     if (active === "screenResults") await refreshResults();
     else await openGameReadOnly(currentGameId);
   } catch (e) {
+    if (claimBtn) {
+      claimBtn.disabled = false;
+      claimBtn.textContent = "💰 Claim Prize";
+    }
     toast("Failed: " + (e.reason || e.message), "error");
   }
 }
@@ -3445,8 +3537,39 @@ async function submitCreate() {
     } catch (_) {}
 
     toast(`✅ Room "${name}" deployed on ${activeNet.name}!`, "success");
+    toast(`✅ Room "${name}" deployed on ${activeNet.name}!`, "success");
     showScreen("screenLobby");
-    await loadGames();
+    // Optimistic card — shows instantly before chain confirmation
+    const nowTs = Math.floor(Date.now() / 1000);
+    const regEnd = nowTs + parseInt(reg);
+    const dp = activeNet.decimals === 18 ? 4 : 2;
+    const chainBadge =
+      activeNet === NETWORKS[4441]
+        ? `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);margin-left:5px">🔷 LitVM</span>`
+        : `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25);margin-left:5px">⚡ Arc</span>`;
+    const newCard = document.createElement("div");
+    newCard.className = "gcard";
+    newCard.style.cssText =
+      "border-color:rgba(0,229,255,.6);transition:border-color 2s";
+    newCard.setAttribute(
+      "onclick",
+      `openGame(${newGameId},${parseInt(activeNet.hexChainId, 16)})`,
+    );
+    newCard.innerHTML = `
+      <div class="gcard-title">#${newGameId} ${sanitizeText(name)}
+        <span class="badge b-wait">Open</span>${chainBadge}</div>
+      <div style="font-size:.75rem;color:var(--green);margin-bottom:8px;font-weight:600">📋 Joining Open</div>
+      <div class="gmeta">💰 Entry: <strong>${parseFloat(fee).toFixed(dp)} ${activeNet.symbol}</strong> | 🏆 Pool: <strong>0 ${activeNet.symbol}</strong></div>
+      <div class="gmeta">👥 <strong>0/${max}</strong> joined</div>
+      <div class="gmeta">By: <span style="color:var(--purple)">${fmt(userAddress)}</span></div>
+      <span class="cat-pill">📚 ${sanitizeText(selectedCatName)}</span>`;
+    setTimeout(() => {
+      newCard.style.borderColor = "";
+    }, 2500);
+    const grid = document.querySelector("#gamesList .game-grid");
+    if (grid) grid.prepend(newCard);
+    else await loadGames();
+    loadGames(); // background sync
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
   }
@@ -3473,10 +3596,28 @@ async function doCancelRoom(gameId) {
   if (!confirm("Cancel this room? All players will get full refunds.")) return;
   try {
     const tx = await contract.cancelGame(gameId, "Creator cancelled");
+    // Optimistic update — flip badge immediately
+    document.querySelectorAll(".gcard").forEach((card) => {
+      const onclick = card.getAttribute("onclick") || "";
+      if (onclick.includes(`openGame(${gameId}`)) {
+        const badge = card.querySelector(".badge");
+        if (badge) {
+          badge.className = "badge b-cancel";
+          badge.textContent = "Cancelled";
+        }
+        const phase = card.querySelector('[style*="font-weight:600"]');
+        if (phase) {
+          phase.textContent = "❌ Cancelled";
+          phase.style.color = "var(--red)";
+        }
+      }
+    });
+    const entry = allGames.find((g) => g.i === gameId);
+    if (entry) entry.g[14] = 2;
     await tx.wait();
     toast("Room cancelled.", "success");
     showScreen("screenLobby");
-    await loadGames();
+    loadGames();
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
   }
@@ -3544,9 +3685,7 @@ async function checkUnclaimedPrizes() {
   if (!banner) return;
 
   const claims = [];
-  const now = Math.floor(Date.now() / 1000);
 
-  // ── Scan both chains for unclaimed prizes ─────────────────────────────────
   try {
     const arcProvider = new ethers.JsonRpcProvider(
       "https://rpc.testnet.arc.network",
@@ -3571,24 +3710,22 @@ async function checkUnclaimedPrizes() {
     ]) {
       const count = Number(await rc.gameCounter().catch(() => 0));
       if (count === 0) continue;
-
-      const scanFrom = Math.max(1, count - 80);
       const checks = [];
-      for (let i = count; i >= scanFrom; i--)
+      for (let i = count; i >= Math.max(1, count - 80); i--) {
         checks.push(
           rc
             .getPlayerStatus(i, userAddress)
-            .then(async ([joined, finished, claimed, score]) => {
+            .then(async ([joined, finished, claimed]) => {
               if (!joined || claimed) return null;
               const g = await rc.getGame(i).catch(() => null);
               if (!g) return null;
               const status = Number(g.status ?? g[14]);
-              if (status !== 1) return null; // only ended games
+              if (status !== 1) return null;
               const topPlayers = g.topPlayers ?? g[12];
               const myPos = Array.from(topPlayers).findIndex(
                 (p) => p?.toLowerCase() === userAddress.toLowerCase(),
               );
-              if (myPos < 0) return null; // not a winner
+              if (myPos < 0) return null;
               const prizePool = g.prizePool ?? g[8];
               const n = Number(g.playerCount ?? g[9]);
               const dist =
@@ -3601,12 +3738,11 @@ async function checkUnclaimedPrizes() {
                     : [dist * 0.6, dist * 0.25, dist * 0.15];
               const prize = prizes[myPos] || 0;
               if (prize <= 0) return null;
-              const name = g.name ?? g[1];
               return {
                 gameId: i,
                 chainId,
                 net,
-                name,
+                name: g.name ?? g[1],
                 prize,
                 myPos,
                 type: "prize",
@@ -3614,12 +3750,12 @@ async function checkUnclaimedPrizes() {
             })
             .catch(() => null),
         );
+      }
       const results = (await Promise.all(checks)).filter(Boolean);
       claims.push(...results);
     }
   } catch (_) {}
 
-  // ── Check unclaimed bet winnings ──────────────────────────────────────────
   try {
     const res = await fetch(`${BACKEND}/bets/unclaimed/${userAddress}`, {
       credentials: "include",
@@ -3645,54 +3781,94 @@ async function checkUnclaimedPrizes() {
     return;
   }
 
-  // ── Render banner ─────────────────────────────────────────────────────────
-  const chainIcon = (cid) => (cid === 4441 ? "🔷" : "⚡");
+  // Totals
+  const totalUSDC = claims
+    .filter((c) => c.net?.decimals === 6)
+    .reduce((s, c) => s + c.prize, 0);
+  const totalZKLTC = claims
+    .filter((c) => c.net?.decimals === 18)
+    .reduce((s, c) => s + c.prize, 0);
+  let totalStr = "";
+  if (totalUSDC > 0) totalStr += `${totalUSDC.toFixed(2)} USDC`;
+  if (totalZKLTC > 0)
+    totalStr += (totalStr ? " + " : "") + `${totalZKLTC.toFixed(4)} zkLTC`;
+
   const medals = ["🥇", "🥈", "🥉"];
+  const positions = ["1st", "2nd", "3rd"];
 
-  let html = `
-    <div style="background:linear-gradient(135deg,rgba(255,209,102,.08),rgba(123,97,255,.08));border:1px solid rgba(255,209,102,.35);border-radius:16px;padding:16px 20px;margin-bottom:20px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <span style="font-size:1.4rem">🎁</span>
-        <div>
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:1.5px;color:var(--gold)">YOU HAVE UNCLAIMED PRIZES!</div>
-          <div style="font-size:.75rem;color:var(--muted)">Click a game below to claim your winnings</div>
+  const rows = claims
+    .slice(0, 6)
+    .map((c) => {
+      const dp = c.net?.decimals === 18 ? 4 : 2;
+      const chainIcon = c.chainId === 4441 ? "🔷" : "⚡";
+      const isPrize = c.type === "prize";
+      const accentColor = isPrize ? "var(--gold)" : "var(--purple)";
+      const rowBg = isPrize ? "rgba(255,209,102,.05)" : "rgba(123,97,255,.05)";
+      const rowBorder = isPrize
+        ? "rgba(255,209,102,.15)"
+        : "rgba(123,97,255,.15)";
+      const label = isPrize
+        ? `${medals[c.myPos] || "🏆"} ${positions[c.myPos] || ""} Place · Game #${c.gameId}`
+        : `🎲 Bet won · Game #${c.gameId}`;
+      return `
+      <div onclick="openGameReadOnly(${c.gameId},${c.chainId})"
+        style="display:flex;align-items:center;justify-content:space-between;
+          padding:9px 12px;border-radius:8px;cursor:pointer;
+          background:${rowBg};border:1px solid ${rowBorder};
+          transition:opacity .15s;gap:12px;margin-bottom:4px"
+        onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
+          <span style="font-size:.75rem;flex-shrink:0">${chainIcon}</span>
+          <div style="min-width:0">
+            <div style="font-size:.8rem;font-weight:600;color:var(--text);
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</div>
+            <div style="font-size:.71rem;color:var(--muted);margin-top:1px">
+              ${sanitizeText(c.name)}</div>
+          </div>
         </div>
-        <button onclick="document.getElementById('unclaimedBanner').style.display='none'" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px">✕</button>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <span style="font-size:.88rem;font-weight:700;color:${accentColor}">
+            ${c.prize.toFixed(dp)} ${c.net?.symbol || "USDC"}</span>
+          <button onclick="event.stopPropagation();openGameReadOnly(${c.gameId},${c.chainId})"
+            style="background:${accentColor};color:#000;border:none;
+              padding:4px 12px;border-radius:20px;font-size:.72rem;
+              font-weight:700;cursor:pointer;white-space:nowrap;
+              font-family:inherit">
+            Claim →
+          </button>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  const moreCount = claims.length > 6 ? claims.length - 6 : 0;
+
+  banner.innerHTML = `
+    <div style="background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.18);
+      border-radius:12px;margin-bottom:16px;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;
+        padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.05)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:.85rem;font-weight:700;color:var(--gold);
+            text-transform:uppercase;letter-spacing:.5px">🎁 Unclaimed prizes</span>
+          <span style="font-size:.72rem;font-weight:700;padding:1px 8px;
+            border-radius:20px;background:rgba(239,71,111,.15);color:var(--red);
+            border:1px solid rgba(239,71,111,.25)">${claims.length}</span>
+          <span style="font-size:.8rem;font-weight:700;color:var(--green)">${totalStr}</span>
+        </div>
+        <button onclick="document.getElementById('unclaimedBanner').style.display='none'"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;
+            font-size:.95rem;padding:2px 6px;border-radius:6px;line-height:1"
+          onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">✕</button>
       </div>
-      <div style="display:flex;flex-direction:column;gap:8px">`;
-
-  for (const c of claims) {
-    const dp = c.net.decimals === 18 ? 4 : 2;
-    const prizeStr = c.prize.toFixed(dp) + " " + c.net.symbol;
-    if (c.type === "prize") {
-      html += `
-        <div onclick="openGameReadOnly(${c.gameId}, ${c.chainId})" style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.2);border-radius:10px;padding:10px 14px;cursor:pointer;transition:background .2s" onmouseover="this.style.background='rgba(255,209,102,.12)'" onmouseout="this.style.background='rgba(255,209,102,.06)'">
-          <div>
-            <div style="font-size:.85rem;font-weight:700">${chainIcon(c.chainId)} #${c.gameId} ${sanitizeText(c.name)}</div>
-            <div style="font-size:.72rem;color:var(--muted);margin-top:2px">${medals[c.myPos]} ${["1st", "2nd", "3rd"][c.myPos]} Place Winner · Game Prize</div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-size:1rem;font-weight:700;color:var(--gold)">${prizeStr}</div>
-            <div style="font-size:.68rem;background:rgba(255,209,102,.15);color:var(--gold);border:1px solid rgba(255,209,102,.3);padding:2px 8px;border-radius:8px;margin-top:3px">Claim →</div>
-          </div>
-        </div>`;
-    } else {
-      html += `
-        <div onclick="openGameReadOnly(${c.gameId}, ${c.chainId})" style="display:flex;align-items:center;justify-content:space-between;background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.2);border-radius:10px;padding:10px 14px;cursor:pointer;transition:background .2s" onmouseover="this.style.background='rgba(123,97,255,.12)'" onmouseout="this.style.background='rgba(123,97,255,.06)'">
-          <div>
-            <div style="font-size:.85rem;font-weight:700">${chainIcon(c.chainId)} #${c.gameId} ${sanitizeText(c.name)}</div>
-            <div style="font-size:.72rem;color:var(--muted);margin-top:2px">🎲 Your prediction was correct! Bet winnings</div>
-          </div>
-          <div style="text-align:right">
-            <div style="font-size:1rem;font-weight:700;color:var(--purple)">${prizeStr}</div>
-            <div style="font-size:.68rem;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);padding:2px 8px;border-radius:8px;margin-top:3px">Claim →</div>
-          </div>
-        </div>`;
-    }
-  }
-
-  html += `</div></div>`;
-  banner.innerHTML = html;
+      <div style="padding:8px 10px">${rows}</div>
+      ${
+        moreCount > 0
+          ? `<div style="text-align:center;padding:4px 0 10px;
+        font-size:.73rem;color:var(--muted)">+${moreCount} more</div>`
+          : ""
+      }
+    </div>`;
   banner.style.display = "block";
 }
 
@@ -3971,12 +4147,15 @@ function shuffle(arr) {
 function copyShare(text) {
   navigator.clipboard.writeText(text).then(() => toast("Copied!", "success"));
 }
+
 function toast(msg, type) {
   const el = document.getElementById("toast");
   el.textContent = msg;
   el.className = type;
-  if (type === "success") setTimeout(hideToast, 5000);
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(hideToast, type === "error" ? 6000 : 4000);
 }
+
 function hideToast() {
   document.getElementById("toast").className = "";
 }
