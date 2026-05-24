@@ -2180,252 +2180,6 @@
         transform: scale(1);
       }
     }
-
-    .network-switcher {
-      position: relative;
-    }
-
-    /* MAIN BUTTON */
-
-    #networkTrigger {
-      height: 48px;
-
-      min-width: 190px;
-
-      padding: 0 18px;
-
-      border-radius: 16px;
-
-      border: 1px solid rgba(255, 255, 255, .08);
-
-      background:
-        linear-gradient(180deg,
-          rgba(255, 255, 255, .045),
-          rgba(255, 255, 255, .02));
-
-      backdrop-filter: blur(16px);
-
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-
-      color: #f5f7ff;
-
-      font-size: .88rem;
-      font-weight: 700;
-
-      letter-spacing: .2px;
-
-      cursor: pointer;
-
-      transition:
-        all .22s ease;
-
-      box-shadow:
-        0 10px 30px rgba(0, 0, 0, .35),
-        0 0 0 1px rgba(0, 229, 255, .03);
-    }
-
-    /* HOVER */
-
-    #networkTrigger:hover {
-      border-color:
-        rgba(0, 229, 255, .28);
-
-      background:
-        linear-gradient(180deg,
-          rgba(0, 229, 255, .08),
-          rgba(255, 255, 255, .03));
-
-      transform:
-        translateY(-1px);
-
-      box-shadow:
-        0 14px 34px rgba(0, 0, 0, .42),
-        0 0 24px rgba(0, 229, 255, .08);
-    }
-
-    /* ACTIVE OPEN */
-
-    .network-switcher.open #networkTrigger {
-      border-color:
-        rgba(0, 229, 255, .35);
-
-      box-shadow:
-        0 0 24px rgba(0, 229, 255, .12);
-    }
-
-    /* CHEVRON */
-
-    #netChevron {
-      opacity: .55;
-
-      transition:
-        transform .24s ease,
-        opacity .2s ease;
-    }
-
-    .network-switcher.open #netChevron {
-      transform: rotate(180deg);
-
-      opacity: 1;
-    }
-
-    /* DROPDOWN */
-
-    #networkMenu {
-      position: absolute;
-
-      top: calc(100% + 10px);
-
-      left: 0;
-
-      width: 100%;
-
-      padding: 8px;
-
-      border-radius: 18px;
-
-      border:
-        1px solid rgba(255, 255, 255, .08);
-
-      background:
-        rgba(10, 14, 24, .96);
-
-      backdrop-filter: blur(18px);
-
-      display: none;
-
-      flex-direction: column;
-
-      gap: 6px;
-
-      z-index: 9999;
-
-      box-shadow:
-        0 24px 60px rgba(0, 0, 0, .55),
-        0 0 30px rgba(0, 229, 255, .05);
-
-      animation:
-        networkDrop .18s ease;
-    }
-
-    #networkMenu.open {
-      display: flex;
-    }
-
-    /* DROPDOWN ANIMATION */
-
-    @keyframes networkDrop {
-      from {
-        opacity: 0;
-        transform:
-          translateY(-8px) scale(.98);
-      }
-
-      to {
-        opacity: 1;
-        transform:
-          translateY(0) scale(1);
-      }
-    }
-
-    /* NETWORK OPTION */
-
-    .net-opt {
-      width: 100%;
-
-      height: 52px;
-
-      padding: 0 14px;
-
-      border: none;
-
-      border-radius: 14px;
-
-      background: transparent;
-
-      display: flex;
-      align-items: center;
-      gap: 12px;
-
-      cursor: pointer;
-
-      color:
-        rgba(220, 230, 255, .72);
-
-      font-size: .88rem;
-      font-weight: 700;
-
-      transition:
-        all .18s ease;
-    }
-
-    /* HOVER */
-
-    .net-opt:hover {
-      background:
-        rgba(255, 255, 255, .05);
-
-      color: #fff;
-
-      transform:
-        translateX(2px);
-    }
-
-    /* ACTIVE */
-
-    .net-opt-active {
-      background:
-        linear-gradient(135deg,
-          rgba(0, 229, 255, .14),
-          rgba(123, 97, 255, .12));
-
-      border:
-        1px solid rgba(0, 229, 255, .18);
-
-      color: #00e5ff;
-
-      box-shadow:
-        inset 0 0 18px rgba(0, 229, 255, .04);
-    }
-
-    .net-opt-active:hover {
-      color: #7ef2ff;
-    }
-
-    /* ICON */
-
-    .net-opt-icon {
-      width: 24px;
-      display: flex;
-      justify-content: center;
-
-      font-size: 1rem;
-    }
-
-    /* LABEL */
-
-    .net-opt-label {
-      flex: 1;
-    }
-
-    /* MOBILE */
-
-    @media(max-width:768px) {
-
-      #networkTrigger {
-        min-width: 170px;
-        height: 44px;
-        font-size: .8rem;
-      }
-
-      .net-opt {
-        height: 48px;
-        font-size: .82rem;
-      }
-    }
   </style>
 </head>
 
@@ -2435,117 +2189,126 @@
 
   <header>
     <div class="logo">TRIVIA</div>
-    <div class="network-switcher" style="position:relative">
-      <button id="networkTrigger" onclick="toggleNetworkMenu()">
-        <span id="selectedNetwork">⚡ Arc · USDC</span>
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" id="netChevron">
-          <path d="m6 9 6 6 6-6"></path>
+
+    <div class="hdr-r">
+
+      <!-- Network Switcher -->
+      <div class="network-switcher" style="position:relative">
+        <button id="networkTrigger" onclick="toggleNetworkMenu()"
+          style="display:flex;align-items:center;gap:8px;height:40px;padding:0 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#f0f0f0;font-size:.82rem;font-weight:700;cursor:pointer;">
+          <span id="selectedNetwork">⚡ Arc · USDC</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
+        </button>
+        <div id="networkMenu"
+          style="display:none;position:absolute;top:calc(100% + 8px);right:0;min-width:170px;background:#16213e;border:1px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;z-index:1000;">
+          <button onclick="selectNetwork('arc');switchToNetwork(5042002)" id="netOptArc" class="net-opt net-opt-active"
+            style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;background:rgba(0,229,255,0.06);border:none;color:#00e5ff;font-size:.83rem;font-weight:700;cursor:pointer;text-align:left;">
+            <span>⚡</span><span>Arc · USDC</span>
+          </button>
+          <button onclick="selectNetwork('litvm');switchToNetwork(4441)" id="netOptLitvm" class="net-opt"
+            style="display:flex;align-items:center;gap:10px;width:100%;padding:11px 16px;background:transparent;border:none;color:#a0a0c0;font-size:.83rem;font-weight:700;cursor:pointer;text-align:left;border-top:1px solid rgba(255,255,255,0.06);">
+            <span>🔷</span><span>LitVM · zkLTC</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Google Login -->
+      <button id="googleLoginBtn" onclick="loginWithGoogle()"
+        style="display:none;align-items:center;gap:7px;height:40px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);color:#eef3ff;font-size:.84rem;font-weight:700;cursor:pointer;">
+        <svg width="14" height="14" viewBox="0 0 24 24">
+          <path fill="#4285F4"
+            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+          <path fill="#34A853"
+            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+          <path fill="#FBBC05"
+            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+          <path fill="#EA4335"
+            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
         </svg>
+        Login with Google
       </button>
 
-      <div id="networkMenu">
-        <button onclick="selectNetwork('arc');switchToNetwork(5042002)" id="netOptArc" class="net-opt net-opt-active">
-          <span class="net-opt-icon">⚡</span>
-          <span class="net-opt-label">Arc · USDC</span>
-        </button>
-        <button onclick="selectNetwork('litvm');switchToNetwork(4441)" id="netOptLitvm" class="net-opt">
-          <span class="net-opt-icon">🔷</span>
-          <span class="net-opt-label">LitVM · zkLTC</span>
-        </button>
-      </div>
-    </div>
+      <!-- Connect Wallet -->
+      <button id="connectBtn" onclick="connectWallet()"
+        style="height:40px;padding:0 20px;border:none;border-radius:12px;background:linear-gradient(135deg,#00cfff,#5b6cff);color:white;font-size:.88rem;font-weight:800;cursor:pointer;box-shadow:0 8px 20px rgba(0,229,255,0.18);transition:.2s;">
+        🦊 Connect Wallet
+      </button>
 
-    <button id="googleLoginBtn" onclick="loginWithGoogle()"
-      style="font-weight:600;font-size:.82rem;padding:8px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;display:none;align-items:center;gap:7px">
-      <svg width="14" height="14" viewBox="0 0 24 24">
-        <path fill="#4285F4"
-          d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-        <path fill="#34A853"
-          d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-        <path fill="#FBBC05"
-          d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-        <path fill="#EA4335"
-          d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-      </svg>
-      Login with Google
-    </button>
-
-    <button id="connectBtn" onclick="connectWallet()"
-      style="font-weight:600;font-size:.88rem;padding:9px 20px;border-radius:8px;border:none;cursor:pointer;background:linear-gradient(135deg,var(--accent),var(--purple));color:#000;transition:opacity .2s,transform .1s">
-      🦊 Connect Wallet
-    </button>
-
-    <div class="profile-trigger" id="profileTrigger" style="display:none" onclick="toggleProfileDropdown(event)">
-      <div class="profile-avatar" id="headerAvatar">P</div>
-      <div class="online-dot"></div>
-      <span class="profile-name" id="headerName">@user</span>
-      <span class="profile-chevron">▾</span>
-      <div class="profile-dropdown" id="profileDropdown" onclick="event.stopPropagation()">
-        <div class="pd-header">
-          <div class="pd-avatar-big" id="pdAvatarBig" onclick="openPfpModal()">P</div>
-          <div>
-            <div class="pd-name" id="pdName">@user</div>
-            <div class="pd-email" id="pdEmail">—</div>
-            <div class="pd-online"><span
-                style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span>
-              Online · Arc Testnet</div>
-          </div>
-        </div>
-        <div class="pd-stats">
-          <div class="pd-stat">
-            <div class="pd-stat-n" id="dpPlayed">0</div>
-            <div class="pd-stat-l">Played</div>
-          </div>
-          <div class="pd-stat">
-            <div class="pd-stat-n" style="color:var(--gold)" id="dpWon">0</div>
-            <div class="pd-stat-l">Won</div>
-          </div>
-          <div class="pd-stat">
-            <div class="pd-stat-n" style="color:var(--green)" id="dpEarned">$0</div>
-            <div class="pd-stat-l">Earned</div>
-          </div>
-        </div>
-        <div class="pd-connections">
-          <div class="pd-conn-label">Connected accounts</div>
-          <div class="pd-conn-row">
-            <div class="pd-conn-left">
-              <div class="pd-conn-icon" style="background:rgba(66,133,244,.1)"><svg width="13" height="13"
-                  viewBox="0 0 24 24">
-                  <path fill="#4285F4"
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                  <path fill="#34A853"
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                  <path fill="#FBBC05"
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                  <path fill="#EA4335"
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                </svg></div>
-              <span id="pdGoogleLabel">Google</span>
+      <!-- Profile -->
+      <div class="profile-trigger" id="profileTrigger" style="display:none" onclick="toggleProfileDropdown(event)">
+        <div class="profile-avatar" id="headerAvatar">P</div>
+        <div class="online-dot"></div>
+        <span class="profile-name" id="headerName">@user</span>
+        <span class="profile-chevron">▾</span>
+        <div class="profile-dropdown" id="profileDropdown" onclick="event.stopPropagation()">
+          <!-- keep your existing dropdown content here unchanged -->
+          <div class="pd-header">
+            <div class="pd-avatar-big" id="pdAvatarBig" onclick="openPfpModal()">P</div>
+            <div>
+              <div class="pd-name" id="pdName">@user</div>
+              <div class="pd-email" id="pdEmail">—</div>
+              <div class="pd-online"><span
+                  style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span>
+                Online · Arc Testnet</div>
             </div>
-            <span id="pdGoogleStatus" class="conn-linked">✓ Linked</span>
           </div>
-          <div class="pd-conn-row">
-            <div class="pd-conn-left">
-              <div class="pd-conn-icon" style="background:rgba(0,229,255,.1);font-size:13px">🦊</div>
-              <span id="pdWalletLabel">Wallet</span>
+          <div class="pd-stats">
+            <div class="pd-stat">
+              <div class="pd-stat-n" id="dpPlayed">0</div>
+              <div class="pd-stat-l">Played</div>
             </div>
-            <span id="pdWalletStatus" class="conn-linked">✓ Linked</span>
+            <div class="pd-stat">
+              <div class="pd-stat-n" style="color:var(--gold)" id="dpWon">0</div>
+              <div class="pd-stat-l">Won</div>
+            </div>
+            <div class="pd-stat">
+              <div class="pd-stat-n" style="color:var(--green)" id="dpEarned">$0</div>
+              <div class="pd-stat-l">Earned</div>
+            </div>
           </div>
-        </div>
-        <div class="pd-menu">
-          <div class="pd-item" onclick="openPfpModal();toggleProfileDropdown(null)"><span class="pd-item-icon">🖼</span>
-            Edit profile picture</div>
-          <div class="pd-item" onclick="showMyHistory();toggleProfileDropdown(null)"><span
-              class="pd-item-icon">🏆</span> My game history</div>
-          <div class="pd-item" onclick="showStatsScreen();toggleProfileDropdown(null)"><span
-              class="pd-item-icon">📊</span> My stats</div>
-          <div class="pd-divider"></div>
-          <div class="pd-item pd-danger" onclick="logoutAll()"><span class="pd-item-icon">→</span> Sign out</div>
+          <div class="pd-connections">
+            <div class="pd-conn-label">Connected accounts</div>
+            <div class="pd-conn-row">
+              <div class="pd-conn-left">
+                <div class="pd-conn-icon" style="background:rgba(66,133,244,.1)"><svg width="13" height="13"
+                    viewBox="0 0 24 24">
+                    <path fill="#4285F4"
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="#34A853"
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="#FBBC05"
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                    <path fill="#EA4335"
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                  </svg></div><span id="pdGoogleLabel">Google</span>
+              </div>
+              <span id="pdGoogleStatus" class="conn-linked">✓ Linked</span>
+            </div>
+            <div class="pd-conn-row">
+              <div class="pd-conn-left">
+                <div class="pd-conn-icon" style="background:rgba(0,229,255,.1);font-size:13px">🦊</div><span
+                  id="pdWalletLabel">Wallet</span>
+              </div>
+              <span id="pdWalletStatus" class="conn-linked">✓ Linked</span>
+            </div>
+          </div>
+          <div class="pd-menu">
+            <div class="pd-item" onclick="openPfpModal();toggleProfileDropdown(null)"><span
+                class="pd-item-icon">🖼</span> Edit profile picture</div>
+            <div class="pd-item" onclick="showMyHistory();toggleProfileDropdown(null)"><span
+                class="pd-item-icon">🏆</span> My game history</div>
+            <div class="pd-item" onclick="showStatsScreen();toggleProfileDropdown(null)"><span
+                class="pd-item-icon">📊</span> My stats</div>
+            <div class="pd-divider"></div>
+            <div class="pd-item pd-danger" onclick="logoutAll()"><span class="pd-item-icon">→</span> Sign out</div>
+          </div>
         </div>
       </div>
-    </div>
-    </div>
+
+    </div><!-- end .hdr-r -->
   </header>
 
   <div id="globalStatsBar"></div>

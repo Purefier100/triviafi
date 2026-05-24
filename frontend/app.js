@@ -3619,38 +3619,63 @@ async function confirmBet(gameId, playerAddr) {
   }
 }
 
+const networkMenu =
+  document.getElementById("networkMenu");
+
+const networkSwitcher =
+  document.querySelector(".network-switcher");
+
+const selectedNetwork =
+  document.getElementById("selectedNetwork");
+
+const netOptArc =
+  document.getElementById("netOptArc");
+
+const netOptLitvm =
+  document.getElementById("netOptLitvm");
+
+/* TOGGLE MENU */
+
 function toggleNetworkMenu() {
   const menu = document.getElementById("networkMenu");
-  const chevron = document.getElementById("netChevron");
-  const isOpen = menu.classList.toggle("open");
-  chevron.style.transform = isOpen ? "rotate(180deg)" : "rotate(0deg)";
+  menu.style.display = menu.style.display === "block" ? "none" : "block";
 }
 
-function selectNetwork(network) {
+/* SELECT NETWORK */
+
+function selectNetwork(network){
+
   const isArc = network === "arc";
-  document.getElementById("selectedNetwork").textContent = isArc ? "⚡ Arc · USDC" : "🔷 LitVM · zkLTC";
 
-  // Update active state on options
-  document.getElementById("netOptArc").className = "net-opt" + (isArc ? " net-opt-active" : "");
-  document.getElementById("netOptLitvm").className = "net-opt" + (!isArc ? " net-opt-active" : "");
+  selectedNetwork.textContent =
+    isArc
+      ? "⚡ Arc · USDC"
+      : "🔷 LitVM · zkLTC";
 
-  // Close menu
-  document.getElementById("networkMenu").classList.remove("open");
-  document.getElementById("netChevron").style.transform = "rotate(0deg)";
+  netOptArc.classList.toggle(
+    "net-opt-active",
+    isArc
+  );
+
+  netOptLitvm.classList.toggle(
+    "net-opt-active",
+    !isArc
+  );
+
+  networkMenu.classList.remove("open");
+
+  networkSwitcher.classList.remove("open");
 }
 
-// Close on outside click — replace the old listener
+/* OUTSIDE CLICK */
 document.addEventListener("click", (e) => {
-  const switcher = document.querySelector(".network-switcher");
+  const trigger = document.getElementById("networkTrigger");
   const menu = document.getElementById("networkMenu");
-  const chevron = document.getElementById("netChevron");
-  if (switcher && !switcher.contains(e.target)) {
-    menu.classList.remove("open");
-    if (chevron) chevron.style.transform = "rotate(0deg)";
+  if (menu && trigger && !trigger.contains(e.target) && !menu.contains(e.target)) {
+    menu.style.display = "none";
   }
-  // keep profile dropdown close logic too
-  const t = document.getElementById("profileTrigger");
-  if (t && !t.contains(e.target)) t.classList.remove("open");
+  const profile = document.getElementById("profileTrigger");
+  if (profile && !profile.contains(e.target)) profile.classList.remove("open");
 });
 
 function fmt(addr) {
