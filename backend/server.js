@@ -1674,7 +1674,7 @@ function getLocalQuestions(catId, diff, count = 10) {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-app.post("/game/start", csrfProtection, async (req, res) => {
+app.post("/game/start", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
   const {
@@ -1872,7 +1872,7 @@ app.post("/game/start", csrfProtection, async (req, res) => {
 // SUBMIT SCORE
 // =============================================================================
 
-app.post("/submit-score", csrfProtection, async (req, res) => {
+app.post("/submit-score", scoreLimiter, async (req, res) => {
   const client = await pool.connect();
 
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
@@ -1908,11 +1908,12 @@ app.post("/submit-score", csrfProtection, async (req, res) => {
     });
   }
 
-  if (duration < 5000) {
-    return res.status(400).json({
-      error: "Too fast",
-    });
+  const sessionStartTime = walletCooldowns.get(wallet + "_start") || now;
+  const duration = now - sessionStartTime;
+  if (duration > 0 && duration < 5000) {
+    return res.status(400).json({ error: "Too fast" });
   }
+  walletCooldowns.set(wallet + "_start", now);
 
   walletCooldowns.set(wallet, now);
 
@@ -2039,7 +2040,7 @@ app.post("/submit-score", csrfProtection, async (req, res) => {
 
     await client.query("BEGIN");
 
-    sessionCheck = await client.query(
+    let sessionCheck = await client.query(
       `
       SELECT id, finished, score
       FROM game_sessions
@@ -2059,7 +2060,7 @@ app.post("/submit-score", csrfProtection, async (req, res) => {
           [req.user.id, effectiveWallet, gameId, chainId],
         );
         // Re-fetch after insert
-        sessionCheck = await client.query(
+        let sessionCheck = await client.query(
           `
           SELECT id, finished, score
           FROM game_sessions

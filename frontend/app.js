@@ -2025,9 +2025,12 @@ async function openGameReadOnly(gameId, gameChainId) {
     const tempProvider = new ethers.JsonRpcProvider(net.rpc);
     readContract = new ethers.Contract(net.contractAddress, ABI, tempProvider);
   }
-  currentGameId = gameId;
   try {
     const g = await getGame(gameId);
+    if (!g) {
+      toast("Could not load game. Try again.", "error");
+      return;
+    }
     currentGame = g;
     const [
       ,
@@ -2279,6 +2282,10 @@ async function openGame(gameId, gameChainId) {
   }
   currentGameId = gameId;
   const g = await getGame(gameId);
+  if (!g) {
+    toast("Could not load game. Try again.", "error");
+    return;
+  }
   currentGame = g;
   const [
     ,
@@ -2437,7 +2444,7 @@ async function openGame(gameId, gameChainId) {
 
     try {
       const chk = await fetch(
-        `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
+        `${BACKEND}/game/status/${currentGameId}?chainId=${currentGameChainId || 5042002}`,
         { credentials: "include" },
       );
 
