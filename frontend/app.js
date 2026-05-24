@@ -1806,7 +1806,9 @@ function renderGames() {
       const g = getG(item);
       const s = Number(g[14]);
       if (s !== 0) return false;
-      return Number(g[11]) > now;
+      const playDeadline = Number(g[11]);
+      // If playDeadline is 0 or missing, include the game anyway
+      return playDeadline === 0 || playDeadline > now;
     });
   } else if (filterStatus === "0") {
     filtered = allGames.filter((item) => {
