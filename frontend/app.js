@@ -724,14 +724,47 @@ function loginWithGoogle() {
 
 async function logoutAll() {
   try {
-    await fetch(`${BACKEND}/auth/logout`, { credentials: "include" });
+    await fetch(`${BACKEND}/auth/logout`, {
+      credentials: "include",
+    });
   } catch (_) {}
+
+  // RESET EVERYTHING
   currentProfile = null;
-  provider = signer = contract = usdcContract = null;
+  provider = null;
+  signer = null;
+  contract = null;
+  usdcContract = null;
   userAddress = null;
+
   stopAutoRefresh();
+
+  // CLOSE DROPDOWN
+  const trigger = document.getElementById("profileTrigger");
+  if (trigger) {
+    trigger.classList.remove("open");
+    trigger.style.display = "none";
+  }
+
+  // SHOW CONNECT BUTTON AGAIN
+  const connectBtn = document.getElementById("connectBtn");
+  if (connectBtn) {
+    connectBtn.style.display = "flex";
+    connectBtn.textContent = "🦊 Connect Wallet";
+  }
+
+  // HIDE GOOGLE BUTTON
+  const gBtn = document.getElementById("googleLoginBtn");
+  if (gBtn) {
+    gBtn.style.display = "none";
+  }
+
+  // FORCE UI RE-RENDER
   renderAuthState();
+
+  // RETURN TO LOBBY
   showScreen("screenLobby");
+
   toast("Signed out", "info");
 }
 
