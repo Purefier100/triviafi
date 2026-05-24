@@ -2182,17 +2182,62 @@
     }
 
     .rooms-footer {
+      margin-top: 22px;
+
+      padding: 22px;
+
+      border-radius: 18px;
+
+      background:
+        linear-gradient(135deg,
+          rgba(255, 255, 255, .03),
+          rgba(255, 255, 255, .01));
+
+      border:
+        1px solid rgba(255, 255, 255, .06);
+
       display: flex;
       align-items: center;
       justify-content: space-between;
 
-      gap: 16px;
+      gap: 24px;
 
-      margin-top: 18px;
-      padding-top: 18px;
+      position: relative;
 
-      border-top:
-        1px solid rgba(255, 255, 255, .06);
+      overflow: hidden;
+    }
+
+    .rooms-footer::before {
+      content: "";
+
+      position: absolute;
+      inset: 0;
+
+      background:
+        radial-gradient(circle at top right,
+          rgba(0, 229, 255, .12),
+          transparent 40%);
+
+      pointer-events: none;
+    }
+
+    .rooms-live-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+
+      font-size: .95rem;
+      font-weight: 700;
+
+      color: #f4f7ff;
+    }
+
+    .rooms-subtext {
+      color: #94a3b8;
+
+      font-size: .82rem;
+
+      line-height: 1.7;
     }
 
     /* LEFT SIDE */
@@ -2200,13 +2245,10 @@
     .rooms-footer-left {
       display: flex;
       flex-direction: column;
-      gap: 6px;
 
-      color: #d8e7ff;
+      gap: 10px;
 
-      font-size: .84rem;
-
-      line-height: 1.5;
+      z-index: 2;
     }
 
     /* LIVE DOT */
@@ -2228,13 +2270,13 @@
     /* BUTTON */
 
     .rooms-create-btn {
-      height: 44px;
+      height: 52px;
 
-      padding: 0 18px;
+      padding: 0 24px;
 
       border: none;
 
-      border-radius: 12px;
+      border-radius: 16px;
 
       background:
         linear-gradient(135deg,
@@ -2243,24 +2285,27 @@
 
       color: white;
 
-      font-size: .84rem;
+      font-size: .92rem;
       font-weight: 800;
+
+      letter-spacing: .3px;
 
       cursor: pointer;
 
-      flex-shrink: 0;
-
       box-shadow:
-        0 10px 24px rgba(0, 229, 255, .18);
+        0 12px 30px rgba(0, 229, 255, .22);
 
-      transition: .2s;
+      transition: .25s;
+
+      z-index: 2;
     }
 
     .rooms-create-btn:hover {
-      transform: translateY(-2px);
+      transform:
+        translateY(-3px) scale(1.02);
 
       box-shadow:
-        0 14px 28px rgba(0, 229, 255, .24);
+        0 18px 38px rgba(0, 229, 255, .28);
     }
 
     /* MOBILE */
@@ -2533,20 +2578,25 @@
             <div class="skeleton skeleton-card"></div>
           </div>
         </div>
-        <div class="rooms-footer-left">
+        <div class="rooms-footer">
 
-          <div style="display:flex;align-items:center;gap:8px">
-            <span class="rooms-live-dot"></span>
-            <span>Live rooms updating in real-time</span>
+          <div class="rooms-footer-left">
+
+            <div class="rooms-live-row">
+              <span class="rooms-live-dot"></span>
+              <span>Live rooms updating in real-time</span>
+            </div>
+
+            <div class="rooms-subtext">
+              ⚡ Onchain Trivia Arena<br>
+              🎮 Arc + LitVM Multiplayer Rooms
+            </div>
+
           </div>
 
-          <div style="font-size:.75rem;color:var(--muted)">
-            Onchain Trivia Arena
-            <br>
-            ⚡ Arc + LitVM Networks
-            <br>
-            🎮 Real-Time Multiplayer Rooms
-          </div>
+          <button class="rooms-create-btn">
+            + Create Room
+          </button>
 
         </div>
 
