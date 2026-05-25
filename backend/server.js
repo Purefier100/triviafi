@@ -309,6 +309,12 @@ async function initDB() {
       );
     `);
 
+    await pool
+      .query(
+        `ALTER TABLE games ADD COLUMN IF NOT EXISTS prize_pool NUMERIC(36,18) DEFAULT 0`,
+      )
+      .catch(() => {});
+
     // =========================================================================
     // // PLATFORM STATS
     // // =========================================================================
@@ -595,6 +601,7 @@ app.post("/games/save", csrfProtection, async (req, res) => {
       tokenSymbol,
       maxPlayers,
       txHash,
+      prizePool,
     } = req.body;
 
     const cleanName = sanitizeHtml(name, {
@@ -603,21 +610,11 @@ app.post("/games/save", csrfProtection, async (req, res) => {
     });
 
     await pool.query(
-      `
-      INSERT INTO games (
-        chain_id,
-        contract_game_id,
-        creator,
-        name,
-        category,
-        difficulty,
-        entry_fee,
-        token_symbol,
-        max_players,
-        tx_hash
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-    `,
+      `INSERT INTO games (chain_id,contract_game_id,creator,name,category,
+      difficulty,entry_fee,token_symbol,max_players,tx_hash,prize_pool)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      ON CONFLICT (chain_id,contract_game_id) 
+      DO UPDATE SET prize_pool=EXCLUDED.prize_pool, status=EXCLUDED.status`,
       [
         chainId,
         contractGameId,
@@ -629,6 +626,7 @@ app.post("/games/save", csrfProtection, async (req, res) => {
         tokenSymbol,
         maxPlayers,
         txHash,
+        prizePool || 0,
       ],
     );
 
@@ -644,29 +642,19 @@ app.post("/games/save", csrfProtection, async (req, res) => {
 
 app.get("/stats", async (req, res) => {
   try {
-    // TOTAL EVER VOLUME
-    const totalVolumeResult = await pool.query(`
-      SELECT total_volume
-      FROM platform_stats
-      WHERE id = 1
-    `);
-
-    // ACTIVE POOLS
-    const activePoolsResult = await pool.query(`
-      SELECT COALESCE(SUM(entry_fee * max_players), 0) AS total_in_play
-      FROM games
-      WHERE status = 0
-    `);
-
+    const totalVolumeResult = await pool.query(
+      `SELECT total_volume FROM platform_stats WHERE id = 1`,
+    );
+    const activePoolsResult = await pool.query(
+      `SELECT COALESCE(SUM(prize_pool), 0) AS total_in_play
+       FROM games WHERE status = 0`,
+    );
     res.json({
       totalVolume: totalVolumeResult.rows[0]?.total_volume || 0,
-
       totalInPlay: activePoolsResult.rows[0]?.total_in_play || 0,
     });
   } catch (e) {
-    res.status(500).json({
-      error: e.message,
-    });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -2136,7 +2124,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
         nonce = await activeRpcCall((c) => c.nonces(effectiveWallet), "nonces");
-        client.query("UPDATE users SET nonce=$1 WHERE id=$2", [
+        await client.query("UPDATE users SET nonce=$1 WHERE id=$2", [
           nonce.toString(),
           req.user.id,
         ]);
@@ -2252,23 +2240,42 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         .status(400)
         .json({ error: "No questions found. Play the game first." });
     } else {
-      // ✅ Validate answer count — prevent skipping questions
+      // ✅ Validate answer count
       if (answers.length < storedQs.rows.length * 0.5) {
-        return res.status(400).json({ error: "Too few answers submitted" });
+        return res.status(400).json({
+          error: "Too few answers submitted",
+        });
       }
-      // ✅ Server-side scoring — q_index coerced, speed bonus capped
+
+      // ✅ Score answers safely
       for (const stored of storedQs.rows) {
         const userAnswer = answers.find(
           (a) => Number(a.questionIndex) === Number(stored.q_index),
         );
-        if (!userAnswer || !userAnswer.selected) continue;
+
+        if (!userAnswer || !userAnswer.selected) {
+          continue;
+        }
+
         if (userAnswer.selected === stored.correct_answer) {
-          score += 100;
+          const tl = Math.max(
+            0,
+            Math.min(15, Number(userAnswer.timeLeft || 0)),
+          );
+
+          // 100 base + max 50 speed bonus
+          score += 100 + Math.floor((tl / 15) * 50);
         }
       }
+
+      // Prevent impossible scores
       score = Math.min(score, 1500);
+
+      // Ensure at least one answer submitted
       if (answers.filter((a) => a.selected).length === 0) {
-        return res.status(400).json({ error: "No answers submitted" });
+        return res.status(400).json({
+          error: "No answers submitted",
+        });
       }
     }
 

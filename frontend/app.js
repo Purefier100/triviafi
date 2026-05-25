@@ -2755,6 +2755,34 @@ async function doJoin() {
       currentGameId,
       activeNet === NETWORKS[4441] ? 4441 : 5042002,
     );
+    try {
+      const updatedGame = await getGame(currentGameId);
+      if (updatedGame) {
+        const newPool = parseFloat(
+          ethers.formatUnits(updatedGame[8], activeNet.decimals),
+        );
+        await fetch(`${BACKEND}/games/save`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            chainId: parseInt(activeNet.hexChainId, 16),
+            contractGameId: currentGameId,
+            creator: updatedGame[2],
+            name: updatedGame[1],
+            category: updatedGame[4],
+            difficulty: Number(updatedGame[5]),
+            entryFee: parseFloat(
+              ethers.formatUnits(updatedGame[6], activeNet.decimals),
+            ),
+            tokenSymbol: activeNet.symbol,
+            maxPlayers: Number(updatedGame[7]),
+            txHash: "",
+            prizePool: newPool,
+          }),
+        });
+      }
+    } catch (_) {}
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
     if (joinBtn) {
@@ -3748,6 +3776,7 @@ async function submitCreate() {
           tokenSymbol: activeNet.symbol,
           maxPlayers: parseInt(max),
           txHash: receipt.hash,
+          prizePool: 0, // starts at 0, updated when players join
         }),
       });
     } catch (_) {}
