@@ -1102,11 +1102,13 @@ async function createProvider(chainId) {
   for (const rpc of rpcs) {
     try {
       const p = new ethers.JsonRpcProvider(rpc);
-
-      await p.getBlockNumber();
-
+      await Promise.race([
+        p.getBlockNumber(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), 3000),
+        ),
+      ]);
       console.log("✅ Using RPC:", rpc);
-
       return p;
     } catch (e) {
       console.warn("❌ RPC failed:", rpc);
@@ -2055,6 +2057,11 @@ function renderGames() {
 }
 
 async function openGameReadOnly(gameId, gameChainId) {
+  // ✅ Always set currentGameId and currentGameChainId
+  currentGameId = gameId;
+  currentGameChainId =
+    gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+
   // Switch readContract to correct chain
   if (gameChainId && NETWORKS[gameChainId]) {
     const net = NETWORKS[gameChainId];
@@ -2114,11 +2121,11 @@ async function openGameReadOnly(gameId, gameChainId) {
       if (myWinnerPos >= 0) {
         myPrize = prizes[myWinnerPos] || 0;
         try {
-          const [, , claimed_] = await readContract.getPlayerStatus(
+          const statusRes = await readContract.getPlayerStatus(
             gameId,
             userAddress,
           );
-          alreadyClaimed = claimed_;
+          alreadyClaimed = statusRes[2];
         } catch (_) {}
       }
     }
@@ -3438,9 +3445,10 @@ async function refreshResults() {
             : [dist * 0.6, dist * 0.25, dist * 0.15];
       const prize = (prizes[myPos] || 0).toFixed(2);
       const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
-      const [, , claimed_] = userAddress
+      const claimStatusRes = userAddress
         ? await readContract.getPlayerStatus(currentGameId, userAddress)
         : [false, false, false];
+      const claimed_ = claimStatusRes[2];
       document.getElementById("winnerBanner").innerHTML =
         `<div class="winner-banner"><h3>${
           medals[myPos]
@@ -3510,6 +3518,39 @@ async function refreshResults() {
 
 async function doClaimPrize() {
   if (!contract) return toast("Connect wallet first", "error");
+
+  // ✅ Switch to correct chain before claiming
+  const targetChainId =
+    currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+  if (
+    NETWORKS[targetChainId] &&
+    targetChainId !==
+      (provider ? Number((await provider.getNetwork()).chainId) : null)
+  ) {
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
+      });
+      await new Promise((r) => setTimeout(r, 500));
+      activeNet = NETWORKS[targetChainId];
+      CONTRACT_ADDRESS = activeNet.contractAddress;
+      USDC_ADDRESS = activeNet.tokenAddress;
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      if (!activeNet.isNative) {
+        usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+      } else {
+        usdcContract = null;
+      }
+      updateNetBar();
+    } catch (e) {
+      toast("Failed to switch network: " + e.message, "error");
+      return;
+    }
+  }
+
   // Auto-trigger end if game hasn't been ended yet
   try {
     const g = await getGame(currentGameId);
@@ -3654,7 +3695,6 @@ async function submitCreate() {
       });
     } catch (_) {}
 
-    toast(`✅ Room "${name}" deployed on ${activeNet.name}!`, "success");
     toast(`✅ Room "${name}" deployed on ${activeNet.name}!`, "success");
     showScreen("screenLobby");
     // Optimistic card — shows instantly before chain confirmation
@@ -3845,7 +3885,11 @@ async function checkUnclaimedPrizes() {
         checks.push(
           rc
             .getPlayerStatus(i, userAddress)
-            .then(async ([joined, finished, claimed]) => {
+            .then(async (statusResult) => {
+              const joined = statusResult[0];
+              const finished = statusResult[1];
+              const claimed = statusResult[2];
+              // Skip if not joined, or prize already claimed by this player
               if (!joined || claimed) return null;
               const g = await rc.getGame(i).catch(() => null);
               if (!g) return null;
