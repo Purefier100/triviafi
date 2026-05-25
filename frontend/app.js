@@ -1620,19 +1620,14 @@ async function loadGames() {
     document.getElementById("gTotal").textContent = totalCount;
 
     if (totalCount === 0) {
-      grid.innerHTML = `
-    <p style="color:var(--muted);text-align:center;padding:30px">
-      No games yet! Create the first one.
-    </p>
-  `;
-
-      document.getElementById("gPool").textContent = "$0";
+      grid.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet! Create the first one.</p>`;
+      document.getElementById("gPool").innerHTML =
+        `<span style="color:var(--accent)">$0.00 USDC</span> <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span> <span style="color:var(--purple)">0.0000 zkLTC</span>`;
       document.getElementById("gActive").textContent = "0";
-
       gamesLoading = false;
-
       return;
     }
+
     const LIMIT = 100;
     const BATCH = 5;
     allGames = [];
@@ -1694,19 +1689,16 @@ async function loadGames() {
     for (const { g, net } of allGames) {
       const gamePool = BigInt(g[8]);
       totalVolume += gamePool;
-      const s = Number(g[14]);
-      const playDeadline = Number(g[11]);
-      const isActive = s === 0 && playDeadline > nowSec;
-      if (isActive) {
-        activeCount++;
-      }
-      // ✅ Count pool for ALL open games regardless of deadline
-      if (s === 0) {
+      // ✅ Count status=0 games regardless of deadline — prize is still locked in
+      const isOpen = Number(g[14]) === 0;
+      const isActiveLobby = isOpen && Number(g[11]) > nowSec;
+      if (isOpen) {
         if (net.decimals === 6) {
           arcPool += gamePool;
         } else {
           litvmPool += gamePool;
         }
+        if (isActiveLobby) activeCount++;
       }
     }
 
