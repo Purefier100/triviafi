@@ -434,25 +434,61 @@ async function loadGameStatus(gameId) {
 async function loadDropdownStats() {
   if (!userAddress) return;
   try {
-    const [played, won, earned] =
-      await readContract.getPlayerStats(userAddress);
+    // Fetch Arc stats
+    const arcProvider2 = new ethers.JsonRpcProvider(
+      "https://rpc.testnet.arc.network",
+    );
+    const arcRC2 = new ethers.Contract(
+      NETWORKS[5042002].contractAddress,
+      ABI,
+      arcProvider2,
+    );
+    const litvmProvider2 = new ethers.JsonRpcProvider(
+      "https://liteforge.rpc.caldera.xyz/http",
+    );
+    const litvmRC2 = new ethers.Contract(
+      NETWORKS[4441].contractAddress,
+      ABI,
+      litvmProvider2,
+    );
+
+    const [arcStats, litvmStats] = await Promise.allSettled([
+      arcRC2.getPlayerStats(userAddress),
+      litvmRC2.getPlayerStats(userAddress),
+    ]);
+
+    let totalPlayed = 0n,
+      totalWon = 0n,
+      totalEarned = 0n;
+    if (arcStats.status === "fulfilled") {
+      totalPlayed += BigInt(arcStats.value[0]);
+      totalWon += BigInt(arcStats.value[1]);
+      totalEarned += BigInt(arcStats.value[2]); // USDC (6 decimals)
+    }
+    if (litvmStats.status === "fulfilled") {
+      totalPlayed += BigInt(litvmStats.value[0]);
+      totalWon += BigInt(litvmStats.value[1]);
+      // zkLTC earnings shown separately — skip adding to USDC total
+    }
+
+    const usdcEarned = parseFloat(
+      ethers.formatUnits(
+        arcStats.status === "fulfilled" ? arcStats.value[2] : 0n,
+        6,
+      ),
+    ).toFixed(2);
+
     const map = {
-      dpPlayed: played,
-      dpWon: won,
-      dpEarned:
-        parseFloat(ethers.formatUnits(earned, activeNet.decimals)).toFixed(2) +
-        " " +
-        activeNet.symbol,
-      myPlayed: played,
-      myWon: won,
-      myEarned:
-        parseFloat(ethers.formatUnits(earned, activeNet.decimals)).toFixed(2) +
-        " " +
-        activeNet.symbol,
+      dpPlayed: totalPlayed.toString(),
+      dpWon: totalWon.toString(),
+      dpEarned: usdcEarned + " USDC",
+      myPlayed: totalPlayed.toString(),
+      myWon: totalWon.toString(),
+      myEarned: usdcEarned + " USDC",
     };
     Object.entries(map).forEach(([id, v]) => {
       const el = document.getElementById(id);
-      if (el) el.textContent = typeof v === "bigint" ? v.toString() : v;
+      if (el) el.textContent = v;
     });
   } catch (_) {}
 }
@@ -1711,23 +1747,27 @@ async function loadGames() {
 
     const totalZKLTC = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(4);
 
-    document.getElementById("gPool").innerHTML = `
-  <span style="color:var(--accent)">
-    $${totalUSDC} USDC
-  </span>
-
-  <span style="
-    color:var(--muted);
-    font-size:.7rem;
-    margin:0 4px
-  ">
-    +
-  </span>
-
-  <span style="color:var(--purple)">
-    ${totalZKLTC} zkLTC
-  </span>
+    const showPool = parseFloat(totalUSDC) > 0 || parseFloat(totalZKLTC) > 0;
+    if (showPool) {
+      document.getElementById("gPool").innerHTML = `
+    <span style="color:var(--accent)">$${totalUSDC} USDC</span>
+    <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span>
+    <span style="color:var(--purple)">${totalZKLTC} zkLTC</span>
   `;
+    } else {
+      // Fallback: show total volume from DB when no active pools
+      try {
+        const statsRes = await fetch(`${BACKEND}/stats/global`);
+        const statsData = await statsRes.json();
+        const vol = Number(statsData.totalVolume || 0).toFixed(2);
+        document.getElementById("gPool").innerHTML =
+          `<span style="color:var(--accent)">$${vol} USDC</span>
+       <span style="color:var(--muted);font-size:.75rem;margin-left:6px">total volume</span>`;
+      } catch (_) {
+        document.getElementById("gPool").innerHTML =
+          `<span style="color:var(--muted)">—</span>`;
+      }
+    }
     document.getElementById("gActive").textContent = activeCount;
 
     renderGames();
@@ -3865,65 +3905,28 @@ async function loadGlobalStats() {
     const data = await res.json();
 
     const el = document.getElementById("globalStatsBar");
-
     if (!el) return;
 
     const players = data.totalPlayers || 0;
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
-    const inPlay = Number(data.totalInPlay || 0).toFixed(2);
+    const volume = Number(data.totalVolume || 0).toFixed(2);
 
     el.innerHTML = `
       <div class="gs-live-dot"></div>
-
       <div class="gs-item">
-        👥
-        <strong class="live-counter">
-          ${players}
-        </strong>
-        players
+        👥 <strong class="live-counter">${players}</strong> players
       </div>
-
       <div class="gs-divider"></div>
-
       <div class="gs-item">
-        🎮
-        <strong class="live-counter">
-          ${games}
-        </strong>
-        games played
+        🎮 <strong class="live-counter">${games}</strong> games played
       </div>
-
       <div class="gs-divider"></div>
-      
       <div class="gs-item">
-      
-      <strong class="live-counter">
-      
-      ${inPlay}
-      
-      </strong>
-      
-      in play
-      
+        ✅ <strong class="live-counter">${scores}</strong> scores submitted
       </div>
-
       <div class="gs-divider"></div>
-
-      <div class="gs-item">
-        ✅
-        <strong class="live-counter">
-          ${scores}
-        </strong>
-        scores submitted
-      </div>
-
-      <div class="gs-divider"></div>
-
-      <div
-        class="gs-leaderboard"
-        onclick="showGlobalLeaderboard()"
-      >
+      <div class="gs-leaderboard" onclick="showGlobalLeaderboard()">
         🏆 View Leaderboard
       </div>
     `;
@@ -4186,18 +4189,53 @@ async function showGlobalLeaderboard() {
   }
 }
 
+// FIND loadMyStats() and REPLACE WITH:
 async function loadMyStats() {
   if (!userAddress) return;
   try {
-    const [played, won, earned] =
-      await readContract.getPlayerStats(userAddress);
+    const arcProvider2 = new ethers.JsonRpcProvider(
+      "https://rpc.testnet.arc.network",
+    );
+    const arcRC2 = new ethers.Contract(
+      NETWORKS[5042002].contractAddress,
+      ABI,
+      arcProvider2,
+    );
+    const litvmProvider2 = new ethers.JsonRpcProvider(
+      "https://liteforge.rpc.caldera.xyz/http",
+    );
+    const litvmRC2 = new ethers.Contract(
+      NETWORKS[4441].contractAddress,
+      ABI,
+      litvmProvider2,
+    );
+
+    const [arcStats, litvmStats] = await Promise.allSettled([
+      arcRC2.getPlayerStats(userAddress),
+      litvmRC2.getPlayerStats(userAddress),
+    ]);
+
+    let totalPlayed = 0n,
+      totalWon = 0n;
+    if (arcStats.status === "fulfilled") {
+      totalPlayed += BigInt(arcStats.value[0]);
+      totalWon += BigInt(arcStats.value[1]);
+    }
+    if (litvmStats.status === "fulfilled") {
+      totalPlayed += BigInt(litvmStats.value[0]);
+      totalWon += BigInt(litvmStats.value[1]);
+    }
+
+    const usdcEarned =
+      arcStats.status === "fulfilled"
+        ? parseFloat(ethers.formatUnits(arcStats.value[2], 6)).toFixed(2) +
+          " USDC"
+        : "0.00 USDC";
+
     const vals = {
-      myPlayed: played.toString(),
-      myWon: won.toString(),
-      myEarned:
-        parseFloat(ethers.formatUnits(earned, activeNet.decimals)).toFixed(2) +
-        " " +
-        activeNet.symbol,
+      myPlayed: totalPlayed.toString(),
+      myWon: totalWon.toString(),
+      myEarned: usdcEarned,
     };
     Object.entries(vals).forEach(([id, v]) => {
       const el = document.getElementById(id);

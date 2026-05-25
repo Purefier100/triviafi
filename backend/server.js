@@ -648,7 +648,6 @@ app.get("/stats", async (req, res) => {
     );
     res.json({
       totalVolume: totalVolumeResult.rows[0]?.total_volume || 0,
-      totalInPlay: activePoolsResult.rows[0]?.total_in_play || 0,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2367,23 +2366,23 @@ app.get("/stats/global", async (req, res) => {
       SELECT 
         (SELECT COUNT(*) FROM users) as total_players,
         COUNT(*) as total_games_played,
-        COUNT(*) FILTER (WHERE finished = true) as total_finished,
-        COALESCE(SUM(score) FILTER (WHERE finished = true), 0) as total_score
+        COUNT(*) FILTER (WHERE finished = true) as total_finished
       FROM game_sessions
     `);
 
-    const inPlayResult = await pool.query(`
-      SELECT COALESCE(SUM(entry_fee * max_players), 0) AS total_in_play
-      FROM games
-      WHERE status = 0
+    // ✅ Total volume across ALL chains from game sessions
+    const volumeResult = await pool.query(`
+      SELECT COALESCE(SUM(g.entry_fee), 0) AS total_volume
+      FROM game_sessions gs
+      JOIN games g ON g.contract_game_id = gs.game_id AND g.chain_id = gs.chain_id
+      WHERE gs.finished = true
     `);
-
-    const totalInPlay = inPlayResult.rows[0]?.total_in_play || 0;
 
     const topPlayers = await pool.query(`
       SELECT u.username, u.wallet, u.avatar,
              COUNT(gs.id) as games_played,
              COUNT(gs.id) FILTER (WHERE gs.finished = true) as games_finished,
+             COALESCE(SUM(gs.score) FILTER (WHERE gs.finished = true), 0) as total_score,
              COALESCE(MAX(gs.score), 0) as best_score
       FROM users u
       LEFT JOIN game_sessions gs ON gs.user_id = u.id
@@ -2397,10 +2396,10 @@ app.get("/stats/global", async (req, res) => {
       totalPlayers: parseInt(r.rows[0].total_players) || 0,
       totalGamesPlayed: parseInt(r.rows[0].total_games_played) || 0,
       totalFinished: parseInt(r.rows[0].total_finished) || 0,
+      totalVolume: parseFloat(volumeResult.rows[0]?.total_volume || 0).toFixed(
+        2,
+      ),
       topPlayers: topPlayers.rows,
-
-      // ✅ NOW WORKS
-      totalInPlay,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
