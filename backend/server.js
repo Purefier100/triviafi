@@ -2062,7 +2062,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
 
     await client.query("BEGIN");
 
-    let sessionCheck = await client.query(
+    sessionCheck = await client.query(
       `
       SELECT id, finished, score
       FROM game_sessions
@@ -2082,7 +2082,7 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
           [req.user.id, effectiveWallet, gameId, chainId],
         );
         // Re-fetch after insert
-        let sessionCheck = await client.query(
+        sessionCheck = await client.query(
           `
           SELECT id, finished, score
           FROM game_sessions
@@ -2172,28 +2172,6 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         }
         await new Promise((r) => setTimeout(r, 1000 * attempt));
       }
-    }
-
-    // ✅ Verify game deadline from blockchain
-    let gameData;
-
-    try {
-      gameData = await activeRpcCall((c) => c.getGame(gameId), "getGame");
-    } catch (e) {
-      return res.status(503).json({
-        error: "Could not verify game",
-      });
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-
-    // playDeadline index from contract struct
-    const playDeadline = Number(gameData.playDeadline || gameData[11]);
-
-    if (now > playDeadline) {
-      return res.status(400).json({
-        error: "Game already ended",
-      });
     }
 
     // Check game is still open before signing
@@ -2310,10 +2288,8 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         }
       }
       score = Math.min(score, 1500);
-      if (score <= 0) {
-        return res.status(400).json({
-          error: "Invalid score",
-        });
+      if (answers.filter((a) => a.selected).length === 0) {
+        return res.status(400).json({ error: "No answers submitted" });
       }
     }
 

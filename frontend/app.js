@@ -1974,7 +1974,32 @@ function renderGames() {
       prizeHtml = `<div style="font-size:.73rem;color:var(--green);margin-top:4px">🥇 Winner: ${dist.toFixed(
         dp,
       )} ${tokenSymbol}</div>`;
-
+    // Format game creation/deadline dates
+    const regEndDate =
+      Number(regEnd) > 0
+        ? new Date(Number(regEnd) * 1000).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+    const playEndDate =
+      Number(playDeadline) > 0
+        ? new Date(Number(playDeadline) * 1000).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+    const dateHtml =
+      regEndDate || playEndDate
+        ? `<div style="font-size:.68rem;color:var(--muted);margin-top:5px">
+  ${regEndDate ? `📅 Join closes: ${regEndDate}` : ""}
+  ${playEndDate ? `<br>🎮 Play ends: ${playEndDate}` : ""}
+  </div>`
+        : "";
     let timerHtml = "";
     if (s === 0 && regSecs > 0)
       timerHtml = `<div class="countdown${
@@ -2020,7 +2045,9 @@ function renderGames() {
             })">· ${DIFF_LABELS[diff]}</span>`
           : ""
       }
-      ${prizeHtml}${timerHtml}
+      ${prizeHtml}
+      ${timerHtml}
+      ${dateHtml}
     </div>`;
   }
   html += "</div>";
@@ -3483,6 +3510,22 @@ async function refreshResults() {
 
 async function doClaimPrize() {
   if (!contract) return toast("Connect wallet first", "error");
+  // Auto-trigger end if game hasn't been ended yet
+  try {
+    const g = await getGame(currentGameId);
+    if (g && Number(g[14]) === 0) {
+      toast("Ending game first...", "info");
+      try {
+        const tx = await contract.triggerEnd(currentGameId);
+        await tx.wait();
+      } catch (e) {
+        // Already ended or someone else triggered it — continue
+        console.log("triggerEnd:", e.reason || e.message);
+      }
+      // Re-fetch to confirm status
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } catch (_) {}
   const claimBtn = document.querySelector(
     '.btn-gold[onclick="doClaimPrize()"]',
   );
