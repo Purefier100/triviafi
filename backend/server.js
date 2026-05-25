@@ -8,6 +8,15 @@ const { Pool } = require("pg");
 const { ethers } = require("ethers");
 const rateLimit = require("express-rate-limit");
 const walletCooldowns = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 3600000;
+
+  for (const [k, v] of walletCooldowns.entries()) {
+    if (v < cutoff) {
+      walletCooldowns.delete(k);
+    }
+  }
+}, 3600000);
 const sanitizeHtml = require("sanitize-html");
 const csrf = require("csurf");
 const cookieParser = require("cookie-parser");
@@ -829,7 +838,7 @@ app.post("/auth/wallet", async (req, res) => {
 // PROFILE ROUTES
 // =============================================================================
 
-app.post("/profile/setup", async (req, res) => {
+app.post("/profile/setup", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { username, wallet } = req.body;
   if (!username || username.length < 3 || username.length > 20)
@@ -894,13 +903,26 @@ app.post("/profile/avatar", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { avatar } = req.body;
   if (!avatar) return res.status(400).json({ error: "No avatar" });
+  if (avatar.startsWith("data:")) {
+    return res.status(400).json({
+      error: "Use image URL only",
+    });
+  }
+  let url;
+
+  try {
+    url = new URL(avatar);
+  } catch {
+    return res.status(400).json({
+      error: "Invalid URL",
+    });
+  }
+
   const allowedDomains = [
     "i.imgur.com",
     "cdn.discordapp.com",
     "lh3.googleusercontent.com",
   ];
-
-  const url = new URL(avatar);
 
   if (url.protocol !== "https:") {
     return res.status(400).json({

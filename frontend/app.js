@@ -705,9 +705,18 @@ async function linkWalletToProfile(wallet) {
     const message = `Link wallet to ${activeNet.name} account`;
     const signature = await signer.signMessage(message);
 
+    let csrfToken2 = "";
+    try {
+      const ct2 = await fetch(`${BACKEND}/csrf-token`, {
+        credentials: "include",
+      });
+      const ctd2 = await ct2.json();
+      csrfToken2 = ctd2.csrfToken || "";
+    } catch (_) {}
+
     const res = await fetch(`${BACKEND}/profile/wallet`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken2 },
       credentials: "include",
       body: JSON.stringify({
         wallet,
@@ -2317,6 +2326,10 @@ async function openGame(gameId, gameChainId) {
     openGameReadOnly(gameId);
     return;
   }
+  if (!g) {
+    toast("Could not load game data", "error");
+    return;
+  }
   const [joined, finished] = await readContract.getPlayerStatus(
     gameId,
     userAddress,
@@ -2407,7 +2420,7 @@ async function openGame(gameId, gameChainId) {
     ).toFixed(
       2,
     )}</strong></span><span style="color:var(--muted)">${gameSymbol}</span>
-</div>`;
+    </div>`;
   const players = await readContract.getPlayers(gameId);
   const betsHtml = await showPredictionBets(gameId, players);
   const playerRows =
@@ -3566,9 +3579,22 @@ async function submitCreate() {
 
     // Save to DB for multichain display
     try {
+      // Fetch CSRF token first
+      let csrfToken = "";
+      try {
+        const ct = await fetch(`${BACKEND}/csrf-token`, {
+          credentials: "include",
+        });
+        const ctd = await ct.json();
+        csrfToken = ctd.csrfToken || "";
+      } catch (_) {}
+
       await fetch(`${BACKEND}/games/save`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "CSRF-Token": csrfToken,
+        },
         credentials: "include",
         body: JSON.stringify({
           chainId: parseInt(activeNet.hexChainId, 16),
