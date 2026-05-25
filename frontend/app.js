@@ -1105,7 +1105,7 @@ async function createProvider(chainId) {
       await Promise.race([
         p.getBlockNumber(),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("timeout")), 3000),
+          setTimeout(() => reject(new Error("timeout")), 2000),
         ),
       ]);
       console.log("✅ Using RPC:", rpc);
@@ -1582,6 +1582,10 @@ async function loadGames() {
     grid.innerHTML = skeletonCards(6);
   }
 
+  if (allGames.length > 0) {
+    renderGames();
+  }
+
   try {
     // ── Fetch from BOTH chains in parallel ───────────────────────────────────
     const arcProvider = new ethers.JsonRpcProvider(
@@ -1690,15 +1694,19 @@ async function loadGames() {
     for (const { g, net } of allGames) {
       const gamePool = BigInt(g[8]);
       totalVolume += gamePool;
-      const isActive = Number(g[14]) === 0 && Number(g[11]) > nowSec;
+      const s = Number(g[14]);
+      const playDeadline = Number(g[11]);
+      const isActive = s === 0 && playDeadline > nowSec;
       if (isActive) {
-        // Only add to "in play" pool if game is actually active
+        activeCount++;
+      }
+      // ✅ Count pool for ALL open games regardless of deadline
+      if (s === 0) {
         if (net.decimals === 6) {
           arcPool += gamePool;
         } else {
           litvmPool += gamePool;
         }
-        activeCount++;
       }
     }
 
@@ -1727,7 +1735,7 @@ async function loadGames() {
   <span style="color:var(--purple)">
     ${totalZKLTC} zkLTC
   </span>
-`;
+  `;
     document.getElementById("gActive").textContent = activeCount;
 
     renderGames();
@@ -1803,7 +1811,13 @@ function filterGames(status, btn) {
     .querySelectorAll(".tab")
     .forEach((t) => t.classList.remove("active"));
   btn.classList.add("active");
-  renderGames();
+  if (allGames.length === 0) {
+    document.getElementById("gamesList").innerHTML =
+      `<p style="color:var(--muted);text-align:center;padding:24px">Loading games...</p>`;
+    loadGames(); // trigger load if not yet loaded
+  } else {
+    renderGames(); // instant if already loaded
+  }
 }
 
 function disconnectWallet() {

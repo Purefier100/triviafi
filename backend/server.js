@@ -653,7 +653,7 @@ app.get("/stats", async (req, res) => {
 
     // ACTIVE POOLS
     const activePoolsResult = await pool.query(`
-      SELECT COALESCE(SUM(prize_pool),0) AS total_in_play
+      SELECT COALESCE(SUM(entry_fee * max_players), 0) AS total_in_play
       FROM games
       WHERE status = 0
     `);
