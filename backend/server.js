@@ -612,9 +612,10 @@ app.post("/games/save", csrfProtection, async (req, res) => {
     await pool.query(
       `INSERT INTO games (chain_id,contract_game_id,creator,name,category,
       difficulty,entry_fee,token_symbol,max_players,tx_hash,prize_pool)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      ON CONFLICT (chain_id,contract_game_id) 
-      DO UPDATE SET prize_pool=EXCLUDED.prize_pool, status=EXCLUDED.status`,
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0)
+      ON CONFLICT (chain_id,contract_game_id)
+      DO UPDATE SET
+      prize_pool = EXCLUDED.prize_pool`,
       [
         chainId,
         contractGameId,
