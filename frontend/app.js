@@ -1066,21 +1066,21 @@ function gameToArray(g) {
 
 // Wrapper: always call this instead of readContract.getGame() directly
 async function getGame(id) {
-  try {
-    const raw = await Promise.race([
-      readContract.getGame(id),
-
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 4000),
-      ),
-    ]);
-
-    return gameToArray(raw);
-  } catch (e) {
-    console.warn("Game load failed:", id);
-
-    return null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const raw = await Promise.race([
+        readContract.getGame(id),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), 6000),
+        ),
+      ]);
+      return gameToArray(raw);
+    } catch (e) {
+      console.warn(`Game load failed attempt ${attempt}/3:`, id, e.message);
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 1000));
+    }
   }
+  return null;
 }
 
 async function createProvider(chainId) {
@@ -2065,7 +2065,29 @@ async function openGameReadOnly(gameId, gameChainId) {
   // Switch readContract to correct chain
   if (gameChainId && NETWORKS[gameChainId]) {
     const net = NETWORKS[gameChainId];
-    const tempProvider = new ethers.JsonRpcProvider(net.rpc);
+    // Use fallback RPCs for LitVM
+    const rpcs =
+      gameChainId === 4441
+        ? ["https://liteforge.rpc.caldera.xyz/http"]
+        : [
+            "https://rpc.testnet.arc.network",
+            "https://rpc.drpc.testnet.arc.network",
+          ];
+    let tempProvider = null;
+    for (const rpc of rpcs) {
+      try {
+        const p = new ethers.JsonRpcProvider(rpc);
+        await Promise.race([
+          p.getBlockNumber(),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 3000),
+          ),
+        ]);
+        tempProvider = p;
+        break;
+      } catch (_) {}
+    }
+    if (!tempProvider) tempProvider = new ethers.JsonRpcProvider(rpcs[0]);
     readContract = new ethers.Contract(net.contractAddress, ABI, tempProvider);
   }
   try {
@@ -2196,7 +2218,7 @@ async function openGameReadOnly(gameId, gameChainId) {
         medals[myWinnerPos]
       } — YOU WON!</h3><div class="winner-prize">${myPrize.toFixed(
         2,
-      )} USDC</div>${
+      )} ${activeNet.symbol}</div>${
         !alreadyClaimed
           ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">💰 Claim Your Prize</button>`
           : `<p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">✅ Prize Already Claimed!</p>`
@@ -2307,11 +2329,29 @@ async function openGame(gameId, gameChainId) {
 
   const targetNet = NETWORKS[targetChainId];
   if (targetNet) {
-    const tempProvider = new ethers.JsonRpcProvider(targetNet.rpc);
+    const rpcs2 =
+      targetChainId === 4441
+        ? ["https://liteforge.rpc.caldera.xyz/http"]
+        : [
+            "https://rpc.testnet.arc.network",
+            "https://rpc.drpc.testnet.arc.network",
+          ];
+    let tempProvider2 = new ethers.JsonRpcProvider(rpcs2[0]);
+    for (const rpc of rpcs2) {
+      try {
+        const p = new ethers.JsonRpcProvider(rpc);
+        await Promise.race([
+          p.getBlockNumber(),
+          new Promise((_, r) => setTimeout(() => r(new Error("t")), 2000)),
+        ]);
+        tempProvider2 = p;
+        break;
+      } catch (_) {}
+    }
     readContract = new ethers.Contract(
       targetNet.contractAddress,
       ABI,
-      tempProvider,
+      tempProvider2,
     );
   }
 
@@ -3578,7 +3618,10 @@ async function doClaimPrize() {
   try {
     const tx = await contract.claimPrize(currentGameId);
     await tx.wait();
-    toast("🎉 Prize claimed! USDC sent to your wallet.", "success");
+    toast(
+      `🎉 Prize claimed! ${activeNet.symbol} sent to your wallet.`,
+      "success",
+    );
     loadMyStats();
     checkUnclaimedPrizes(); // refresh banner immediately
     const active = document.querySelector(".screen.active")?.id;

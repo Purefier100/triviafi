@@ -1757,27 +1757,6 @@ app.post("/game/start", async (req, res) => {
       );
     }
 
-    const game = await pool.query(
-      `SELECT entry_fee
-      FROM games
-      WHERE contract_game_id = $1
-      AND chain_id = $2
-      `,
-      [gameId, chainId],
-    );
-
-    if (game.rows.length > 0) {
-      const entryFee = game.rows[0].entry_fee;
-      await pool.query(
-        `
-        UPDATE platform_stats
-        SET total_volume = total_volume + $1
-        WHERE id = 1
-        `,
-        [entryFee],
-      );
-    }
-
     // Re-fetch to get the id whether it was just inserted or already existed
     const sessionRow = await pool.query(
       "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
@@ -2382,16 +2361,15 @@ app.get("/stats/global", async (req, res) => {
   try {
     const r = await pool.query(`
       SELECT 
-        COUNT(DISTINCT user_id) as total_players,
+        (SELECT COUNT(*) FROM users) as total_players,
         COUNT(*) as total_games_played,
         COUNT(*) FILTER (WHERE finished = true) as total_finished,
         COALESCE(SUM(score) FILTER (WHERE finished = true), 0) as total_score
       FROM game_sessions
     `);
 
-    // ✅ ADD THIS
     const inPlayResult = await pool.query(`
-      SELECT COALESCE(SUM(prize_pool),0) AS total_in_play
+      SELECT COALESCE(SUM(entry_fee * max_players), 0) AS total_in_play
       FROM games
       WHERE status = 0
     `);
@@ -2402,12 +2380,12 @@ app.get("/stats/global", async (req, res) => {
       SELECT u.username, u.wallet, u.avatar,
              COUNT(gs.id) as games_played,
              COUNT(gs.id) FILTER (WHERE gs.finished = true) as games_finished,
-             MAX(gs.score) as best_score
+             COALESCE(MAX(gs.score), 0) as best_score
       FROM users u
-      JOIN game_sessions gs ON gs.user_id = u.id
-      WHERE gs.finished = true
+      LEFT JOIN game_sessions gs ON gs.user_id = u.id
       GROUP BY u.id, u.username, u.wallet, u.avatar
-      ORDER BY best_score DESC
+      HAVING COUNT(gs.id) > 0
+      ORDER BY best_score DESC, games_played DESC
       LIMIT 10
     `);
 
