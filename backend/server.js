@@ -645,10 +645,6 @@ app.get("/stats", async (req, res) => {
     const totalVolumeResult = await pool.query(
       `SELECT total_volume FROM platform_stats WHERE id = 1`,
     );
-    const activePoolsResult = await pool.query(
-      `SELECT COALESCE(SUM(prize_pool), 0) AS total_in_play
-       FROM games WHERE status = 0`,
-    );
     res.json({
       totalVolume: totalVolumeResult.rows[0]?.total_volume || 0,
       totalInPlay: activePoolsResult.rows[0]?.total_in_play || 0,
