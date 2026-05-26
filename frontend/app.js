@@ -471,20 +471,26 @@ async function loadDropdownStats() {
       // zkLTC earnings shown separately — skip adding to USDC total
     }
 
-    const usdcEarned = parseFloat(
-      ethers.formatUnits(
-        arcStats.status === "fulfilled" ? arcStats.value[2] : 0n,
-        6,
-      ),
-    ).toFixed(2);
+    const usdcEarned =
+      arcStats.status === "fulfilled"
+        ? parseFloat(ethers.formatUnits(arcStats.value[2], 6)).toFixed(2)
+        : "0.00";
+    const litvmEarned =
+      litvmStats.status === "fulfilled"
+        ? parseFloat(ethers.formatUnits(litvmStats.value[2], 18)).toFixed(4)
+        : "0.0000";
+    const earnedDisplay =
+      parseFloat(litvmEarned) > 0
+        ? `${usdcEarned} USDC + ${litvmEarned} zkLTC`
+        : `${usdcEarned} USDC`;
 
     const map = {
       dpPlayed: totalPlayed.toString(),
       dpWon: totalWon.toString(),
-      dpEarned: usdcEarned + " USDC",
+      dpEarned: earnedDisplay,
       myPlayed: totalPlayed.toString(),
       myWon: totalWon.toString(),
-      myEarned: usdcEarned + " USDC",
+      myEarned: earnedDisplay,
     };
     Object.entries(map).forEach(([id, v]) => {
       const el = document.getElementById(id);
@@ -1759,10 +1765,14 @@ async function loadGames() {
       try {
         const statsRes = await fetch(`${BACKEND}/stats/global`);
         const statsData = await statsRes.json();
-        const vol = Number(statsData.totalVolume || 0).toFixed(2);
+        const arcVol = parseFloat(statsData.totalVolumeArc || 0).toFixed(2);
+        const litvmVol = parseFloat(statsData.totalVolumeLitvm || 0).toFixed(4);
         document.getElementById("gPool").innerHTML =
-          `<span style="color:var(--accent)">$${vol} USDC</span>
-       <span style="color:var(--muted);font-size:.75rem;margin-left:6px">total volume</span>`;
+          `<span style="color:var(--accent)">$${arcVol} USDC</span>` +
+          (parseFloat(litvmVol) > 0
+            ? ` <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span><span style="color:var(--purple)">${litvmVol} zkLTC</span>`
+            : "") +
+          ` <span style="color:var(--muted);font-size:.72rem;margin-left:5px">total volume</span>`;
       } catch (_) {
         document.getElementById("gPool").innerHTML =
           `<span style="color:var(--muted)">—</span>`;
@@ -3910,7 +3920,8 @@ async function loadGlobalStats() {
     const players = data.totalPlayers || 0;
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
-    const volume = Number(data.totalVolume || 0).toFixed(2);
+    const arcVol = parseFloat(data.totalVolumeArc || 0).toFixed(2);
+    const litvmVol = parseFloat(data.totalVolumeLitvm || 0).toFixed(4);
 
     el.innerHTML = `
       <div class="gs-live-dot"></div>
@@ -4228,14 +4239,22 @@ async function loadMyStats() {
 
     const usdcEarned =
       arcStats.status === "fulfilled"
-        ? parseFloat(ethers.formatUnits(arcStats.value[2], 6)).toFixed(2) +
-          " USDC"
-        : "0.00 USDC";
+        ? parseFloat(ethers.formatUnits(arcStats.value[2], 6)).toFixed(2)
+        : "0.00";
+    const litvmEarned =
+      litvmStats.status === "fulfilled"
+        ? parseFloat(ethers.formatUnits(litvmStats.value[2], 18)).toFixed(4)
+        : "0.0000";
+
+    const earnedDisplay =
+      parseFloat(litvmEarned) > 0
+        ? `${usdcEarned} USDC + ${litvmEarned} zkLTC`
+        : `${usdcEarned} USDC`;
 
     const vals = {
       myPlayed: totalPlayed.toString(),
       myWon: totalWon.toString(),
-      myEarned: usdcEarned,
+      myEarned: earnedDisplay,
     };
     Object.entries(vals).forEach(([id, v]) => {
       const el = document.getElementById(id);

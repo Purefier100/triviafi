@@ -321,9 +321,16 @@ async function initDB() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS platform_stats (
       id INT PRIMARY KEY DEFAULT 1,
-      total_volume NUMERIC(36,18) DEFAULT 0
+      total_volume NUMERIC(36,18) DEFAULT 0,
+      total_volume_litvm NUMERIC(36,18) DEFAULT 0
       );
     `);
+
+    await pool
+      .query(
+        `ALTER TABLE platform_stats ADD COLUMN IF NOT EXISTS total_volume_litvm NUMERIC(36,18) DEFAULT 0`,
+      )
+      .catch(() => {});
 
     // =========================================================================
     // GAME QUESTIONS
@@ -2306,12 +2313,9 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     );
 
     if (game.rows.length > 0) {
+      const volumeCol = isLitvm ? "total_volume_litvm" : "total_volume";
       await client.query(
-        `
-    UPDATE platform_stats
-    SET total_volume = total_volume + $1
-    WHERE id = 1
-    `,
+        `UPDATE platform_stats SET ${volumeCol} = ${volumeCol} + $1 WHERE id = 1`,
         [game.rows[0].entry_fee],
       );
     }
@@ -2370,9 +2374,10 @@ app.get("/stats/global", async (req, res) => {
       FROM game_sessions
     `);
 
-    // ✅ Total volume across ALL chains from game sessions
     const volumeResult = await pool.query(`
-      SELECT COALESCE(SUM(g.entry_fee), 0) AS total_volume
+      SELECT 
+        COALESCE(SUM(CASE WHEN g.chain_id = 5042002 THEN g.entry_fee ELSE 0 END), 0) AS total_volume_arc,
+        COALESCE(SUM(CASE WHEN g.chain_id = 4441 THEN g.entry_fee ELSE 0 END), 0) AS total_volume_litvm
       FROM game_sessions gs
       JOIN games g ON g.contract_game_id = gs.game_id AND g.chain_id = gs.chain_id
       WHERE gs.finished = true
@@ -2396,9 +2401,12 @@ app.get("/stats/global", async (req, res) => {
       totalPlayers: parseInt(r.rows[0].total_players) || 0,
       totalGamesPlayed: parseInt(r.rows[0].total_games_played) || 0,
       totalFinished: parseInt(r.rows[0].total_finished) || 0,
-      totalVolume: parseFloat(volumeResult.rows[0]?.total_volume || 0).toFixed(
-        2,
-      ),
+      totalVolumeArc: parseFloat(
+        volumeResult.rows[0]?.total_volume_arc || 0,
+      ).toFixed(2),
+      totalVolumeLitvm: parseFloat(
+        volumeResult.rows[0]?.total_volume_litvm || 0,
+      ).toFixed(6),
       topPlayers: topPlayers.rows,
     });
   } catch (e) {
