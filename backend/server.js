@@ -2374,13 +2374,10 @@ app.get("/stats/global", async (req, res) => {
       FROM game_sessions
     `);
 
+    // ✅ Use platform_stats as authoritative source — tracks every submit-score
     const volumeResult = await pool.query(`
-      SELECT 
-        COALESCE(SUM(CASE WHEN g.chain_id = 5042002 THEN g.entry_fee ELSE 0 END), 0) AS total_volume_arc,
-        COALESCE(SUM(CASE WHEN g.chain_id = 4441 THEN g.entry_fee ELSE 0 END), 0) AS total_volume_litvm
-      FROM game_sessions gs
-      JOIN games g ON g.contract_game_id = gs.game_id AND g.chain_id = gs.chain_id
-      WHERE gs.finished = true
+      SELECT total_volume AS total_volume_arc, total_volume_litvm
+      FROM platform_stats WHERE id = 1
     `);
 
     const topPlayers = await pool.query(`

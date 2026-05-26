@@ -479,10 +479,23 @@ async function loadDropdownStats() {
       litvmStats.status === "fulfilled"
         ? parseFloat(ethers.formatUnits(litvmStats.value[2], 18)).toFixed(4)
         : "0.0000";
-    const earnedDisplay =
-      parseFloat(litvmEarned) > 0
-        ? `${usdcEarned} USDC + ${litvmEarned} zkLTC`
-        : `${usdcEarned} USDC`;
+    // ✅ Compact number formatter: 1,234,567 → 1.23M | 12,345 → 12.3K
+    function fmtCompact(num) {
+      const n = parseFloat(num);
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
+      if (n >= 10_000) return (n / 1_000).toFixed(1) + "K";
+      if (n >= 1_000) return (n / 1_000).toFixed(2) + "K";
+      return n.toFixed(2);
+    }
+
+    const usdcDisplay = fmtCompact(usdcEarned);
+    const litvmDisplay =
+      parseFloat(litvmEarned) > 0 ? fmtCompact(litvmEarned) : null;
+
+    // Two-line display if both chains have earnings
+    const earnedDisplay = litvmDisplay
+      ? `<span style="display:block;line-height:1.3">${usdcDisplay} USDC</span><span style="display:block;line-height:1.3;color:var(--purple)">${litvmDisplay} zkLTC</span>`
+      : `${usdcDisplay} USDC`;
 
     const map = {
       dpPlayed: totalPlayed.toString(),
@@ -494,7 +507,12 @@ async function loadDropdownStats() {
     };
     Object.entries(map).forEach(([id, v]) => {
       const el = document.getElementById(id);
-      if (el) el.textContent = v;
+      if (!el) return;
+      if (id === "dpEarned" || id === "myEarned") {
+        el.innerHTML = typeof v === "bigint" ? v.toString() : v;
+      } else {
+        el.textContent = typeof v === "bigint" ? v.toString() : v;
+      }
     });
   } catch (_) {}
 }
@@ -1755,11 +1773,11 @@ async function loadGames() {
 
     const showPool = parseFloat(totalUSDC) > 0 || parseFloat(totalZKLTC) > 0;
     if (showPool) {
-      document.getElementById("gPool").innerHTML = `
-    <span style="color:var(--accent)">$${totalUSDC} USDC</span>
-    <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span>
-    <span style="color:var(--purple)">${totalZKLTC} zkLTC</span>
-  `;
+      document.getElementById("gPool").innerHTML =
+        `<span style="color:var(--accent)">$${totalUSDC} USDC</span>` +
+        (parseFloat(totalZKLTC) > 0
+          ? ` <span style="color:var(--muted);font-size:.7rem;margin:0 3px">+</span> <span style="color:var(--purple)">${totalZKLTC} zkLTC</span>`
+          : "");
     } else {
       // Fallback: show total volume from DB when no active pools
       try {
@@ -4246,10 +4264,20 @@ async function loadMyStats() {
         ? parseFloat(ethers.formatUnits(litvmStats.value[2], 18)).toFixed(4)
         : "0.0000";
 
-    const earnedDisplay =
-      parseFloat(litvmEarned) > 0
-        ? `${usdcEarned} USDC + ${litvmEarned} zkLTC`
-        : `${usdcEarned} USDC`;
+    function fmtCompact(num) {
+      const n = parseFloat(num);
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
+      if (n >= 10_000) return (n / 1_000).toFixed(1) + "K";
+      if (n >= 1_000) return (n / 1_000).toFixed(2) + "K";
+      return n.toFixed(2);
+    }
+
+    const usdcDisplay = fmtCompact(usdcEarned);
+    const litvmDisplay =
+      parseFloat(litvmEarned) > 0 ? fmtCompact(litvmEarned) : null;
+    const earnedDisplay = litvmDisplay
+      ? `<span style="display:block;line-height:1.3">${usdcDisplay} USDC</span><span style="display:block;line-height:1.3;color:var(--purple)">${litvmDisplay} zkLTC</span>`
+      : `${usdcDisplay} USDC`;
 
     const vals = {
       myPlayed: totalPlayed.toString(),
@@ -4258,7 +4286,12 @@ async function loadMyStats() {
     };
     Object.entries(vals).forEach(([id, v]) => {
       const el = document.getElementById(id);
-      if (el) el.textContent = v;
+      if (!el) return;
+      if (id === "myEarned") {
+        el.innerHTML = v;
+      } else {
+        el.textContent = v;
+      }
     });
   } catch (_) {}
 }
