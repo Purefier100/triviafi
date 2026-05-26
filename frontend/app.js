@@ -1773,24 +1773,33 @@ async function loadGames() {
 
     const showPool = parseFloat(totalUSDC) > 0 || parseFloat(totalZKLTC) > 0;
     if (showPool) {
-      document.getElementById("gPool").innerHTML =
-        `<span style="color:var(--accent)">$${totalUSDC} USDC</span>` +
-        (parseFloat(totalZKLTC) > 0
-          ? ` <span style="color:var(--muted);font-size:.7rem;margin:0 3px">+</span> <span style="color:var(--purple)">${totalZKLTC} zkLTC</span>`
-          : "");
+      // Active pool — show with "TOTAL VOLUME" label, no "ACTIVE POOL" text
+      let poolHtml = "";
+      if (parseFloat(totalUSDC) > 0)
+        poolHtml += `<span style="color:var(--accent);font-weight:700">$${totalUSDC} USDC</span>`;
+      if (parseFloat(totalUSDC) > 0 && parseFloat(totalZKLTC) > 0)
+        poolHtml += `<span style="color:var(--muted);font-size:.7rem;margin:0 5px">+</span>`;
+      if (parseFloat(totalZKLTC) > 0)
+        poolHtml += `<span style="color:var(--purple);font-weight:700">${totalZKLTC} zkLTC</span>`;
+      poolHtml += `<div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">Total Volume</div>`;
+      document.getElementById("gPool").innerHTML = poolHtml;
     } else {
-      // Fallback: show total volume from DB when no active pools
+      // Fallback DB volume — same label, no "ACTIVE POOL"
       try {
         const statsRes = await fetch(`${BACKEND}/stats/global`);
         const statsData = await statsRes.json();
-        const arcVol = parseFloat(statsData.totalVolumeArc || 0).toFixed(2);
-        const litvmVol = parseFloat(statsData.totalVolumeLitvm || 0).toFixed(4);
+        const arcVol = parseFloat(statsData.arcVolume || 0).toFixed(2);
+        const litvmVol = parseFloat(statsData.litvmVolume || 0).toFixed(4);
+        let volHtml = "";
+        if (parseFloat(arcVol) > 0)
+          volHtml += `<span style="color:var(--accent);font-weight:700">$${arcVol} USDC</span>`;
+        if (parseFloat(arcVol) > 0 && parseFloat(litvmVol) > 0)
+          volHtml += `<span style="color:var(--muted);font-size:.7rem;margin:0 5px">+</span>`;
+        if (parseFloat(litvmVol) > 0)
+          volHtml += `<span style="color:var(--purple);font-weight:700">${litvmVol} zkLTC</span>`;
+        volHtml += `<div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">Total Volume</div>`;
         document.getElementById("gPool").innerHTML =
-          `<span style="color:var(--accent)">$${arcVol} USDC</span>` +
-          (parseFloat(litvmVol) > 0
-            ? ` <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span><span style="color:var(--purple)">${litvmVol} zkLTC</span>`
-            : "") +
-          ` <span style="color:var(--muted);font-size:.72rem;margin-left:5px">total volume</span>`;
+          volHtml || `<span style="color:var(--muted)">—</span>`;
       } catch (_) {
         document.getElementById("gPool").innerHTML =
           `<span style="color:var(--muted)">—</span>`;

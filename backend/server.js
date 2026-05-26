@@ -2374,10 +2374,13 @@ app.get("/stats/global", async (req, res) => {
       FROM game_sessions
     `);
 
-    // ✅ Use platform_stats as authoritative source — tracks every submit-score
     const volumeResult = await pool.query(`
-      SELECT total_volume AS total_volume_arc, total_volume_litvm
-      FROM platform_stats WHERE id = 1
+      SELECT 
+        COALESCE(SUM(g.entry_fee) FILTER (WHERE g.chain_id = 5042002), 0) AS arc_volume,
+        COALESCE(SUM(g.entry_fee) FILTER (WHERE g.chain_id = 4441), 0) AS litvm_volume
+      FROM game_sessions gs
+      JOIN games g ON g.contract_game_id = gs.game_id AND g.chain_id = gs.chain_id
+      WHERE gs.finished = true
     `);
 
     const topPlayers = await pool.query(`
@@ -2398,12 +2401,10 @@ app.get("/stats/global", async (req, res) => {
       totalPlayers: parseInt(r.rows[0].total_players) || 0,
       totalGamesPlayed: parseInt(r.rows[0].total_games_played) || 0,
       totalFinished: parseInt(r.rows[0].total_finished) || 0,
-      totalVolumeArc: parseFloat(
-        volumeResult.rows[0]?.total_volume_arc || 0,
-      ).toFixed(2),
-      totalVolumeLitvm: parseFloat(
-        volumeResult.rows[0]?.total_volume_litvm || 0,
-      ).toFixed(6),
+      arcVolume: parseFloat(volumeResult.rows[0]?.arc_volume || 0).toFixed(2),
+      litvmVolume: parseFloat(volumeResult.rows[0]?.litvm_volume || 0).toFixed(
+        4,
+      ),
       topPlayers: topPlayers.rows,
     });
   } catch (e) {
