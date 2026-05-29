@@ -2629,12 +2629,22 @@
             <button class="btn btn-primary btn-sm" onclick="showScreen('screenCreate')">＋ New Room</button>
           </div>
         </div>
-        <div class="tabs">
-          <button class="tab active" onclick="filterGames('all',this)">All</button>
-          <button class="tab" onclick="filterGames('0',this)">🟢 Open</button>
-          <button class="tab" onclick="filterGames('live',this)">🔴 Live</button>
-          <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
-          <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <div class="tabs" style="margin-bottom:0;flex-wrap:wrap">
+            <button class="tab active" onclick="filterGames('all',this)">All</button>
+            <button class="tab" onclick="filterGames('0',this)">🟢 Open</button>
+            <button class="tab" onclick="filterGames('live',this)">🔴 Live</button>
+            <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
+            <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
+          </div>
+          <button
+            onclick="showScreen('screenTournaments');loadTournaments()"
+            style="display:flex;align-items:center;gap:7px;height:36px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,209,102,.3);background:rgba(255,209,102,.08);color:var(--gold);font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:.18s"
+            onmouseover="this.style.background='rgba(255,209,102,.15)'"
+            onmouseout="this.style.background='rgba(255,209,102,.08)'">
+            🏟️ Tournaments
+            <span style="background:var(--gold);color:#000;font-size:.65rem;font-weight:800;padding:1px 6px;border-radius:10px;line-height:1.6">BETA</span>
+          </button>
         </div>
         <div id="gamesList">
           <div class="game-grid">
@@ -2873,10 +2883,6 @@
       <div>
         <div class="card-title" style="margin:0">🏟️ Tournaments</div>
         <div style="font-size:.78rem;color:var(--muted);margin-top:4px">Multi-round elimination · 60/25/15% prize split · USDC &amp; zkLTC</div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="showScreen('screenLobby')">← Back</button>
-        <button class="btn btn-primary btn-sm" onclick="showCreateTournamentModal()">＋ Create Tournament</button>
       </div>
     </div>
     <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);border-radius:12px;padding:14px 16px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
