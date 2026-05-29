@@ -4506,15 +4506,45 @@ async function joinTournament(id) {
       });
       await tx.wait();
     } else {
-      const allowance = await usdcContract.allowance(userAddress, PLATFORM);
+      // Use Arc's USDC address regardless of active network
+      const arcUsdcAddress = NETWORKS[5042002].tokenAddress;
+
+      // If we're on a different network, switch to Arc first
+      const currentChainId = provider
+        ? Number((await provider.getNetwork()).chainId)
+        : null;
+      if (currentChainId !== 5042002) {
+        toast("Switching to Arc network for USDC payment...", "info");
+        try {
+          await window.ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: NETWORKS[5042002].hexChainId }],
+          });
+          await new Promise((r) => setTimeout(r, 500));
+          activeNet = NETWORKS[5042002];
+          CONTRACT_ADDRESS = activeNet.contractAddress;
+          USDC_ADDRESS = activeNet.tokenAddress;
+          provider = new ethers.BrowserProvider(window.ethereum);
+          signer = await provider.getSigner();
+          contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+          usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+          updateNetBar();
+        } catch (e) {
+          throw new Error("Please switch to Arc network to pay with USDC");
+        }
+      }
+
+      // Now build fresh contracts with current signer
+      const freshUsdc = new ethers.Contract(arcUsdcAddress, USDC_ABI, signer);
+      const allowance = await freshUsdc.allowance(userAddress, PLATFORM);
       if (allowance < entryFee) {
         toast("Approving USDC...", "info");
-        const tx1 = await usdcContract.approve(PLATFORM, entryFee);
+        const tx1 = await freshUsdc.approve(PLATFORM, entryFee);
         await tx1.wait();
       }
       toast("Transferring entry fee...", "info");
       const usdcW = new ethers.Contract(
-        USDC_ADDRESS,
+        arcUsdcAddress,
         ["function transfer(address,uint256) external returns (bool)"],
         signer,
       );
