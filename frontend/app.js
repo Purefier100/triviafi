@@ -4749,8 +4749,8 @@ async function submitCreateTournament() {
   if (!name) return toast("Enter a tournament name", "error");
   if (fee <= 0) return toast("Enter a valid entry fee", "error");
   if (max < 4) return toast("Minimum 4 players required", "error");
-  if (!req.user && !currentProfile)
-    return toast("You must be logged in", "error");
+  if (!currentProfile && !userAddress)
+    return toast("You must be logged in to create a tournament", "error");
 
   const tokenSymbol = chainId === 4441 ? "zkLTC" : "USDC";
 
