@@ -2863,6 +2863,42 @@
       </div>
     </div>
 
+    <!-- ADD to your lobby .tabs div: -->
+<button class="tab" onclick="showScreen('screenTournaments');loadTournaments()">🏟️ Tournaments</button>
+
+<!-- ADD before closing </main>: -->
+<div class="screen" id="screenTournaments">
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div class="card-title" style="margin:0">🏟️ Tournaments</div>
+        <div style="font-size:.78rem;color:var(--muted);margin-top:4px">Multi-round elimination · 60/25/15% prize split · USDC &amp; zkLTC</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="showScreen('screenLobby')">← Back</button>
+        <button class="btn btn-primary btn-sm" onclick="showCreateTournamentModal()">＋ Create Tournament</button>
+      </div>
+    </div>
+    <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);border-radius:12px;padding:14px 16px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <div style="font-size:1.4rem">🏆</div>
+      <div style="flex:1">
+        <div style="font-size:.85rem;font-weight:700;color:var(--gold)">How It Works</div>
+        <div style="font-size:.75rem;color:var(--muted);margin-top:3px">Pay entry → Play 10 questions per round → Bottom half eliminated → Final 3 split 60/25/15%</div>
+      </div>
+      <div style="display:flex;gap:12px;font-size:.75rem;font-weight:700">
+        <span style="color:var(--gold)">🥇 60%</span>
+        <span style="color:#ccc">🥈 25%</span>
+        <span style="color:#cd7f32">🥉 15%</span>
+      </div>
+    </div>
+    <div class="game-grid" id="tournamentList">
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    </div>
+  </div>
+</div>
+
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>

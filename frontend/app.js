@@ -3947,8 +3947,8 @@ async function loadGlobalStats() {
     const players = data.totalPlayers || 0;
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
-    const arcVol = parseFloat(data.totalVolumeArc || 0).toFixed(2);
-    const litvmVol = parseFloat(data.totalVolumeLitvm || 0).toFixed(4);
+    const arcVol = parseFloat(data.arcVolume || 0).toFixed(2);
+    const litvmVol = parseFloat(data.litvmVolume || 0).toFixed(4);
 
     el.innerHTML = `
       <div class="gs-live-dot"></div>
@@ -4305,6 +4305,468 @@ async function loadMyStats() {
   } catch (_) {}
 }
 
+// ── TOURNAMENT STATE ──────────────────────────────────────────────────────────
+let allTournaments = [];
+let currentTournamentId = null;
+
+async function loadTournaments() {
+  try {
+    const res = await fetch(`${BACKEND}/tournaments`);
+    allTournaments = await res.json();
+    renderTournaments();
+  } catch (_) {}
+}
+
+function renderTournaments() {
+  const el = document.getElementById("tournamentList");
+  if (!el) return;
+  if (!allTournaments.length) {
+    el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:32px;grid-column:1/-1">No tournaments yet. Create the first one!</p>`;
+    return;
+  }
+  el.innerHTML = allTournaments
+    .map((t) => {
+      const statusColors = {
+        open: "var(--green)",
+        active: "var(--gold)",
+        finished: "var(--muted)",
+        cancelled: "var(--red)",
+      };
+      const statusColor = statusColors[t.status] || "var(--muted)";
+      const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
+      const dp = t.token_symbol === "zkLTC" ? 4 : 2;
+      const fee = parseFloat(t.entry_fee).toFixed(dp);
+      const pool2 = parseFloat(t.prize_pool).toFixed(dp);
+      const isFull = parseInt(t.player_count) >= t.max_players;
+      return `<div class="gcard" onclick="openTournament(${t.id})"
+      style="${t.status === "active" ? "border-color:rgba(255,209,102,.4)" : ""}">
+      <div class="gcard-title">
+        🏟️ ${sanitizeText(t.name)}
+        <span class="badge" style="color:${statusColor};border-color:${statusColor};background:rgba(0,0,0,.2)">${t.status.toUpperCase()}</span>
+        ${chainIcon}
+      </div>
+      <div style="font-size:.75rem;color:var(--gold);margin-bottom:8px;font-weight:600">
+        ${t.rounds} Rounds · ${t.max_players} Players Max
+      </div>
+      <div class="gmeta">💰 Entry: <strong>${fee} ${t.token_symbol}</strong> | 🏆 Pool: <strong>${pool2} ${t.token_symbol}</strong></div>
+      <div class="gmeta">👥 <strong>${t.player_count}/${t.max_players}</strong> joined</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:6px">
+        🥇 ${(parseFloat(pool2) * 0.6).toFixed(dp)} · 🥈 ${(parseFloat(pool2) * 0.25).toFixed(dp)} · 🥉 ${(parseFloat(pool2) * 0.15).toFixed(dp)} ${t.token_symbol}
+      </div>
+      ${isFull && t.status === "open" ? '<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:600">🔴 FULL</div>' : ""}
+    </div>`;
+    })
+    .join("");
+}
+
+async function openTournament(id) {
+  currentTournamentId = id;
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${id}`);
+    const { tournament: t, players, rounds } = await res.json();
+
+    const dp = t.token_symbol === "zkLTC" ? 4 : 2;
+    const fee = parseFloat(t.entry_fee).toFixed(dp);
+    const pool2 = parseFloat(t.prize_pool).toFixed(dp);
+    const prizes = {
+      first: (parseFloat(pool2) * 0.6).toFixed(dp),
+      second: (parseFloat(pool2) * 0.25).toFixed(dp),
+      third: (parseFloat(pool2) * 0.15).toFixed(dp),
+    };
+    const myWallet = userAddress?.toLowerCase();
+    const me = players.find((p) => p.wallet === myWallet);
+    const isJoined = !!me,
+      isEliminated = me?.eliminated;
+    const isFull = players.length >= t.max_players;
+    const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
+
+    const playerRows = players
+      .map(
+        (p, i) => `
+      <div class="lb-row" style="${p.eliminated ? "opacity:.4" : ""}">
+        <span class="lb-rank">${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)}</span>
+        <span class="lb-addr">${p.username ? "@" + p.username : fmt(p.wallet)}${p.wallet === myWallet ? " (you)" : ""}</span>
+        <span class="lb-score">${p.total_score} pts</span>
+        <span class="lb-tag ${p.eliminated ? "lb-wait" : "lb-done"}">${p.eliminated ? "Out" : "Active"}</span>
+      </div>`,
+      )
+      .join("");
+
+    const roundsHtml = rounds
+      .map(
+        (r) => `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:.85rem;font-weight:700;color:var(--accent)">Round ${r.round_number}</span>
+        <span style="font-size:.75rem;color:${r.status === "active" ? "var(--gold)" : r.status === "finished" ? "var(--green)" : "var(--muted)"}">
+          ${r.status === "active" ? "🔴 Live" : r.status === "finished" ? "✅ Done" : "⏳ Pending"}
+        </span>
+      </div>`,
+      )
+      .join("");
+
+    let actionHtml = "";
+    if (t.status === "open" && !isJoined && !isFull && userAddress) {
+      actionHtml = `<button class="btn btn-primary" onclick="joinTournament(${t.id})">
+        💰 Pay ${fee} ${t.token_symbol} & Enter Tournament</button>`;
+    } else if (t.status === "open" && isJoined) {
+      actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2)">
+        <p style="color:var(--accent);font-weight:600">✓ You are registered!</p>
+        <p style="color:var(--muted);font-size:.82rem;margin-top:4px">Waiting for ${t.max_players - players.length} more players to start.</p>
+      </div>`;
+    } else if (t.status === "active" && isJoined && !isEliminated) {
+      actionHtml = `<button class="btn btn-primary" style="background:linear-gradient(135deg,var(--gold),var(--orange))"
+        onclick="playTournamentRound(${t.id},${t.current_round})">
+        🎮 Play Round ${t.current_round}!</button>`;
+    } else if (t.status === "active" && isEliminated) {
+      actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.25)">
+        <p style="color:var(--red);font-weight:600">❌ You were eliminated in Round ${t.current_round - 1}</p>
+      </div>`;
+    } else if (t.status === "finished") {
+      actionHtml = `<div class="winner-banner">
+        <h3>🏆 Tournament Complete!</h3>
+        <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
+        <p style="color:var(--muted);margin-top:8px;font-size:.85rem">Winner: ${players[0]?.username ? "@" + players[0].username : fmt(players[0]?.wallet)}</p>
+      </div>`;
+    } else if (!userAddress) {
+      actionHtml = `<button class="btn btn-primary" onclick="connectWallet()">🦊 Connect Wallet to Join</button>`;
+    }
+
+    document.getElementById("joinContent").innerHTML = `
+      <div style="margin-bottom:16px">
+        <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">
+          🏟️ ${sanitizeText(t.name)}</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span class="badge b-wait">${chainIcon} ${t.token_symbol}</span>
+          <span class="cat-pill">${t.rounds} Rounds</span>
+          <span class="cat-pill">${t.max_players} Players</span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div>
+          <div style="font-size:.72rem;color:var(--muted)">Entry (${t.token_symbol})</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool2}</div>
+          <div style="font-size:.72rem;color:var(--muted)">Prize Pool</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${players.length}/${t.max_players}</div>
+          <div style="font-size:.72rem;color:var(--muted)">Players</div>
+        </div>
+      </div>
+
+      <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:14px;margin-bottom:14px">
+        <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Distribution</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <span>🥇 <strong style="color:var(--gold)">${prizes.first} ${t.token_symbol}</strong> (60%)</span>
+          <span>🥈 <strong style="color:#ccc">${prizes.second} ${t.token_symbol}</strong> (25%)</span>
+          <span>🥉 <strong style="color:#cd7f32">${prizes.third} ${t.token_symbol}</strong> (15%)</span>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:8px">Bottom half eliminated each round · Last players standing split prizes</div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rounds</div>
+        ${roundsHtml || '<p style="color:var(--muted);font-size:.83rem">Rounds start when tournament fills</p>'}
+      </div>
+
+      <div style="margin-bottom:14px">
+        <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Standings</div>
+        ${playerRows || '<p style="color:var(--muted);font-size:.83rem">No players yet</p>'}
+      </div>
+
+      <div style="margin-top:14px">${actionHtml}</div>`;
+
+    showScreen("screenJoin");
+  } catch (e) {
+    toast("Error: " + e.message, "error");
+  }
+}
+
+async function joinTournament(id) {
+  if (!contract || !userAddress) return toast("Connect wallet first", "error");
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${id}`);
+    const { tournament: t } = await res.json();
+    const isZkLTC = t.token_symbol === "zkLTC";
+    const decimals = isZkLTC ? 18 : 6;
+    const entryFee = ethers.parseUnits(
+      parseFloat(t.entry_fee).toFixed(decimals),
+      decimals,
+    );
+    const PLATFORM = platformAddress || (await readContract.platform());
+
+    if (isZkLTC) {
+      toast("Paying entry in zkLTC...", "info");
+      const tx = await signer.sendTransaction({
+        to: PLATFORM,
+        value: entryFee,
+      });
+      await tx.wait();
+    } else {
+      const allowance = await usdcContract.allowance(userAddress, PLATFORM);
+      if (allowance < entryFee) {
+        toast("Approving USDC...", "info");
+        const tx1 = await usdcContract.approve(PLATFORM, entryFee);
+        await tx1.wait();
+      }
+      toast("Transferring entry fee...", "info");
+      const usdcW = new ethers.Contract(
+        USDC_ADDRESS,
+        ["function transfer(address,uint256) external returns (bool)"],
+        signer,
+      );
+      const tx2 = await usdcW.transfer(PLATFORM, entryFee);
+      await tx2.wait();
+    }
+
+    let csrfToken = "";
+    try {
+      const ct = await fetch(`${BACKEND}/csrf-token`, {
+        credentials: "include",
+      });
+      csrfToken = (await ct.json()).csrfToken || "";
+    } catch (_) {}
+
+    const joinRes = await fetch(`${BACKEND}/tournaments/${id}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress }),
+    });
+    const data = await joinRes.json();
+    if (!joinRes.ok) return toast(data.error || "Join failed", "error");
+
+    toast("✅ Entered tournament!", "success");
+    openTournament(id);
+  } catch (e) {
+    toast("Failed: " + (e.reason || e.message), "error");
+  }
+}
+
+async function playTournamentRound(tournamentId, roundNumber) {
+  toast("Loading round questions...", "info");
+  try {
+    let qtData;
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 8000);
+      const r = await fetch(
+        "https://opentdb.com/api.php?amount=10&type=multiple&encode=url3986",
+        { signal: controller.signal },
+      );
+      clearTimeout(t);
+      const d = await r.json();
+      if (d.response_code === 0 && d.results?.length > 0) qtData = d;
+    } catch (_) {}
+
+    const rawQ = qtData
+      ? qtData.results.map((q, idx) => ({
+          question: decodeURIComponent(q.question),
+          correct: decodeURIComponent(q.correct_answer),
+          answers: shuffle([
+            decodeURIComponent(q.correct_answer),
+            ...q.incorrect_answers.map((a) => decodeURIComponent(a)),
+          ]),
+          id: idx,
+        }))
+      : getLocalQuestions(9, 0, 10).map((q, idx) => ({
+          question: q.q,
+          correct: q.correct,
+          answers: shuffle([q.correct, ...q.wrong]),
+          id: idx,
+        }));
+
+    hideToast();
+    showTournamentQuiz(tournamentId, rawQ);
+  } catch (e) {
+    toast("Error: " + e.message, "error");
+  }
+}
+
+function showTournamentQuiz(tournamentId, rawQ) {
+  let qIdx = 0,
+    tScore = 0,
+    tAnswers = [];
+  const modal = document.createElement("div");
+  modal.id = "tournamentQuizModal";
+  modal.className = "bet-modal-overlay";
+  document.body.appendChild(modal);
+
+  function renderQ() {
+    if (qIdx >= rawQ.length) {
+      modal.remove();
+      submitTournamentScore(tournamentId, tAnswers, tScore);
+      return;
+    }
+    const q = rawQ[qIdx];
+    modal.innerHTML = `
+      <div class="bet-modal-box" style="max-width:520px;width:95%">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <span style="font-size:.8rem;color:var(--muted)">Question ${qIdx + 1}/${rawQ.length}</span>
+          <span style="font-size:.9rem;font-weight:700;color:var(--gold)">⭐ ${tScore} pts</span>
+        </div>
+        <div id="qTimerBar" style="height:3px;background:var(--border);border-radius:2px;margin-bottom:14px;overflow:hidden">
+          <div id="tqFill" style="height:100%;width:100%;background:linear-gradient(90deg,var(--green),var(--accent));transition:width 1s linear"></div>
+        </div>
+        <div style="font-size:1rem;font-weight:600;margin-bottom:18px;line-height:1.5">${sanitizeText(q.question)}</div>
+        <div class="ans-grid">
+          ${q.answers.map((a, i) => `<button class="ans-btn" onclick="window._tPick(${i})">${sanitizeText(a)}</button>`).join("")}
+        </div>
+      </div>`;
+
+    // 15s timer per question
+    let timeLeft = 15;
+    const timerFill = modal.querySelector("#tqFill");
+    const timerInterval = setInterval(() => {
+      timeLeft--;
+      if (timerFill) timerFill.style.width = (timeLeft / 15) * 100 + "%";
+      if (timeLeft <= 0) {
+        clearInterval(timerInterval);
+        tAnswers.push({ questionIndex: qIdx, selected: null, correct: false });
+        qIdx++;
+        renderQ();
+      }
+    }, 1000);
+
+    window._tPick = (i) => {
+      clearInterval(timerInterval);
+      const selected = q.answers[i];
+      const isCorrect = selected === q.correct;
+      if (isCorrect) tScore += 100;
+      tAnswers.push({ questionIndex: qIdx, selected, correct: isCorrect });
+      modal.querySelectorAll(".ans-btn").forEach((b, bi) => {
+        b.disabled = true;
+        if (q.answers[bi] === q.correct) b.classList.add("correct");
+        else if (bi === i && !isCorrect) b.classList.add("wrong");
+      });
+      setTimeout(() => {
+        qIdx++;
+        renderQ();
+      }, 800);
+    };
+  }
+  renderQ();
+}
+
+async function submitTournamentScore(tournamentId, answers, score) {
+  let csrfToken = "";
+  try {
+    const ct = await fetch(`${BACKEND}/csrf-token`, { credentials: "include" });
+    csrfToken = (await ct.json()).csrfToken || "";
+  } catch (_) {}
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/submit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress, answers }),
+    });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || "Submit failed", "error");
+
+    if (data.tournamentFinished) {
+      toast(`🏆 Tournament over! Winner: ${fmt(data.winner)}`, "success");
+    } else if (data.roundFinished) {
+      toast(
+        `Round done! ${data.eliminated?.length || 0} players eliminated. Next round starting...`,
+        "success",
+      );
+    } else {
+      toast(`Score submitted: ${score} pts`, "success");
+    }
+    openTournament(tournamentId);
+  } catch (e) {
+    toast("Submit failed: " + e.message, "error");
+  }
+}
+
+function showCreateTournamentModal() {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const existing = document.getElementById("createTourneyModal");
+  if (existing) existing.remove();
+  const modal = document.createElement("div");
+  modal.id = "createTourneyModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:440px;width:95%">
+      <h3 style="margin-bottom:20px">🏟️ Create Tournament</h3>
+      <div class="ig" style="margin-bottom:10px">
+        <label class="il">Tournament Name</label>
+        <input id="tName" placeholder="e.g. Friday Night Trivia" maxlength="60"/>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div class="ig"><label class="il">Entry Fee</label>
+          <input id="tFee" type="number" min="0.01" step="0.001" placeholder="e.g. 1.00"/></div>
+        <div class="ig"><label class="il">Max Players</label>
+          <input id="tMax" type="number" min="4" max="64" value="8"/></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+        <div class="ig"><label class="il">Rounds</label>
+          <select id="tRounds" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:.9rem;width:100%">
+            <option value="2">2 Rounds</option>
+            <option value="3" selected>3 Rounds</option>
+            <option value="4">4 Rounds</option>
+            <option value="5">5 Rounds</option>
+          </select></div>
+        <div class="ig"><label class="il">Token</label>
+          <select id="tChain" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:.9rem;width:100%">
+            <option value="5042002">⚡ USDC (Arc)</option>
+            <option value="4441">🔷 zkLTC (LitVM)</option>
+          </select></div>
+      </div>
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:16px;padding:10px;background:var(--surface);border-radius:8px">
+        💡 Bottom half eliminated each round. Prizes auto-split 60% / 25% / 15% to top 3.
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" onclick="submitCreateTournament()">🚀 Create</button>
+        <button class="btn btn-ghost" style="width:auto;padding:13px 18px" onclick="document.getElementById('createTourneyModal').remove()">Cancel</button>
+      </div>
+    </div>`;
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
+}
+
+async function submitCreateTournament() {
+  const name = document.getElementById("tName")?.value.trim();
+  const fee = document.getElementById("tFee")?.value;
+  const max = document.getElementById("tMax")?.value;
+  const rounds = document.getElementById("tRounds")?.value;
+  const chainId = document.getElementById("tChain")?.value;
+  if (!name || !fee || !max) return toast("Fill all fields", "error");
+  const tokenSymbol = chainId === "4441" ? "zkLTC" : "USDC";
+  let csrfToken = "";
+  try {
+    const ct = await fetch(`${BACKEND}/csrf-token`, { credentials: "include" });
+    csrfToken = (await ct.json()).csrfToken || "";
+  } catch (_) {}
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
+      credentials: "include",
+      body: JSON.stringify({
+        name,
+        chainId,
+        entryFee: fee,
+        tokenSymbol,
+        maxPlayers: max,
+        rounds,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || "Create failed", "error");
+    document.getElementById("createTourneyModal")?.remove();
+    toast(`✅ Tournament "${name}" created!`, "success");
+    await loadTournaments();
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+  }
+}
 async function showPredictionBets(gameId, players) {
   if (!userAddress) return "";
   try {

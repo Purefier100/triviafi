@@ -269,6 +269,63 @@ async function initDB() {
       )
       .catch((e) => console.warn("Constraint migration:", e.message));
 
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS tournaments (
+          id              SERIAL PRIMARY KEY,
+          chain_id        INT NOT NULL DEFAULT 5042002,
+          name            TEXT NOT NULL,
+          creator         TEXT NOT NULL,
+          entry_fee       NUMERIC(36,18) NOT NULL,
+          token_symbol    TEXT NOT NULL DEFAULT 'USDC',
+          max_players     INT NOT NULL DEFAULT 8,
+          rounds          INT NOT NULL DEFAULT 3,
+          current_round   INT DEFAULT 0,
+          status          TEXT DEFAULT 'open',
+          prize_pool      NUMERIC(36,18) DEFAULT 0,
+          winner          TEXT,
+          created_at      TIMESTAMPTZ DEFAULT NOW(),
+          started_at      TIMESTAMPTZ,
+          finished_at     TIMESTAMPTZ
+        );
+      `);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS tournament_players (
+          id              SERIAL PRIMARY KEY,
+          tournament_id   INT REFERENCES tournaments(id) ON DELETE CASCADE,
+          wallet          TEXT NOT NULL,
+          user_id         INT REFERENCES users(id) ON DELETE CASCADE,
+          total_score     INT DEFAULT 0,
+          eliminated      BOOLEAN DEFAULT FALSE,
+          joined_at       TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id, wallet)
+        );
+      `);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS tournament_rounds (
+          id              SERIAL PRIMARY KEY,
+          tournament_id   INT REFERENCES tournaments(id) ON DELETE CASCADE,
+          round_number    INT NOT NULL,
+          status          TEXT DEFAULT 'pending',
+          started_at      TIMESTAMPTZ,
+          finished_at     TIMESTAMPTZ,
+          UNIQUE(tournament_id, round_number)
+        );
+      `);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS tournament_scores (
+          id              SERIAL PRIMARY KEY,
+          tournament_id   INT REFERENCES tournaments(id) ON DELETE CASCADE,
+          round_id        INT REFERENCES tournament_rounds(id) ON DELETE CASCADE,
+          wallet          TEXT NOT NULL,
+          score           INT DEFAULT 0,
+          submitted_at    TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE(tournament_id, round_id, wallet)
+        );
+      `);
+
     // =========================================================================
     // BETS
     // =========================================================================
@@ -2477,9 +2534,7 @@ app.get("/health", (req, res) =>
     verifier: verifierWallet.address,
     contract: CONTRACT_ADDRESS,
   }),
-);
-
-// Self-ping to prevent Render sleep
+); // Self-ping to prevent Render sleep
 if (process.env.NODE_ENV === "production") {
   setInterval(
     async () => {
@@ -2491,6 +2546,281 @@ if (process.env.NODE_ENV === "production") {
     8 * 60 * 1000,
   ); // every 8 minutes
 }
+
+// ── LIST tournaments ──────────────────────────────────────────────────────────
+app.get("/tournaments", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.*,
+        (SELECT COUNT(*) FROM tournament_players tp
+         WHERE tp.tournament_id = t.id AND NOT tp.eliminated) AS player_count
+      FROM tournaments t
+      ORDER BY t.created_at DESC LIMIT 50
+    `);
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET single tournament ─────────────────────────────────────────────────────
+app.get("/tournaments/:id", async (req, res) => {
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const players = await pool.query(
+      `
+      SELECT tp.*, u.username, u.avatar FROM tournament_players tp
+      LEFT JOIN users u ON u.id = tp.user_id
+      WHERE tp.tournament_id=$1 ORDER BY tp.total_score DESC
+    `,
+      [req.params.id],
+    );
+    const rounds = await pool.query(
+      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 ORDER BY round_number",
+      [req.params.id],
+    );
+    res.json({
+      tournament: t.rows[0],
+      players: players.rows,
+      rounds: rounds.rows,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── CREATE tournament ─────────────────────────────────────────────────────────
+app.post("/tournaments/create", csrfProtection, async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { name, chainId, entryFee, tokenSymbol, maxPlayers, rounds } = req.body;
+  if (!name || !entryFee || !maxPlayers || !rounds)
+    return res.status(400).json({ error: "Missing fields" });
+  if (parseInt(maxPlayers) < 4 || parseInt(maxPlayers) > 64)
+    return res.status(400).json({ error: "Max players: 4–64" });
+  if (parseInt(rounds) < 2 || parseInt(rounds) > 5)
+    return res.status(400).json({ error: "Rounds: 2–5" });
+  const cleanName = sanitizeHtml(name, {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO tournaments (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds)
+      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
+    `,
+      [
+        cleanName,
+        req.user.wallet || req.user.email,
+        parseInt(chainId || 5042002),
+        parseFloat(entryFee),
+        tokenSymbol || "USDC",
+        parseInt(maxPlayers),
+        parseInt(rounds),
+      ],
+    );
+    res.json({ tournament: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── JOIN tournament ───────────────────────────────────────────────────────────
+app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    if (tournament.status !== "open")
+      return res.status(400).json({ error: "Tournament not open" });
+    const count = await pool.query(
+      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+      [req.params.id],
+    );
+    if (parseInt(count.rows[0].count) >= tournament.max_players)
+      return res.status(400).json({ error: "Tournament full" });
+
+    await pool.query(
+      `
+      INSERT INTO tournament_players (tournament_id, wallet, user_id)
+      VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING
+    `,
+      [req.params.id, wallet.toLowerCase(), req.user.id],
+    );
+
+    await pool.query(
+      "UPDATE tournaments SET prize_pool = prize_pool + $1 WHERE id=$2",
+      [tournament.entry_fee, req.params.id],
+    );
+
+    const newCount = parseInt(count.rows[0].count) + 1;
+    if (newCount >= tournament.max_players) {
+      await pool.query(
+        "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
+        [req.params.id],
+      );
+      await pool.query(
+        `
+        INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
+        VALUES ($1,1,'active',NOW()) ON CONFLICT (tournament_id,round_number) DO NOTHING
+      `,
+        [req.params.id],
+      );
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── SUBMIT round score ────────────────────────────────────────────────────────
+app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet, answers } = req.body;
+  if (!wallet || !Array.isArray(answers))
+    return res.status(400).json({ error: "Invalid input" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    if (tournament.status !== "active")
+      return res.status(400).json({ error: "Not active" });
+
+    const roundRes = await pool.query(
+      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 AND round_number=$2",
+      [req.params.id, tournament.current_round],
+    );
+    if (!roundRes.rows.length)
+      return res.status(400).json({ error: "No active round" });
+    const round = roundRes.rows[0];
+
+    const playerRes = await pool.query(
+      "SELECT * FROM tournament_players WHERE tournament_id=$1 AND wallet=LOWER($2)",
+      [req.params.id, wallet],
+    );
+    if (!playerRes.rows.length)
+      return res.status(403).json({ error: "Not in tournament" });
+    if (playerRes.rows[0].eliminated)
+      return res.status(400).json({ error: "Eliminated" });
+
+    const existing = await pool.query(
+      "SELECT id FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND wallet=LOWER($3)",
+      [req.params.id, round.id, wallet],
+    );
+    if (existing.rows.length)
+      return res.status(400).json({ error: "Already submitted" });
+
+    const score = Math.min(
+      answers.filter((a) => a.correct === true).length * 100,
+      1000,
+    );
+
+    await pool.query(
+      "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score) VALUES ($1,$2,LOWER($3),$4)",
+      [req.params.id, round.id, wallet, score],
+    );
+    await pool.query(
+      "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND wallet=LOWER($3)",
+      [score, req.params.id, wallet],
+    );
+
+    // Check if all active players submitted
+    const activePlayers = await pool.query(
+      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated",
+      [req.params.id],
+    );
+    const submissions = await pool.query(
+      "SELECT COUNT(*) FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2",
+      [req.params.id, round.id],
+    );
+
+    if (
+      parseInt(submissions.rows[0].count) >=
+      parseInt(activePlayers.rows[0].count)
+    ) {
+      await pool.query(
+        "UPDATE tournament_rounds SET status='finished', finished_at=NOW() WHERE id=$1",
+        [round.id],
+      );
+
+      const isFinal = tournament.current_round >= tournament.rounds;
+      if (isFinal) {
+        const rankings = await pool.query(
+          "SELECT wallet, total_score FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated ORDER BY total_score DESC",
+          [req.params.id],
+        );
+        const winner = rankings.rows[0]?.wallet;
+        const pool2 = parseFloat(tournament.prize_pool);
+        const prizes = {
+          first: (pool2 * 0.6).toFixed(6),
+          second: (pool2 * 0.25).toFixed(6),
+          third: (pool2 * 0.15).toFixed(6),
+        };
+        await pool.query(
+          "UPDATE tournaments SET status='finished', finished_at=NOW(), winner=$1 WHERE id=$2",
+          [winner, req.params.id],
+        );
+        return res.json({
+          ok: true,
+          score,
+          roundFinished: true,
+          tournamentFinished: true,
+          rankings: rankings.rows,
+          prizes,
+          winner,
+        });
+      } else {
+        // Eliminate bottom half
+        const allRankings = await pool.query(
+          "SELECT wallet, total_score FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated ORDER BY total_score DESC",
+          [req.params.id],
+        );
+        const survivors = Math.ceil(allRankings.rows.length / 2);
+        const toEliminate = allRankings.rows
+          .slice(survivors)
+          .map((p) => p.wallet);
+        if (toEliminate.length) {
+          await pool.query(
+            "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND wallet=ANY($2)",
+            [req.params.id, toEliminate],
+          );
+        }
+        const nextRound = tournament.current_round + 1;
+        await pool.query(
+          "UPDATE tournaments SET current_round=$1 WHERE id=$2",
+          [nextRound, req.params.id],
+        );
+        await pool.query(
+          "INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at) VALUES ($1,$2,'active',NOW())",
+          [req.params.id, nextRound],
+        );
+        return res.json({
+          ok: true,
+          score,
+          roundFinished: true,
+          tournamentFinished: false,
+          nextRound,
+          eliminated: toEliminate,
+          survivors: allRankings.rows.slice(0, survivors).map((p) => p.wallet),
+        });
+      }
+    }
+    res.json({ ok: true, score, roundFinished: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // =============================================================================
 // START
