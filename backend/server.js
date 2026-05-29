@@ -394,6 +394,42 @@ async function initDB() {
       )
       .catch(() => {});
 
+    // TOURNAMENT CLAIMS TABLE
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS tournament_claims (
+    id              SERIAL PRIMARY KEY,
+    tournament_id   INT REFERENCES tournaments(id) ON DELETE CASCADE,
+    wallet          TEXT NOT NULL,
+    amount          NUMERIC(36,18),
+    token_symbol    TEXT,
+    status          TEXT DEFAULT 'pending',
+    tx_hash         TEXT,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tournament_id, wallet)
+  );
+`);
+
+    // Tournament volume column
+    await pool
+      .query(
+        `ALTER TABLE platform_stats ADD COLUMN IF NOT EXISTS tournament_volume NUMERIC(36,18) DEFAULT 0`,
+      )
+      .catch(() => {});
+
+    // Tournament deadline
+    await pool
+      .query(
+        `ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ`,
+      )
+      .catch(() => {});
+
+    // Tournament wins column
+    await pool
+      .query(
+        `ALTER TABLE tournament_players ADD COLUMN IF NOT EXISTS prize_position INT DEFAULT -1`,
+      )
+      .catch(() => {});
+
     // =========================================================================
     // GAME QUESTIONS
     // =========================================================================
@@ -2609,15 +2645,23 @@ app.post("/tournaments/create", async (req, res) => {
     allowedTags: [],
     allowedAttributes: {},
   });
+
+  const creatorId = req.user.wallet || req.user.email;
+  const recent = await pool.query(
+    "SELECT id FROM tournaments WHERE creator=LOWER($1) AND created_at > NOW() - INTERVAL '24 hours'",
+    [creatorId],
+  );
+  if (recent.rows.length > 0)
+    return res.status(429).json({
+      error: "You can only create 1 tournament per 24 hours. Please wait.",
+    });
   try {
     const result = await pool.query(
-      `
-      INSERT INTO tournaments (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds)
-      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *
-    `,
+      `INSERT INTO tournaments (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds, deadline_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '7 days') RETURNING *`,
       [
         cleanName,
-        req.user.wallet || req.user.email,
+        creatorId,
         parseInt(chainId || 5042002),
         parseFloat(entryFee),
         tokenSymbol || "USDC",
@@ -2825,7 +2869,176 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
   }
 });
 
-// =============================================================================
+// ── TOURNAMENT CLAIM PRIZE ────────────────────────────────────────────────────
+app.post("/tournaments/:id/claim", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    if (tournament.status !== "finished")
+      return res.status(400).json({ error: "Tournament not finished yet" });
+
+    // Get final rankings
+    const rankings = await pool.query(
+      `SELECT wallet, total_score FROM tournament_players
+       WHERE tournament_id=$1 ORDER BY total_score DESC LIMIT 3`,
+      [req.params.id],
+    );
+
+    const myPos = rankings.rows.findIndex(
+      (p) => p.wallet.toLowerCase() === wallet.toLowerCase(),
+    );
+    if (myPos < 0 || myPos > 2)
+      return res.status(400).json({ error: "You are not a top-3 winner" });
+
+    // Check already claimed
+    const existing = await pool.query(
+      "SELECT * FROM tournament_claims WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+      [req.params.id, wallet],
+    );
+    if (existing.rows.length && existing.rows[0].status === "paid")
+      return res.status(400).json({ error: "Prize already claimed" });
+
+    const splits = [0.6, 0.25, 0.15];
+    const prizeAmount = parseFloat(tournament.prize_pool) * splits[myPos];
+    const isLitvm = tournament.token_symbol === "zkLTC";
+    const decimals = isLitvm ? 18 : 6;
+    const amountWei = ethers.parseUnits(
+      prizeAmount.toFixed(decimals),
+      decimals,
+    );
+
+    // Record claim intent
+    await pool.query(
+      `INSERT INTO tournament_claims (tournament_id, wallet, amount, token_symbol, status)
+       VALUES ($1,$2,$3,$4,'pending')
+       ON CONFLICT (tournament_id, wallet) DO UPDATE SET status='pending'`,
+      [
+        req.params.id,
+        wallet.toLowerCase(),
+        prizeAmount,
+        tournament.token_symbol,
+      ],
+    );
+
+    // Auto-payout via verifier wallet
+    try {
+      let txHash;
+      if (isLitvm) {
+        const prov = makeLitvmProvider();
+        const ws = verifierWallet.connect(prov);
+        const tx = await ws.sendTransaction({
+          to: wallet,
+          value: amountWei,
+          gasLimit: 21000,
+        });
+        await tx.wait();
+        txHash = tx.hash;
+      } else {
+        const ARC_USDC = "0x3600000000000000000000000000000000000000";
+        const prov = makeProvider();
+        const ws = verifierWallet.connect(prov);
+        const uc = new ethers.Contract(
+          ARC_USDC,
+          ["function transfer(address,uint256) external returns (bool)"],
+          ws,
+        );
+        const tx = await uc.transfer(wallet, amountWei);
+        await tx.wait();
+        txHash = tx.hash;
+      }
+
+      await pool.query(
+        "UPDATE tournament_claims SET status='paid', tx_hash=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
+        [txHash, req.params.id, wallet],
+      );
+
+      // Update player record
+      await pool.query(
+        "UPDATE tournament_players SET prize_position=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
+        [myPos, req.params.id, wallet],
+      );
+
+      // Track volume
+      await pool.query(
+        "UPDATE platform_stats SET tournament_volume = tournament_volume + $1 WHERE id=1",
+        [prizeAmount],
+      );
+
+      return res.json({
+        ok: true,
+        paid: true,
+        amount: prizeAmount,
+        txHash,
+        position: myPos,
+      });
+    } catch (payErr) {
+      console.error("Auto-payout failed:", payErr.message);
+      return res.json({
+        ok: true,
+        paid: false,
+        pending: true,
+        amount: prizeAmount,
+        message: "Payout queued — funds will arrive within 24 hours",
+      });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── TOURNAMENT GLOBAL LEADERBOARD ─────────────────────────────────────────────
+app.get("/tournaments/leaderboard", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        tp.wallet,
+        u.username,
+        u.avatar,
+        COUNT(DISTINCT tp.tournament_id) AS tournaments_played,
+        COUNT(DISTINCT CASE WHEN t.winner = tp.wallet THEN t.id END) AS wins,
+        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid'), 0) AS total_earned,
+        t.token_symbol
+      FROM tournament_players tp
+      LEFT JOIN users u ON LOWER(u.wallet) = LOWER(tp.wallet)
+      LEFT JOIN tournaments t ON t.id = tp.tournament_id
+      LEFT JOIN tournament_claims tc ON LOWER(tc.wallet) = LOWER(tp.wallet)
+      GROUP BY tp.wallet, u.username, u.avatar, t.token_symbol
+      HAVING COUNT(DISTINCT tp.tournament_id) > 0
+      ORDER BY wins DESC, total_earned DESC
+      LIMIT 15
+    `);
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── TOURNAMENT STATS (volume, counts) ─────────────────────────────────────────
+app.get("/tournaments/stats", async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT
+        COUNT(*) AS total_tournaments,
+        COUNT(*) FILTER (WHERE status='active') AS live_count,
+        COUNT(*) FILTER (WHERE status='finished') AS finished_count,
+        COALESCE(SUM(prize_pool) FILTER (WHERE status='finished'), 0) AS total_volume,
+        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='USDC' AND status='finished'), 0) AS usdc_volume,
+        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='zkLTC' AND status='finished'), 0) AS litvm_volume
+      FROM tournaments
+    `);
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // START
 // =============================================================================
 

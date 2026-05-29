@@ -2618,15 +2618,29 @@
       </div>
 
       <div class="card">
-        <div
-          style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-          <div style="display:flex;align-items:center;gap:12px">
-            <div class="card-title" style="margin:0">🎮 Game Rooms</div>
-            <div class="online-badge"><span class="online-badge-dot"></span><span id="onlineCount">—</span> online</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:2px;margin:0">
+              🎮 GAME ROOMS
+            </h2>
+            <span id="onlineBadge" style="font-size:.72rem;background:rgba(6,214,160,.1);
+              color:var(--green);border:1px solid rgba(6,214,160,.3);padding:2px 10px;border-radius:20px">
+              ● <span id="onlineCount">0</span> online
+            </span>
           </div>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" onclick="loadGames()">🔄 Refresh</button>
-            <button class="btn btn-primary btn-sm" onclick="showScreen('screenCreate')">＋ New Room</button>
+            <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 14px"
+              onclick="loadGames();loadTournaments();toast('Refreshed!','info')">
+              🔄 Refresh
+            </button>
+            <button onclick="showScreen('screenTournaments');loadTournaments()"
+              style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(123,97,255,.15));
+              border:1px solid rgba(255,209,102,.4);color:var(--gold);padding:8px 16px;
+              border-radius:20px;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.5px">
+              🏟️ Tournaments
+              <span style="background:var(--red);color:#fff;font-size:.6rem;padding:1px 5px;
+                border-radius:8px;font-weight:900">BETA</span>
+            </button>
           </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
@@ -2873,37 +2887,53 @@
       </div>
     </div>
 
-<!-- ADD before closing </main>: -->
-<div class="screen" id="screenTournaments">
-  <div class="card">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px">
-      <div>
-        <div class="card-title" style="margin:0">🏟️ Tournaments</div>
-        <div style="font-size:.78rem;color:var(--muted);margin-top:4px">Multi-round elimination · 60/25/15% prize split · USDC &amp; zkLTC</div>
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="showScreen('screenLobby')">← Back</button>
-        <button class="btn btn-primary btn-sm" onclick="showCreateTournamentModal()">＋ Create Tournament</button>
-      </div>
+<div id="screenTournaments" class="screen">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:2px;margin:0">
+        🏟️ TOURNAMENTS
+      </h2>
+      <p style="color:var(--muted);font-size:.78rem;margin:4px 0 0">
+        Multi-round elimination · 60/25/15% prize split · USDC &amp; zkLTC
+      </p>
     </div>
-    <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);border-radius:12px;padding:14px 16px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-      <div style="font-size:1.4rem">🏆</div>
-      <div style="flex:1">
-        <div style="font-size:.85rem;font-weight:700;color:var(--gold)">How It Works</div>
-        <div style="font-size:.75rem;color:var(--muted);margin-top:3px">Pay entry → Play 10 questions per round → Bottom half eliminated → Final 3 split 60/25/15%</div>
-      </div>
-      <div style="display:flex;gap:12px;font-size:.75rem;font-weight:700">
-        <span style="color:var(--gold)">🥇 60%</span>
-        <span style="color:#ccc">🥈 25%</span>
-        <span style="color:#cd7f32">🥉 15%</span>
-      </div>
-    </div>
-    <div class="game-grid" id="tournamentList">
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
-      <div class="skeleton skeleton-card"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 14px"
+        onclick="showTournamentLeaderboard()">🏆 Leaderboard</button>
+      <button class="btn btn-ghost btn-sm" onclick="showScreen('screenLobby')"
+        style="width:auto;padding:8px 14px">← Back</button>
+      <button class="btn btn-primary" onclick="showCreateTournamentModal()"
+        style="width:auto;padding:8px 18px">+ Create Tournament</button>
     </div>
   </div>
+
+  <!-- Volume stat -->
+  <div id="tournamentVolume" style="font-size:.82rem;margin-bottom:16px;
+    color:var(--muted);display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    Loading stats...
+  </div>
+
+  <!-- How it works banner -->
+  <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
+    border-radius:12px;padding:14px 18px;margin-bottom:18px;
+    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span style="font-size:1.5rem">🏆</span>
+      <div>
+        <div style="font-weight:700;font-size:.88rem">How It Works</div>
+        <div style="font-size:.74rem;color:var(--muted);margin-top:3px">
+          Pay entry → Play 10 questions per round → Bottom half eliminated → Final 3 split 60/25/15%
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;font-size:.8rem;font-weight:700">
+      <span>🥇 <span style="color:var(--gold)">60%</span></span>
+      <span>🥈 <span style="color:#ccc">25%</span></span>
+      <span>🥉 <span style="color:#cd7f32">15%</span></span>
+    </div>
+  </div>
+
+  <div id="tournamentList" class="game-grid"></div>
 </div>
 
   </main>

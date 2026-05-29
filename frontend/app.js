@@ -1488,6 +1488,8 @@ function injectStreakStyles() {
     background-position: -200% 0;
     }
     }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    @keyframes slideUp { from{transform:translateX(-50%) translateY(100px);opacity:0} to{transform:translateX(-50%) translateY(0);opacity:1} }
   `;
   document.head.appendChild(s);
 }
@@ -4311,9 +4313,26 @@ let currentTournamentId = null;
 
 async function loadTournaments() {
   try {
-    const res = await fetch(`${BACKEND}/tournaments`);
+    const [res, statsRes] = await Promise.all([
+      fetch(`${BACKEND}/tournaments`),
+      fetch(`${BACKEND}/tournaments/stats`),
+    ]);
     allTournaments = await res.json();
+    const stats = await statsRes.json();
+
+    // Update volume display
+    const volEl = document.getElementById("tournamentVolume");
+    if (volEl && stats) {
+      const usdcVol = parseFloat(stats.usdc_volume || 0).toFixed(2);
+      const litvmVol = parseFloat(stats.litvm_volume || 0).toFixed(4);
+      volEl.innerHTML = `
+        <span style="color:var(--accent);font-weight:700">$${usdcVol} USDC</span>
+        ${parseFloat(litvmVol) > 0 ? `<span style="color:var(--muted);margin:0 4px">+</span><span style="color:var(--purple);font-weight:700">${litvmVol} zkLTC</span>` : ""}
+        <span style="color:var(--muted);font-size:.68rem;display:block;margin-top:2px">TOTAL PAID OUT</span>`;
+    }
+
     renderTournaments();
+    updateLiveTournamentBanner();
   } catch (_) {}
 }
 
@@ -4321,14 +4340,20 @@ function renderTournaments() {
   const el = document.getElementById("tournamentList");
   if (!el) return;
   if (!allTournaments.length) {
-    el.innerHTML = `<p style="color:var(--muted);text-align:center;padding:32px;grid-column:1/-1">No tournaments yet. Create the first one!</p>`;
+    el.innerHTML = `
+      <div style="grid-column:1/-1;text-align:center;padding:48px 20px">
+        <div style="font-size:3rem;margin-bottom:12px">🏟️</div>
+        <p style="color:var(--muted);margin-bottom:16px">No tournaments yet. Create the first one!</p>
+        ${userAddress ? `<button class="btn btn-primary" style="width:auto;padding:12px 32px" onclick="showCreateTournamentModal()">+ Create Tournament</button>` : ""}
+      </div>`;
     return;
   }
+
   el.innerHTML = allTournaments
     .map((t) => {
       const statusColors = {
         open: "var(--green)",
-        active: "var(--gold)",
+        active: "var(--red)",
         finished: "var(--muted)",
         cancelled: "var(--red)",
       };
@@ -4338,22 +4363,38 @@ function renderTournaments() {
       const fee = parseFloat(t.entry_fee).toFixed(dp);
       const pool2 = parseFloat(t.prize_pool).toFixed(dp);
       const isFull = parseInt(t.player_count) >= t.max_players;
+      const isLive = t.status === "active";
+      const timer = fmtTournamentTime(t);
+      const spotsLeft = t.max_players - parseInt(t.player_count);
+
       return `<div class="gcard" onclick="openTournament(${t.id})"
-      style="${t.status === "active" ? "border-color:rgba(255,209,102,.4)" : ""}">
-      <div class="gcard-title">
-        🏟️ ${sanitizeText(t.name)}
-        <span class="badge" style="color:${statusColor};border-color:${statusColor};background:rgba(0,0,0,.2)">${t.status.toUpperCase()}</span>
-        ${chainIcon}
+      style="${isLive ? "border-color:rgba(239,71,111,.5);box-shadow:0 0 20px rgba(239,71,111,.1)" : t.status === "finished" ? "opacity:.75" : ""}">
+      <div class="gcard-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        ${
+          isLive
+            ? `<span style="width:7px;height:7px;border-radius:50%;background:var(--red);
+          display:inline-block;box-shadow:0 0 6px var(--red);animation:pulse 1s ease-in-out infinite;flex-shrink:0"></span>`
+            : "🏟️"
+        }
+        <span style="flex:1">${sanitizeText(t.name)}</span>
+        <span class="badge" style="color:${statusColor};border-color:${statusColor};background:rgba(0,0,0,.3);font-size:.63rem">
+          ${isLive ? "🔴 LIVE" : t.status.toUpperCase()}
+        </span>
+        <span style="font-size:.72rem">${chainIcon}</span>
       </div>
       <div style="font-size:.75rem;color:var(--gold);margin-bottom:8px;font-weight:600">
         ${t.rounds} Rounds · ${t.max_players} Players Max
       </div>
       <div class="gmeta">💰 Entry: <strong>${fee} ${t.token_symbol}</strong> | 🏆 Pool: <strong>${pool2} ${t.token_symbol}</strong></div>
-      <div class="gmeta">👥 <strong>${t.player_count}/${t.max_players}</strong> joined</div>
+      <div class="gmeta">👥 <strong>${t.player_count}/${t.max_players}</strong> joined
+        ${t.status === "open" && !isFull ? `<span style="color:var(--green);font-size:.72rem;margin-left:6px">${spotsLeft} spot${spotsLeft > 1 ? "s" : ""} left</span>` : ""}
+      </div>
       <div style="font-size:.72rem;color:var(--muted);margin-top:6px">
         🥇 ${(parseFloat(pool2) * 0.6).toFixed(dp)} · 🥈 ${(parseFloat(pool2) * 0.25).toFixed(dp)} · 🥉 ${(parseFloat(pool2) * 0.15).toFixed(dp)} ${t.token_symbol}
       </div>
-      ${isFull && t.status === "open" ? '<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:600">🔴 FULL</div>' : ""}
+      ${isFull && t.status === "open" ? '<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:600">🔴 FULL — Starting soon</div>' : ""}
+      ${timer && t.status === "open" ? `<div style="font-size:.7rem;color:var(--muted);margin-top:4px">⏰ ${timer}</div>` : ""}
+      ${isLive ? `<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:700;animation:pulse 2s ease-in-out infinite">⚔️ Round ${t.current_round} in progress</div>` : ""}
     </div>`;
     })
     .join("");
@@ -4422,11 +4463,41 @@ async function openTournament(id) {
         <p style="color:var(--red);font-weight:600">❌ You were eliminated in Round ${t.current_round - 1}</p>
       </div>`;
     } else if (t.status === "finished") {
-      actionHtml = `<div class="winner-banner">
-        <h3>🏆 Tournament Complete!</h3>
-        <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
-        <p style="color:var(--muted);margin-top:8px;font-size:.85rem">Winner: ${players[0]?.username ? "@" + players[0].username : fmt(players[0]?.wallet)}</p>
-      </div>`;
+      const myRank = players.findIndex((p) => p.wallet === myWallet);
+      const splitPcts = [0.6, 0.25, 0.15];
+      const myPrize =
+        myRank >= 0 && myRank < 3
+          ? (parseFloat(pool2) * splitPcts[myRank]).toFixed(dp)
+          : null;
+      const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
+
+      if (myPrize && parseFloat(myPrize) > 0) {
+        actionHtml = `
+          <div class="winner-banner" style="margin-bottom:16px">
+            <h3>${medals[myRank]} — YOU WON!</h3>
+            <div class="winner-prize" style="font-size:2rem">${myPrize} ${t.token_symbol}</div>
+            <p style="color:rgba(255,255,255,.6);font-size:.8rem;margin-top:4px">
+              Prize is paid directly to your wallet from the prize pool
+            </p>
+            <button id="claimTourneyBtn" class="btn btn-gold"
+              onclick="claimTournamentPrize(${t.id},'${t.token_symbol}')"
+              style="margin-top:16px;width:auto;padding:14px 48px;font-size:1.1rem;
+              box-shadow:0 4px 20px rgba(255,209,102,.4)">
+              💰 Claim ${myPrize} ${t.token_symbol}
+            </button>
+          </div>`;
+      } else {
+        const winner = players[0];
+        actionHtml = `
+          <div class="winner-banner">
+            <h3>🏆 Tournament Complete!</h3>
+            <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
+            <p style="color:rgba(255,255,255,.6);margin-top:8px;font-size:.85rem">
+              Winner: <strong>${winner?.username ? "@" + winner.username : fmt(winner?.wallet)}</strong>
+            </p>
+            ${myRank >= 0 ? `<p style="color:var(--muted);font-size:.78rem;margin-top:6px">You finished #${myRank + 1}</p>` : ""}
+          </div>`;
+      }
     } else if (!userAddress) {
       actionHtml = `<button class="btn btn-primary" onclick="connectWallet()">🦊 Connect Wallet to Join</button>`;
     }
@@ -4713,48 +4784,320 @@ async function submitTournamentScore(tournamentId, answers, score) {
   }
 }
 
+// ── CLAIM TOURNAMENT PRIZE ────────────────────────────────────────────────────
+async function claimTournamentPrize(tournamentId, tokenSymbol) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const btn = document.getElementById("claimTourneyBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Sending prize...";
+  }
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || "Claim failed", "error");
+      return;
+    }
+    if (data.paid) {
+      toast(
+        `🎉 ${data.amount.toFixed(2)} ${tokenSymbol} sent! TX: ${data.txHash?.slice(0, 12)}...`,
+        "success",
+      );
+      if (typeof confetti === "function")
+        confetti({ particleCount: 150, spread: 80, origin: { y: 0.5 } });
+    } else {
+      toast(
+        `✅ Payout of ${data.amount.toFixed(2)} ${tokenSymbol} queued — arrives within 24h`,
+        "success",
+      );
+    }
+    setTimeout(() => openTournament(tournamentId), 1500);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = `💰 Claim Prize`;
+    }
+  }
+}
+
+// ── TOURNAMENT LEADERBOARD MODAL ──────────────────────────────────────────────
+async function showTournamentLeaderboard() {
+  try {
+    const [lbRes, statsRes] = await Promise.all([
+      fetch(`${BACKEND}/tournaments/leaderboard`),
+      fetch(`${BACKEND}/tournaments/stats`),
+    ]);
+    const lb = await lbRes.json();
+    const stats = await statsRes.json();
+
+    const usdcVol = parseFloat(stats.usdc_volume || 0).toFixed(2);
+    const litvmVol = parseFloat(stats.litvm_volume || 0).toFixed(4);
+
+    const modal = document.createElement("div");
+    modal.id = "tourneyLbModal";
+    modal.className = "bet-modal-overlay";
+    modal.innerHTML = `
+      <div class="bet-modal-box" style="max-width:520px;width:95%;max-height:85vh;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div>
+            <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px;color:var(--gold)">
+              🏆 Tournament Hall of Fame
+            </h3>
+            <div style="font-size:.75rem;color:var(--muted);margin-top:4px">
+              ${stats.total_tournaments} tournaments · 
+              <span style="color:var(--accent)">$${usdcVol} USDC</span> + 
+              <span style="color:var(--purple)">${litvmVol} zkLTC</span> paid out
+            </div>
+          </div>
+          <button onclick="document.getElementById('tourneyLbModal').remove()"
+            style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.4rem">✕</button>
+        </div>
+        <!-- Live count badge -->
+        ${
+          parseInt(stats.live_count) > 0
+            ? `
+        <div style="background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.3);border-radius:8px;
+          padding:8px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px">
+          <span style="width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block;
+            box-shadow:0 0 6px var(--red);animation:pulse 1s ease-in-out infinite"></span>
+          <span style="font-size:.82rem;font-weight:700;color:var(--red)">${stats.live_count} TOURNAMENT${parseInt(stats.live_count) > 1 ? "S" : ""} LIVE RIGHT NOW</span>
+          <button onclick="document.getElementById('tourneyLbModal').remove();showScreen('screenTournaments');loadTournaments()"
+            style="margin-left:auto;background:var(--red);border:none;color:#fff;padding:4px 12px;border-radius:20px;
+            font-size:.72rem;font-weight:700;cursor:pointer">JOIN →</button>
+        </div>`
+            : ""
+        }
+        <div style="overflow-y:auto;flex:1">
+          ${
+            lb.length === 0
+              ? `<p style="color:var(--muted);text-align:center;padding:30px">No tournament results yet. Be the first winner!</p>`
+              : lb
+                  .map(
+                    (p, i) => `
+            <div style="display:flex;align-items:center;gap:12px;padding:10px 0;
+              border-bottom:1px solid var(--border);${i === 0 ? "background:rgba(255,209,102,.03);border-radius:8px;padding:10px 8px" : ""}">
+              <span style="font-size:1.2rem;min-width:30px;text-align:center">
+                ${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}
+              </span>
+              <div style="width:34px;height:34px;border-radius:50%;background:var(--surface);
+                display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:700;
+                flex-shrink:0;overflow:hidden;border:2px solid ${i === 0 ? "var(--gold)" : i === 1 ? "#ccc" : i === 2 ? "#cd7f32" : "var(--border)"}">
+                ${
+                  p.avatar
+                    ? `<img src="${sanitizeUrl(p.avatar)}" style="width:100%;height:100%;object-fit:cover">`
+                    : (p.username || p.wallet || "?")[0].toUpperCase()
+                }
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:.88rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  ${p.username ? "@" + p.username : fmt(p.wallet)}
+                </div>
+                <div style="font-size:.72rem;color:var(--muted);margin-top:2px">
+                  ${p.tournaments_played} played · ${p.wins} 🏆 wins
+                </div>
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-size:.92rem;font-weight:700;color:var(--gold)">
+                  ${parseFloat(p.total_earned || 0).toFixed(2)}
+                </div>
+                <div style="font-size:.68rem;color:var(--muted)">${p.token_symbol || "USDC"} earned</div>
+              </div>
+            </div>`,
+                  )
+                  .join("")
+          }
+        </div>
+      </div>`;
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) modal.remove();
+    });
+    document.body.appendChild(modal);
+  } catch (e) {
+    toast("Failed to load leaderboard", "error");
+  }
+}
+
+// ── LIVE TOURNAMENT BANNER ────────────────────────────────────────────────────
+function updateLiveTournamentBanner() {
+  const live = allTournaments.filter((t) => t.status === "active");
+  const open = allTournaments.filter(
+    (t) => t.status === "open" && parseInt(t.player_count) < t.max_players,
+  );
+  const existing = document.getElementById("liveTourneyBanner");
+
+  if (
+    (live.length > 0 || open.length > 0) &&
+    !window._liveTourneyBannerDismissed
+  ) {
+    if (!existing) {
+      const banner = document.createElement("div");
+      banner.id = "liveTourneyBanner";
+      banner.style.cssText = `
+        position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+        background:linear-gradient(135deg,rgba(239,71,111,.95),rgba(123,97,255,.95));
+        border:1px solid rgba(255,255,255,.2);border-radius:40px;
+        padding:10px 20px 10px 16px;display:flex;align-items:center;gap:10px;
+        z-index:9998;backdrop-filter:blur(12px);cursor:pointer;
+        box-shadow:0 8px 32px rgba(239,71,111,.4);
+        animation:slideUp .4s cubic-bezier(.175,.885,.32,1.275) forwards;
+        white-space:nowrap;max-width:90vw;
+      `;
+      banner.innerHTML = `
+        <span style="width:8px;height:8px;border-radius:50%;background:#fff;display:inline-block;
+          box-shadow:0 0 8px #fff;flex-shrink:0;animation:pulse 1s ease-in-out infinite"></span>
+        <span style="font-size:.85rem;font-weight:700;color:#fff">
+          ${
+            live.length > 0
+              ? `🎮 ${live.length} Tournament${live.length > 1 ? "s" : ""} LIVE Now!`
+              : `🏟️ ${open.length} Tournament${open.length > 1 ? "s" : ""} Open — Join Now!`
+          }
+        </span>
+        <button onclick="window._liveTourneyBannerDismissed=false;showScreen('screenTournaments');loadTournaments();document.getElementById('liveTourneyBanner')?.remove()"
+          style="background:rgba(255,255,255,.25);border:1px solid rgba(255,255,255,.3);
+          color:#fff;padding:5px 14px;border-radius:20px;font-size:.75rem;font-weight:800;
+          cursor:pointer;white-space:nowrap">View →</button>
+        <button onclick="window._liveTourneyBannerDismissed=true;this.closest('#liveTourneyBanner').remove()"
+          style="background:none;border:none;color:rgba(255,255,255,.6);cursor:pointer;
+          font-size:1rem;line-height:1;padding:0;flex-shrink:0">✕</button>`;
+      document.body.appendChild(banner);
+    }
+  } else if (live.length === 0 && open.length === 0 && existing) {
+    existing.remove();
+  }
+}
+
+// ── TOURNAMENT COUNTDOWN TIMER ────────────────────────────────────────────────
+function fmtTournamentTime(t) {
+  if (!t.deadline_at) return null;
+  const secs = Math.floor((new Date(t.deadline_at) - Date.now()) / 1000);
+  if (secs <= 0) return "Expired";
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h left`;
+  if (h > 0) return `${h}h ${m}m left`;
+  return `${m}m ${Math.floor(secs % 60)}s left`;
+}
+
 function showCreateTournamentModal() {
   if (!userAddress) return toast("Connect wallet first", "error");
   const existing = document.getElementById("createTourneyModal");
   if (existing) existing.remove();
+
   const modal = document.createElement("div");
   modal.id = "createTourneyModal";
   modal.className = "bet-modal-overlay";
   modal.innerHTML = `
-    <div class="bet-modal-box" style="max-width:440px;width:95%">
-      <h3 style="margin-bottom:20px">🏟️ Create Tournament</h3>
-      <div class="ig" style="margin-bottom:10px">
-        <label class="il">Tournament Name</label>
-        <input id="tName" placeholder="e.g. Friday Night Trivia" maxlength="60"/>
+    <div class="bet-modal-box" style="max-width:460px;width:95%;max-height:90vh;overflow-y:auto">
+      <div style="text-align:center;margin-bottom:20px">
+        <div style="font-size:2.5rem;margin-bottom:8px">🏟️</div>
+        <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:2px">
+          CREATE TOURNAMENT
+        </h3>
+        <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
+          Multi-round elimination · 60/25/15% prize split
+        </p>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <div class="ig"><label class="il">Entry Fee</label>
-          <input id="tFee" type="number" min="0.01" step="0.001" placeholder="e.g. 1.00"/></div>
-        <div class="ig"><label class="il">Max Players</label>
-          <input id="tMax" type="number" min="4" max="64" value="8"/></div>
+
+      <!-- TWITTER TASK -->
+      <div style="background:rgba(29,161,242,.06);border:1px solid rgba(29,161,242,.25);
+        border-radius:12px;padding:14px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="font-size:1.2rem">𝕏</span>
+          <div>
+            <div style="font-size:.82rem;font-weight:700;color:#1da1f2">Required: Share on X (Twitter)</div>
+            <div style="font-size:.72rem;color:var(--muted)">Post about your tournament to unlock creation</div>
+          </div>
+        </div>
+        <a href="https://twitter.com/intent/tweet?text=${encodeURIComponent("🏟️ I just created a tournament on @TriviaFi! Multi-round trivia · Win USDC & zkLTC · Join now: https://triviafi.vercel.app #TriviaFi #Web3Gaming")}"
+          target="_blank" id="tweetTaskBtn"
+          onclick="document.getElementById('tweetConfirm').style.display='flex'"
+          style="display:flex;align-items:center;justify-content:center;gap:8px;
+          background:#1da1f2;color:#fff;padding:10px 20px;border-radius:20px;
+          text-decoration:none;font-size:.82rem;font-weight:700;margin-bottom:10px">
+          𝕏 Share on Twitter/X
+        </a>
+        <div id="tweetConfirm" style="display:none;align-items:center;gap:8px">
+          <input type="checkbox" id="tweetDone" style="width:16px;height:16px;cursor:pointer">
+          <label for="tweetDone" style="font-size:.78rem;color:var(--muted);cursor:pointer">
+            ✓ I've shared the tweet — unlock tournament creation
+          </label>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-        <div class="ig"><label class="il">Rounds</label>
-          <select id="tRounds" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:.9rem;width:100%">
-            <option value="2">2 Rounds</option>
-            <option value="3" selected>3 Rounds</option>
-            <option value="4">4 Rounds</option>
-            <option value="5">5 Rounds</option>
-          </select></div>
-        <div class="ig"><label class="il">Token</label>
-          <select id="tChain" style="background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:.9rem;width:100%">
-            <option value="5042002">⚡ USDC (Arc)</option>
-            <option value="4441">🔷 zkLTC (LitVM)</option>
-          </select></div>
-      </div>
-      <div style="font-size:.75rem;color:var(--muted);margin-bottom:16px;padding:10px;background:var(--surface);border-radius:8px">
-        💡 Bottom half eliminated each round. Prizes auto-split 60% / 25% / 15% to top 3.
-      </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn-primary" onclick="submitCreateTournament()">🚀 Create</button>
-        <button class="btn btn-ghost" style="width:auto;padding:13px 18px" onclick="document.getElementById('createTourneyModal').remove()">Cancel</button>
+
+      <!-- FORM -->
+      <div id="tourneyForm" style="opacity:.4;pointer-events:none;transition:opacity .3s">
+        <div class="ig" style="margin-bottom:10px">
+          <label class="il">Tournament Name</label>
+          <input id="tName" placeholder="e.g. Friday Night Trivia Championship" maxlength="60"
+            style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+            padding:12px 14px;border-radius:8px;font-size:.9rem;width:100%;box-sizing:border-box"/>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div class="ig">
+            <label class="il">Entry Fee</label>
+            <input id="tFee" type="number" min="0.01" step="0.001" placeholder="e.g. 5.00"
+              style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+              padding:12px 14px;border-radius:8px;font-size:.9rem;width:100%;box-sizing:border-box"/>
+          </div>
+          <div class="ig">
+            <label class="il">Max Players</label>
+            <input id="tMax" type="number" min="4" max="64" value="8"
+              style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+              padding:12px 14px;border-radius:8px;font-size:.9rem;width:100%;box-sizing:border-box"/>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div class="ig">
+            <label class="il">Rounds</label>
+            <select id="tRounds" style="background:var(--surface);border:1px solid var(--border);
+              color:var(--text);padding:12px 14px;border-radius:8px;font-size:.9rem;width:100%">
+              <option value="2">2 Rounds</option>
+              <option value="3" selected>3 Rounds</option>
+              <option value="4">4 Rounds</option>
+              <option value="5">5 Rounds</option>
+            </select>
+          </div>
+          <div class="ig">
+            <label class="il">Token</label>
+            <select id="tChain" style="background:var(--surface);border:1px solid var(--border);
+              color:var(--text);padding:12px 14px;border-radius:8px;font-size:.9rem;width:100%">
+              <option value="5042002">⚡ USDC (Arc)</option>
+              <option value="4441">🔷 zkLTC (LitVM)</option>
+            </select>
+          </div>
+        </div>
+        <div style="background:var(--surface);border-radius:10px;padding:12px;margin-bottom:16px;
+          font-size:.76rem;color:var(--muted);line-height:1.6">
+          💡 Bottom half eliminated each round<br>
+          🏆 Prizes auto-split 60% / 25% / 15% to top 3<br>
+          ⏰ Tournament expires after 7 days if not filled<br>
+          🚫 One tournament per wallet per 24 hours
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-primary" onclick="submitCreateTournament()" style="flex:1">🚀 Launch Tournament</button>
+          <button class="btn btn-ghost" style="width:auto;padding:13px 18px"
+            onclick="document.getElementById('createTourneyModal').remove()">Cancel</button>
+        </div>
       </div>
     </div>`;
+
+  // Unlock form when tweet checkbox is checked
+  modal.querySelector("#tweetDone").addEventListener("change", function () {
+    const form = document.getElementById("tourneyForm");
+    if (form) {
+      form.style.opacity = this.checked ? "1" : "0.4";
+      form.style.pointerEvents = this.checked ? "auto" : "none";
+    }
+  });
+
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.remove();
   });
