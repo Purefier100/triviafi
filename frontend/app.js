@@ -4320,15 +4320,20 @@ async function loadTournaments() {
     allTournaments = await res.json();
     const stats = await statsRes.json();
 
-    // Update volume display
     const volEl = document.getElementById("tournamentVolume");
     if (volEl && stats) {
       const usdcVol = parseFloat(stats.usdc_volume || 0).toFixed(2);
       const litvmVol = parseFloat(stats.litvm_volume || 0).toFixed(4);
+      const hasUsdc = parseFloat(usdcVol) > 0;
+      const hasLitvm = parseFloat(litvmVol) > 0;
       volEl.innerHTML = `
-        <span style="color:var(--accent);font-weight:700">$${usdcVol} USDC</span>
-        ${parseFloat(litvmVol) > 0 ? `<span style="color:var(--muted);margin:0 4px">+</span><span style="color:var(--purple);font-weight:700">${litvmVol} zkLTC</span>` : ""}
-        <span style="color:var(--muted);font-size:.68rem;display:block;margin-top:2px">TOTAL PAID OUT</span>`;
+        ${hasUsdc ? `<span style="color:var(--accent);font-weight:700">$${usdcVol} USDC</span>` : ""}
+        ${hasUsdc && hasLitvm ? `<span style="color:var(--muted);margin:0 4px">+</span>` : ""}
+        ${hasLitvm ? `<span style="color:var(--purple);font-weight:700">${litvmVol} zkLTC</span>` : ""}
+        ${!hasUsdc && !hasLitvm ? `<span style="color:var(--muted)">$0.00 USDC</span>` : ""}
+        <span style="color:var(--muted);font-size:.68rem;margin-left:6px;text-transform:uppercase;letter-spacing:.5px">
+          TOTAL PAID OUT
+        </span>`;
     }
 
     renderTournaments();
@@ -4464,43 +4469,209 @@ async function openTournament(id) {
       </div>`;
     } else if (t.status === "finished") {
       const myRank = players.findIndex((p) => p.wallet === myWallet);
+
       const splitPcts = [0.6, 0.25, 0.15];
+
       const myPrize =
         myRank >= 0 && myRank < 3
           ? (parseFloat(pool2) * splitPcts[myRank]).toFixed(dp)
           : null;
+
       const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
 
-      if (myPrize && parseFloat(myPrize) > 0) {
-        actionHtml = `
-          <div class="winner-banner" style="margin-bottom:16px">
-            <h3>${medals[myRank]} — YOU WON!</h3>
-            <div class="winner-prize" style="font-size:2rem">${myPrize} ${t.token_symbol}</div>
-            <p style="color:rgba(255,255,255,.6);font-size:.8rem;margin-top:4px">
-              Prize is paid directly to your wallet from the prize pool
-            </p>
-            <button id="claimTourneyBtn" class="btn btn-gold"
-              onclick="claimTournamentPrize(${t.id},'${t.token_symbol}')"
-              style="margin-top:16px;width:auto;padding:14px 48px;font-size:1.1rem;
-              box-shadow:0 4px 20px rgba(255,209,102,.4)">
-              💰 Claim ${myPrize} ${t.token_symbol}
-            </button>
-          </div>`;
+      if (myPrize && parseFloat(myPrize) > 0 && userAddress) {
+        let claimStatus = null;
+
+        try {
+          const cs = await fetch(
+            `${BACKEND}/tournaments/${t.id}/claim-status?wallet=${userAddress}`,
+            {
+              credentials: "include",
+            },
+          );
+
+          claimStatus = await cs.json();
+        } catch (_) {}
+
+        if (claimStatus?.status === "paid") {
+          actionHtml = `
+            <div style="
+              background:rgba(6,214,160,.08);
+              border:2px solid rgba(6,214,160,.3);
+              border-radius:16px;
+              padding:24px;
+              text-align:center;
+              margin-bottom:16px">
+    
+              <div style="font-size:2rem;margin-bottom:8px">✅</div>
+    
+              <h3 style="
+                font-family:'Bebas Neue',sans-serif;
+                font-size:1.3rem;
+                letter-spacing:2px;
+                color:var(--green);
+                margin:0 0 6px">
+    
+                ${medals[myRank]} — PRIZE SENT!
+    
+              </h3>
+    
+              <div style="
+                font-size:1.8rem;
+                font-weight:700;
+                color:var(--green);
+                margin-bottom:6px">
+    
+                ${myPrize} ${t.token_symbol}
+    
+              </div>
+    
+              <p style="
+                color:var(--muted);
+                font-size:.78rem;
+                margin:0 0 10px">
+    
+                Sent directly to your wallet on-chain
+    
+              </p>
+    
+              ${
+                claimStatus.tx_hash
+                  ? `
+                <div style="
+                  font-size:.72rem;
+                  background:var(--surface);
+                  border:1px solid var(--border);
+                  border-radius:8px;
+                  padding:8px 12px;
+                  word-break:break-all;
+                  color:var(--muted)">
+    
+                  TX: ${claimStatus.tx_hash}
+    
+                </div>
+              `
+                  : ""
+              }
+    
+            </div>`;
+        } else {
+          actionHtml = `
+            <div class="winner-banner" style="margin-bottom:16px">
+    
+              <h3>${medals[myRank]} — YOU WON!</h3>
+    
+              <div class="winner-prize" style="font-size:2rem">
+                ${myPrize} ${t.token_symbol}
+              </div>
+    
+              <p style="
+                color:rgba(255,255,255,.6);
+                font-size:.8rem;
+                margin-top:4px">
+    
+                Prize is paid directly to your wallet from the prize pool
+    
+              </p>
+    
+              <button
+                id="claimTourneyBtn"
+                class="btn btn-gold"
+                onclick="claimTournamentPrize(${t.id}, '${t.token_symbol}')"
+                style="
+                  margin-top:16px;
+                  width:auto;
+                  padding:14px 48px;
+                  font-size:1.1rem;
+                  box-shadow:0 4px 20px rgba(255,209,102,.4)">
+    
+                💰 Claim ${myPrize} ${t.token_symbol}
+    
+              </button>
+    
+            </div>`;
+        }
       } else {
         const winner = players[0];
+
         actionHtml = `
           <div class="winner-banner">
+    
             <h3>🏆 Tournament Complete!</h3>
-            <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
-            <p style="color:rgba(255,255,255,.6);margin-top:8px;font-size:.85rem">
-              Winner: <strong>${winner?.username ? "@" + winner.username : fmt(winner?.wallet)}</strong>
+    
+            <div class="winner-prize">
+              ${prizes.first} ${t.token_symbol}
+            </div>
+    
+            <p style="
+              color:rgba(255,255,255,.6);
+              margin-top:8px;
+              font-size:.85rem">
+    
+              Winner:
+              <strong>
+                ${
+                  winner?.username ? "@" + winner.username : fmt(winner?.wallet)
+                }
+              </strong>
+    
             </p>
-            ${myRank >= 0 ? `<p style="color:var(--muted);font-size:.78rem;margin-top:6px">You finished #${myRank + 1}</p>` : ""}
+    
+            ${
+              myRank >= 0
+                ? `
+              <p style="
+                color:var(--muted);
+                font-size:.78rem;
+                margin-top:6px">
+    
+                You finished #${myRank + 1}
+    
+              </p>
+            `
+                : ""
+            }
+    
           </div>`;
       }
-    } else if (!userAddress) {
-      actionHtml = `<button class="btn btn-primary" onclick="connectWallet()">🦊 Connect Wallet to Join</button>`;
     }
+
+    const myCreatorId = (
+      currentProfile?.wallet ||
+      userAddress ||
+      ""
+    ).toLowerCase();
+    const isMyTournament = t.creator?.toLowerCase() === myCreatorId;
+    const canDelete =
+      isMyTournament &&
+      (t.status === "open" ||
+        t.status === "cancelled" ||
+        t.status === "finished");
+    const isExpired = t.deadline_at && new Date(t.deadline_at) < new Date();
+
+    const creatorControlsHtml = canDelete
+      ? `
+  <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+    <div style="font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:10px">
+      👑 YOUR TOURNAMENT
+    </div>
+    ${
+      isExpired && t.status === "open"
+        ? `
+    <div style="background:rgba(239,71,111,.07);border:1px solid rgba(239,71,111,.2);
+      border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:.78rem;color:var(--muted)">
+      ⏰ Join period expired — this tournament is archived. You can delete it.
+    </div>`
+        : ""
+    }
+    <button onclick="deleteTournament(${t.id})"
+      style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);
+      color:var(--red);padding:10px 20px;border-radius:10px;cursor:pointer;
+      font-size:.8rem;font-weight:700;width:100%">
+      🗑️ Delete Tournament
+    </button>
+  </div>`
+      : "";
 
     document.getElementById("joinContent").innerHTML = `
       <div style="margin-bottom:16px">
@@ -4644,6 +4815,23 @@ async function joinTournament(id) {
     openTournament(id);
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
+  }
+}
+
+async function deleteTournament(id) {
+  if (!confirm("Delete this tournament? This cannot be undone.")) return;
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || "Delete failed", "error");
+    toast("Tournament deleted.", "info");
+    showScreen("screenTournaments");
+    await loadTournaments();
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
   }
 }
 
@@ -4904,11 +5092,22 @@ async function showTournamentLeaderboard() {
                 </div>
               </div>
               <div style="text-align:right;flex-shrink:0">
-                <div style="font-size:.92rem;font-weight:700;color:var(--gold)">
-                  ${parseFloat(p.total_earned || 0).toFixed(2)}
-                </div>
-                <div style="font-size:.68rem;color:var(--muted)">${p.token_symbol || "USDC"} earned</div>
-              </div>
+  <div style="font-size:.82rem;font-weight:700;color:var(--gold)">
+    ${
+      parseFloat(p.usdc_earned || 0).toFixed(2) > 0
+        ? `$${parseFloat(p.usdc_earned).toFixed(2)} USDC`
+        : parseFloat(p.litvm_earned || 0) > 0
+          ? `${parseFloat(p.litvm_earned).toFixed(4)} zkLTC`
+          : "—"
+    }
+  </div>
+  ${
+    parseFloat(p.usdc_earned || 0) > 0 && parseFloat(p.litvm_earned || 0) > 0
+      ? `<div style="font-size:.68rem;color:var(--purple)">${parseFloat(p.litvm_earned).toFixed(4)} zkLTC</div>`
+      : ""
+  }
+  <div style="font-size:.68rem;color:var(--muted)">${p.wins} 🏆 win${parseInt(p.wins) !== 1 ? "s" : ""}</div>
+</div>
             </div>`,
                   )
                   .join("")

@@ -2581,9 +2581,24 @@ if (process.env.NODE_ENV === "production") {
         await fetch(`https://name-triviafi-backend.onrender.com/health`);
         console.log("🏓 Self-ping OK");
       } catch (_) {}
+
+      // Auto-cancel expired tournaments
+      try {
+        await pool.query(`
+          UPDATE tournaments
+          SET status = 'cancelled'
+          WHERE status = 'open'
+            AND deadline_at < NOW()
+            AND (
+              SELECT COUNT(*)
+              FROM tournament_players
+              WHERE tournament_id = tournaments.id
+            ) = 0
+        `);
+      } catch (_) {}
     },
     8 * 60 * 1000,
-  ); // every 8 minutes
+  );
 }
 
 // ── LIST tournaments ──────────────────────────────────────────────────────────
@@ -2658,7 +2673,7 @@ app.post("/tournaments/create", async (req, res) => {
   try {
     const result = await pool.query(
       `INSERT INTO tournaments (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds, deadline_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '7 days') RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '2 hours') RETURNING *`,
       [
         cleanName,
         creatorId,
@@ -3000,19 +3015,19 @@ app.get("/tournaments/leaderboard", async (req, res) => {
     const result = await pool.query(`
       SELECT
         tp.wallet,
-        u.username,
-        u.avatar,
+        MAX(u.username) AS username,
+        MAX(u.avatar) AS avatar,
         COUNT(DISTINCT tp.tournament_id) AS tournaments_played,
-        COUNT(DISTINCT CASE WHEN t.winner = tp.wallet THEN t.id END) AS wins,
-        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid'), 0) AS total_earned,
-        t.token_symbol
+        COUNT(DISTINCT CASE WHEN LOWER(t.winner) = LOWER(tp.wallet) THEN t.id END) AS wins,
+        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid' AND tc.token_symbol='USDC'), 0) AS usdc_earned,
+        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid' AND tc.token_symbol='zkLTC'), 0) AS litvm_earned
       FROM tournament_players tp
       LEFT JOIN users u ON LOWER(u.wallet) = LOWER(tp.wallet)
       LEFT JOIN tournaments t ON t.id = tp.tournament_id
       LEFT JOIN tournament_claims tc ON LOWER(tc.wallet) = LOWER(tp.wallet)
-      GROUP BY tp.wallet, u.username, u.avatar, t.token_symbol
+      GROUP BY tp.wallet
       HAVING COUNT(DISTINCT tp.tournament_id) > 0
-      ORDER BY wins DESC, total_earned DESC
+      ORDER BY wins DESC, usdc_earned DESC
       LIMIT 15
     `);
     res.json(result.rows);
@@ -3039,8 +3054,45 @@ app.get("/tournaments/stats", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-// START
-// =============================================================================
+
+app.get("/tournaments/:id/claim-status", async (req, res) => {
+  const { wallet } = req.query;
+  if (!wallet) return res.json({ status: null });
+  try {
+    const r = await pool.query(
+      "SELECT status, amount, tx_hash, token_symbol FROM tournament_claims WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+      [req.params.id, wallet],
+    );
+    res.json(r.rows[0] || { status: null });
+  } catch (e) {
+    res.json({ status: null });
+  }
+});
+
+app.delete("/tournaments/:id", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (tournament.creator.toLowerCase() !== creatorId)
+      return res
+        .status(403)
+        .json({ error: "Only the creator can delete this tournament" });
+    if (tournament.status === "active")
+      return res.status(400).json({
+        error: "Cannot delete an active tournament — wait for it to finish",
+      });
+
+    await pool.query("DELETE FROM tournaments WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {

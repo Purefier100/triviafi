@@ -2619,30 +2619,30 @@
 
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-          <div style="display:flex;align-items:center;gap:10px">
-            <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:2px;margin:0">
-              🎮 GAME ROOMS
-            </h2>
-            <span id="onlineBadge" style="font-size:.72rem;background:rgba(6,214,160,.1);
-              color:var(--green);border:1px solid rgba(6,214,160,.3);padding:2px 10px;border-radius:20px">
-              ● <span id="onlineCount">0</span> online
-            </span>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 14px"
-              onclick="loadGames();loadTournaments();toast('Refreshed!','info')">
-              🔄 Refresh
-            </button>
-            <button onclick="showScreen('screenTournaments');loadTournaments()"
-              style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(123,97,255,.15));
-              border:1px solid rgba(255,209,102,.4);color:var(--gold);padding:8px 16px;
-              border-radius:20px;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.5px">
-              🏟️ Tournaments
-              <span style="background:var(--red);color:#fff;font-size:.6rem;padding:1px 5px;
-                border-radius:8px;font-weight:900">BETA</span>
-            </button>
-          </div>
-        </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:2px;margin:0">
+      🎮 GAME ROOMS
+    </h2>
+    <span id="onlineBadge" style="font-size:.72rem;background:rgba(6,214,160,.1);
+      color:var(--green);border:1px solid rgba(6,214,160,.3);padding:2px 10px;border-radius:20px">
+      ● <span id="onlineCount">0</span> online
+    </span>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 14px"
+      onclick="loadGames();loadTournaments();toast('Refreshed!','info')">
+      🔄 Refresh
+    </button>
+    <button onclick="showScreen('screenTournaments');loadTournaments()"
+      style="display:flex;align-items:center;gap:6px;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(123,97,255,.15));
+      border:1px solid rgba(255,209,102,.4);color:var(--gold);padding:8px 16px;
+      border-radius:20px;font-size:.8rem;font-weight:800;cursor:pointer;letter-spacing:.5px">
+      🏟️ Tournaments
+      <span style="background:var(--red);color:#fff;font-size:.6rem;padding:1px 5px;
+        border-radius:8px;font-weight:900">BETA</span>
+    </button>
+  </div>
+</div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
           <div class="tabs" style="margin-bottom:0;flex-wrap:wrap">
             <button class="tab active" onclick="filterGames('all',this)">All</button>
@@ -2651,14 +2651,6 @@
             <button class="tab" onclick="filterGames('1',this)">✅ Ended</button>
             <button class="tab" onclick="filterGames('2',this)">❌ Cancelled</button>
           </div>
-          <button
-            onclick="showScreen('screenTournaments');loadTournaments()"
-            style="display:flex;align-items:center;gap:7px;height:36px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,209,102,.3);background:rgba(255,209,102,.08);color:var(--gold);font-size:.82rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:.18s"
-            onmouseover="this.style.background='rgba(255,209,102,.15)'"
-            onmouseout="this.style.background='rgba(255,209,102,.08)'">
-            🏟️ Tournaments
-            <span style="background:var(--gold);color:#000;font-size:.65rem;font-weight:800;padding:1px 6px;border-radius:10px;line-height:1.6">BETA</span>
-          </button>
         </div>
         <div id="gamesList">
           <div class="game-grid">
