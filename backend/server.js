@@ -21,7 +21,12 @@ const sanitizeHtml = require("sanitize-html");
 const csrf = require("csurf");
 const cookieParser = require("cookie-parser");
 const csrfProtection = csrf({
-  cookie: true,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    key: "_csrf",
+  },
 });
 
 const app = express();
@@ -2591,7 +2596,7 @@ app.get("/tournaments/:id", async (req, res) => {
 });
 
 // ── CREATE tournament ─────────────────────────────────────────────────────────
-app.post("/tournaments/create", csrfProtection, async (req, res) => {
+app.post("/tournaments/create", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { name, chainId, entryFee, tokenSymbol, maxPlayers, rounds } = req.body;
   if (!name || !entryFee || !maxPlayers || !rounds)
@@ -2627,7 +2632,7 @@ app.post("/tournaments/create", csrfProtection, async (req, res) => {
 });
 
 // ── JOIN tournament ───────────────────────────────────────────────────────────
-app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
+app.post("/tournaments/:id/join", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))

@@ -4532,7 +4532,7 @@ async function joinTournament(id) {
 
     const joinRes = await fetch(`${BACKEND}/tournaments/${id}/join`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
+      headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({ wallet: userAddress }),
     });
@@ -4738,45 +4738,22 @@ async function submitCreateTournament() {
   const roundsEl = document.getElementById("tRounds");
   const chainEl = document.getElementById("tChain");
 
-  if (!nameEl || !feeEl || !maxEl || !roundsEl || !chainEl) {
-    return toast("Modal fields not found — try reopening", "error");
-  }
+  if (!nameEl) return toast("Please reopen the modal and try again", "error");
 
   const name = nameEl.value.trim();
-  const fee = feeEl.value.trim();
-  const max = maxEl.value.trim();
-  const rounds = roundsEl.value;
-  const chainId = chainEl.value;
+  const fee = parseFloat(feeEl?.value || 0);
+  const max = parseInt(maxEl?.value || 0);
+  const rounds = parseInt(roundsEl?.value || 3);
+  const chainId = parseInt(chainEl?.value || 5042002);
 
   if (!name) return toast("Enter a tournament name", "error");
-  if (!fee || parseFloat(fee) <= 0)
-    return toast("Enter a valid entry fee", "error");
-  if (!max || parseInt(max) < 4)
-    return toast("Min 4 players required", "error");
+  if (fee <= 0) return toast("Enter a valid entry fee", "error");
+  if (max < 4) return toast("Minimum 4 players required", "error");
+  if (!req.user && !currentProfile)
+    return toast("You must be logged in", "error");
 
-  const tokenSymbol = chainId === "4441" ? "zkLTC" : "USDC";
+  const tokenSymbol = chainId === 4441 ? "zkLTC" : "USDC";
 
-  // Fetch CSRF token
-  let csrfToken = "";
-  try {
-    const ctRes = await fetch(`${BACKEND}/csrf-token`, {
-      credentials: "include",
-    });
-    if (!ctRes.ok) throw new Error("CSRF fetch failed: " + ctRes.status);
-    const ctData = await ctRes.json();
-    csrfToken = ctData.csrfToken || "";
-  } catch (e) {
-    console.error("CSRF error:", e);
-    return toast("Session error — please refresh the page", "error");
-  }
-
-  if (!csrfToken)
-    return toast(
-      "Could not get security token — refresh and try again",
-      "error",
-    );
-
-  // Disable button while submitting
   const btn = document.querySelector("#createTourneyModal .btn-primary");
   if (btn) {
     btn.disabled = true;
@@ -4786,41 +4763,38 @@ async function submitCreateTournament() {
   try {
     const res = await fetch(`${BACKEND}/tournaments/create`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "CSRF-Token": csrfToken,
-      },
+      headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
         name,
-        chainId: parseInt(chainId),
-        entryFee: parseFloat(fee),
+        chainId,
+        entryFee: fee,
         tokenSymbol,
-        maxPlayers: parseInt(max),
-        rounds: parseInt(rounds),
+        maxPlayers: max,
+        rounds,
       }),
     });
 
+    const text = await res.text();
     let data;
     try {
-      data = await res.json();
+      data = JSON.parse(text);
     } catch (_) {
+      console.error("Non-JSON response:", text.slice(0, 200));
       throw new Error(
-        "Server returned invalid response (status " + res.status + ")",
+        "Server error (status " + res.status + ") — check console",
       );
     }
 
-    if (!res.ok) {
-      throw new Error(
-        data.error || "Create failed (status " + res.status + ")",
-      );
-    }
+    if (!res.ok)
+      throw new Error(data.error || "Failed with status " + res.status);
 
     document.getElementById("createTourneyModal")?.remove();
-    toast(`✅ Tournament "${name}" created!`, "success");
+    toast(`✅ "${name}" tournament created!`, "success");
+    showScreen("screenTournaments");
     await loadTournaments();
   } catch (e) {
-    console.error("Tournament create error:", e);
+    console.error("Create tournament error:", e);
     toast("Failed: " + e.message, "error");
     if (btn) {
       btn.disabled = false;
