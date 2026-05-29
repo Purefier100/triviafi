@@ -622,10 +622,8 @@ passport.deserializeUser(async (id, done) => {
 // AUTH ROUTES
 // =============================================================================
 
-app.get("/csrf-token", (req, res) => {
-  res.json({
-    csrfToken: req.csrfToken(),
-  });
+app.get("/csrf-token", csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
 });
 
 app.get(
@@ -2831,4 +2829,13 @@ app.listen(PORT, () => {
   console.log(`\n🚀 Backend running on port ${PORT}`);
   console.log(`   Verifier:  ${verifierWallet.address}`);
   console.log(`   Contract:  ${CONTRACT_ADDRESS}`);
+});
+
+// CSRF error handler — must be BEFORE app.listen
+app.use((err, req, res, next) => {
+  if (err.code === "EBADCSRFTOKEN") {
+    return res.status(403).json({ error: "Invalid or missing CSRF token" });
+  }
+  console.error("Unhandled error:", err.message);
+  res.status(500).json({ error: err.message });
 });

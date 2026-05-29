@@ -4732,41 +4732,103 @@ function showCreateTournamentModal() {
 }
 
 async function submitCreateTournament() {
-  const name = document.getElementById("tName")?.value.trim();
-  const fee = document.getElementById("tFee")?.value;
-  const max = document.getElementById("tMax")?.value;
-  const rounds = document.getElementById("tRounds")?.value;
-  const chainId = document.getElementById("tChain")?.value;
-  if (!name || !fee || !max) return toast("Fill all fields", "error");
+  const nameEl = document.getElementById("tName");
+  const feeEl = document.getElementById("tFee");
+  const maxEl = document.getElementById("tMax");
+  const roundsEl = document.getElementById("tRounds");
+  const chainEl = document.getElementById("tChain");
+
+  if (!nameEl || !feeEl || !maxEl || !roundsEl || !chainEl) {
+    return toast("Modal fields not found — try reopening", "error");
+  }
+
+  const name = nameEl.value.trim();
+  const fee = feeEl.value.trim();
+  const max = maxEl.value.trim();
+  const rounds = roundsEl.value;
+  const chainId = chainEl.value;
+
+  if (!name) return toast("Enter a tournament name", "error");
+  if (!fee || parseFloat(fee) <= 0)
+    return toast("Enter a valid entry fee", "error");
+  if (!max || parseInt(max) < 4)
+    return toast("Min 4 players required", "error");
+
   const tokenSymbol = chainId === "4441" ? "zkLTC" : "USDC";
+
+  // Fetch CSRF token
   let csrfToken = "";
   try {
-    const ct = await fetch(`${BACKEND}/csrf-token`, { credentials: "include" });
-    csrfToken = (await ct.json()).csrfToken || "";
-  } catch (_) {}
+    const ctRes = await fetch(`${BACKEND}/csrf-token`, {
+      credentials: "include",
+    });
+    if (!ctRes.ok) throw new Error("CSRF fetch failed: " + ctRes.status);
+    const ctData = await ctRes.json();
+    csrfToken = ctData.csrfToken || "";
+  } catch (e) {
+    console.error("CSRF error:", e);
+    return toast("Session error — please refresh the page", "error");
+  }
+
+  if (!csrfToken)
+    return toast(
+      "Could not get security token — refresh and try again",
+      "error",
+    );
+
+  // Disable button while submitting
+  const btn = document.querySelector("#createTourneyModal .btn-primary");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Creating...";
+  }
+
   try {
     const res = await fetch(`${BACKEND}/tournaments/create`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
+      headers: {
+        "Content-Type": "application/json",
+        "CSRF-Token": csrfToken,
+      },
       credentials: "include",
       body: JSON.stringify({
         name,
-        chainId,
-        entryFee: fee,
+        chainId: parseInt(chainId),
+        entryFee: parseFloat(fee),
         tokenSymbol,
-        maxPlayers: max,
-        rounds,
+        maxPlayers: parseInt(max),
+        rounds: parseInt(rounds),
       }),
     });
-    const data = await res.json();
-    if (!res.ok) return toast(data.error || "Create failed", "error");
+
+    let data;
+    try {
+      data = await res.json();
+    } catch (_) {
+      throw new Error(
+        "Server returned invalid response (status " + res.status + ")",
+      );
+    }
+
+    if (!res.ok) {
+      throw new Error(
+        data.error || "Create failed (status " + res.status + ")",
+      );
+    }
+
     document.getElementById("createTourneyModal")?.remove();
     toast(`✅ Tournament "${name}" created!`, "success");
     await loadTournaments();
   } catch (e) {
+    console.error("Tournament create error:", e);
     toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🚀 Create";
+    }
   }
 }
+
 async function showPredictionBets(gameId, players) {
   if (!userAddress) return "";
   try {
