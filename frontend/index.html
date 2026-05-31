@@ -2515,6 +2515,9 @@
                 class="pd-item-icon">📊</span> My stats</div>
             <div class="pd-divider"></div>
             <div class="pd-item pd-danger" onclick="logoutAll()"><span class="pd-item-icon">→</span> Sign out</div>
+            <!-- Add after "My stats" item, only shows if admin -->
+             <div class="pd-item" id="adminTaskBtn" style="display:none" onclick="showAdminTaskPanel();toggleProfileDropdown(null)">
+              <span class="pd-item-icon">⚙️</span> Task Manager</div>
           </div>
         </div>
       </div>
@@ -2894,7 +2897,7 @@
         onclick="showTournamentLeaderboard()">🏆 Leaderboard</button>
       <button class="btn btn-ghost btn-sm" onclick="showScreen('screenLobby')"
         style="width:auto;padding:8px 14px">← Back</button>
-      <button class="btn btn-primary" onclick="showCreateTournamentModal()"
+      <button class="btn btn-primary" onclick="showTournamentTypeModal()"
         style="width:auto;padding:8px 18px">+ Create Tournament</button>
     </div>
   </div>
