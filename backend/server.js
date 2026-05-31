@@ -2500,28 +2500,29 @@ app.post("/bets/place", async (req, res) => {
 app.get("/stats/global", async (req, res) => {
   try {
     const r = await pool.query(`
-      SELECT 
-        (SELECT COUNT(*) FROM users) as total_players,
-        COUNT(*) as total_games_played,
-        COUNT(*) FILTER (WHERE finished = true) as total_finished
+      SELECT
+        (SELECT COUNT(*) FROM users)                              AS total_players,
+        COUNT(*)                                                  AS total_games_played,
+        COUNT(*) FILTER (WHERE finished = true)                   AS total_finished
       FROM game_sessions
     `);
 
-    const volumeResult = await pool.query(`
-      SELECT 
-        COALESCE(SUM(g.entry_fee) FILTER (WHERE g.chain_id = 5042002), 0) AS arc_volume,
-        COALESCE(SUM(g.entry_fee) FILTER (WHERE g.chain_id = 4441), 0) AS litvm_volume
-      FROM game_sessions gs
-      JOIN games g ON g.contract_game_id = gs.game_id AND g.chain_id = gs.chain_id
-      WHERE gs.finished = true
+    // ✅ Use platform_stats for accurate cumulative volume (updated on every submission)
+    const volResult = await pool.query(`
+      SELECT
+        COALESCE(total_volume,       0) AS arc_volume,
+        COALESCE(total_volume_litvm, 0) AS litvm_volume
+      FROM platform_stats
+      WHERE id = 1
     `);
 
     const topPlayers = await pool.query(`
-      SELECT u.username, u.wallet, u.avatar,
-             COUNT(gs.id) as games_played,
-             COUNT(gs.id) FILTER (WHERE gs.finished = true) as games_finished,
-             COALESCE(SUM(gs.score) FILTER (WHERE gs.finished = true), 0) as total_score,
-             COALESCE(MAX(gs.score), 0) as best_score
+      SELECT
+        u.username, u.wallet, u.avatar,
+        COUNT(gs.id)                                          AS games_played,
+        COUNT(gs.id) FILTER (WHERE gs.finished = true)        AS games_finished,
+        COALESCE(SUM(gs.score) FILTER (WHERE gs.finished = true), 0) AS total_score,
+        COALESCE(MAX(gs.score), 0)                            AS best_score
       FROM users u
       LEFT JOIN game_sessions gs ON gs.user_id = u.id
       GROUP BY u.id, u.username, u.wallet, u.avatar
@@ -2534,10 +2535,8 @@ app.get("/stats/global", async (req, res) => {
       totalPlayers: parseInt(r.rows[0].total_players) || 0,
       totalGamesPlayed: parseInt(r.rows[0].total_games_played) || 0,
       totalFinished: parseInt(r.rows[0].total_finished) || 0,
-      arcVolume: parseFloat(volumeResult.rows[0]?.arc_volume || 0).toFixed(2),
-      litvmVolume: parseFloat(volumeResult.rows[0]?.litvm_volume || 0).toFixed(
-        4,
-      ),
+      arcVolume: parseFloat(volResult.rows[0]?.arc_volume || 0).toFixed(2),
+      litvmVolume: parseFloat(volResult.rows[0]?.litvm_volume || 0).toFixed(4),
       topPlayers: topPlayers.rows,
     });
   } catch (e) {
@@ -2692,18 +2691,31 @@ app.get("/tournaments/leaderboard", async (req, res) => {
 // 3. STATS — MUST be before /:id
 app.get("/tournaments/stats", async (req, res) => {
   try {
-    const r = await pool.query(`
+    // Volume = sum of actually PAID claims (what winners received)
+    const claimsR = await pool.query(`
       SELECT
-        COUNT(*)                                                                      AS total_tournaments,
-        COUNT(*) FILTER (WHERE status = 'active')                                    AS live_count,
-        COUNT(*) FILTER (WHERE status = 'finished')                                  AS finished_count,
-        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='USDC'),  0)             AS usdc_volume,
-        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='zkLTC'), 0)             AS litvm_volume
+        COALESCE(SUM(amount) FILTER (WHERE token_symbol = 'USDC'),  0) AS usdc_volume,
+        COALESCE(SUM(amount) FILTER (WHERE token_symbol = 'zkLTC'), 0) AS litvm_volume
+      FROM tournament_claims
+      WHERE status = 'paid'
+    `);
+
+    const countsR = await pool.query(`
+      SELECT
+        COUNT(*)                                       AS total_tournaments,
+        COUNT(*) FILTER (WHERE status = 'active')     AS live_count,
+        COUNT(*) FILTER (WHERE status = 'finished')   AS finished_count
       FROM tournaments
       WHERE tournament_type = 'paid'
-        AND status IN ('active','finished','open')
     `);
-    res.json(r.rows[0]);
+
+    res.json({
+      total_tournaments: countsR.rows[0].total_tournaments,
+      live_count: countsR.rows[0].live_count,
+      finished_count: countsR.rows[0].finished_count,
+      usdc_volume: parseFloat(claimsR.rows[0].usdc_volume || 0).toFixed(2),
+      litvm_volume: parseFloat(claimsR.rows[0].litvm_volume || 0).toFixed(4),
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

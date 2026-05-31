@@ -1773,49 +1773,41 @@ async function loadGames() {
       }
     }
 
-    // Show combined pool
-    const arcPoolFmt = parseFloat(ethers.formatUnits(arcPool, 6)).toFixed(2);
-    const litvmPoolFmt = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(
-      4,
-    );
-    const totalUSDC = parseFloat(ethers.formatUnits(arcPool, 6)).toFixed(2);
+    let dbArcVol = 0,
+      dbLitvmVol = 0;
+    try {
+      const statsRes = await fetch(`${BACKEND}/stats/global`);
+      const statsData = await statsRes.json();
+      dbArcVol = parseFloat(statsData.arcVolume || 0);
+      dbLitvmVol = parseFloat(statsData.litvmVolume || 0);
+    } catch (_) {}
 
-    const totalZKLTC = parseFloat(ethers.formatUnits(litvmPool, 18)).toFixed(4);
+    // Use on-chain active pool if larger (means active games have more locked in)
+    const onchainArcUSDC = parseFloat(ethers.formatUnits(arcPool, 6));
+    const onchainLitvmZKL = parseFloat(ethers.formatUnits(litvmPool, 18));
+    const displayArcVol = Math.max(onchainArcUSDC, dbArcVol).toFixed(2);
+    const displayLitvmVol = Math.max(onchainLitvmZKL, dbLitvmVol).toFixed(4);
 
-    const showPool = parseFloat(totalUSDC) > 0 || parseFloat(totalZKLTC) > 0;
-    if (showPool) {
-      // Active pool — show with "TOTAL VOLUME" label, no "ACTIVE POOL" text
-      let poolHtml = "";
-      if (parseFloat(totalUSDC) > 0)
-        poolHtml += `<span style="color:var(--accent);font-weight:700">$${totalUSDC} USDC</span>`;
-      if (parseFloat(totalUSDC) > 0 && parseFloat(totalZKLTC) > 0)
-        poolHtml += `<span style="color:var(--muted);font-size:.7rem;margin:0 5px">+</span>`;
-      if (parseFloat(totalZKLTC) > 0)
-        poolHtml += `<span style="color:var(--purple);font-weight:700">${totalZKLTC} zkLTC</span>`;
-      poolHtml += `<div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">Total Volume</div>`;
-      document.getElementById("gPool").innerHTML = poolHtml;
-    } else {
-      // Fallback DB volume — same label, no "ACTIVE POOL"
-      try {
-        const statsRes = await fetch(`${BACKEND}/stats/global`);
-        const statsData = await statsRes.json();
-        const arcVol = parseFloat(statsData.arcVolume || 0).toFixed(2);
-        const litvmVol = parseFloat(statsData.litvmVolume || 0).toFixed(4);
-        let volHtml = "";
-        if (parseFloat(arcVol) > 0)
-          volHtml += `<span style="color:var(--accent);font-weight:700">$${arcVol} USDC</span>`;
-        if (parseFloat(arcVol) > 0 && parseFloat(litvmVol) > 0)
-          volHtml += `<span style="color:var(--muted);font-size:.7rem;margin:0 5px">+</span>`;
-        if (parseFloat(litvmVol) > 0)
-          volHtml += `<span style="color:var(--purple);font-weight:700">${litvmVol} zkLTC</span>`;
-        volHtml += `<div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px">Total Volume</div>`;
-        document.getElementById("gPool").innerHTML =
-          volHtml || `<span style="color:var(--muted)">—</span>`;
-      } catch (_) {
-        document.getElementById("gPool").innerHTML =
-          `<span style="color:var(--muted)">—</span>`;
-      }
+    const hasArc = parseFloat(displayArcVol) > 0;
+    const hasLitvm = parseFloat(displayLitvmVol) > 0;
+
+    let poolHtml = "";
+    if (hasArc) {
+      poolHtml += `<span style="color:var(--accent);font-weight:700">$${displayArcVol} USDC</span>`;
     }
+    if (hasArc && hasLitvm) {
+      poolHtml += `<span style="color:var(--muted);font-size:.7rem;margin:0 5px">+</span>`;
+    }
+    if (hasLitvm) {
+      poolHtml += `<span style="color:var(--purple);font-weight:700">${displayLitvmVol} zkLTC</span>`;
+    }
+    if (!hasArc && !hasLitvm) {
+      poolHtml = `<span style="color:var(--muted)">—</span>`;
+    }
+    poolHtml += `<div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.5px;margin-top:4px">Total Volume</div>`;
+
+    document.getElementById("gPool").innerHTML = poolHtml;
     document.getElementById("gActive").textContent = activeCount;
 
     renderGames();
@@ -4528,14 +4520,29 @@ async function loadTournaments() {
       const litvmVol = parseFloat(stats.litvm_volume || 0).toFixed(4);
       const hasUsdc = parseFloat(usdcVol) > 0;
       const hasLitvm = parseFloat(litvmVol) > 0;
-      volEl.innerHTML = `
-        ${hasUsdc ? `<span style="color:var(--accent);font-weight:700">$${usdcVol} USDC</span>` : ""}
-        ${hasUsdc && hasLitvm ? `<span style="color:var(--muted);margin:0 4px">+</span>` : ""}
-        ${hasLitvm ? `<span style="color:var(--purple);font-weight:700">${litvmVol} zkLTC</span>` : ""}
-        ${!hasUsdc && !hasLitvm ? `<span style="color:var(--muted)">$0.00 USDC</span>` : ""}
-        <span style="color:var(--muted);font-size:.68rem;margin-left:6px;text-transform:uppercase;letter-spacing:.5px">
-          TOTAL PAID OUT
-        </span>`;
+
+      if (!hasUsdc && !hasLitvm) {
+        volEl.innerHTML = `
+          <span style="color:var(--muted)">$0.00 USDC</span>
+          <span style="color:var(--muted);font-size:.68rem;margin-left:6px;
+            text-transform:uppercase;letter-spacing:.5px">TOTAL PAID OUT</span>`;
+      } else {
+        let html = "";
+        if (hasUsdc) {
+          html += `<span style="color:var(--accent);font-weight:700;font-size:1.05rem">
+            $${usdcVol} USDC</span>`;
+        }
+        if (hasUsdc && hasLitvm) {
+          html += `<span style="color:var(--muted);margin:0 6px;font-size:.85rem">+</span>`;
+        }
+        if (hasLitvm) {
+          html += `<span style="color:var(--purple);font-weight:700;font-size:1.05rem">
+            ${litvmVol} zkLTC</span>`;
+        }
+        html += `<span style="color:var(--muted);font-size:.68rem;margin-left:8px;
+          text-transform:uppercase;letter-spacing:.5px">TOTAL PAID OUT</span>`;
+        volEl.innerHTML = html;
+      }
     }
 
     renderTournaments();
@@ -5763,6 +5770,179 @@ function fmtTournamentTime(t) {
   if (d > 0) return `${d}d ${h}h left`;
   if (h > 0) return `${h}h ${m}m left`;
   return `${m}m ${Math.floor(secs % 60)}s left`;
+}
+
+function showCreateTournamentModal() {
+  if (!userAddress && !currentProfile)
+    return toast("Connect wallet or login first", "error");
+
+  const existing = document.getElementById("createTourneyModal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "createTourneyModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:480px;width:95%;max-height:92vh;overflow-y:auto">
+
+      <!-- Header -->
+      <div style="text-align:center;margin-bottom:22px">
+        <div style="font-size:2.2rem;margin-bottom:8px">💰</div>
+        <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.6rem;
+          letter-spacing:3px;color:var(--accent)">CREATE PAID TOURNAMENT</h3>
+        <p style="color:var(--muted);font-size:.78rem;margin-top:6px">
+          Multi-round elimination · 60/25/15% onchain prize split
+        </p>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap">
+          <span style="background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);
+            color:var(--accent);padding:3px 12px;border-radius:20px;font-size:.72rem;font-weight:700">
+            ⚡ USDC on Arc
+          </span>
+          <span style="background:rgba(123,97,255,.08);border:1px solid rgba(123,97,255,.2);
+            color:var(--purple);padding:3px 12px;border-radius:20px;font-size:.72rem;font-weight:700">
+            🔷 zkLTC on LitVM
+          </span>
+          <span style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.2);
+            color:var(--gold);padding:3px 12px;border-radius:20px;font-size:.72rem;font-weight:700">
+            🏆 Auto Payout
+          </span>
+        </div>
+      </div>
+
+      <!-- Twitter Share Gate -->
+      <div style="background:rgba(29,161,242,.05);border:1px solid rgba(29,161,242,.2);
+        border-radius:12px;padding:14px;margin-bottom:18px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="font-size:1.3rem">𝕏</span>
+          <div>
+            <div style="font-size:.83rem;font-weight:700;color:#1da1f2">
+              Required: Share on X to unlock
+            </div>
+            <div style="font-size:.72rem;color:var(--muted)">
+              Post about your tournament to activate creation
+            </div>
+          </div>
+        </div>
+        <a href="https://twitter.com/intent/tweet?text=${encodeURIComponent("🏆 I just created a tournament on @TriviaFi! Multi-round trivia · Win USDC & zkLTC · Join now: https://triviafi.vercel.app #TriviaFi #Web3Gaming")}"
+          target="_blank"
+          onclick="setTimeout(()=>document.getElementById('tweetConfirmRow').style.display='flex',1000)"
+          style="display:flex;align-items:center;justify-content:center;gap:8px;
+          background:#1da1f2;color:#fff;padding:10px 20px;border-radius:20px;
+          text-decoration:none;font-size:.82rem;font-weight:700;margin-bottom:10px">
+          𝕏 Share on Twitter/X
+        </a>
+        <div id="tweetConfirmRow" style="display:none;align-items:center;gap:8px">
+          <input type="checkbox" id="tweetDoneCheck"
+            style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
+          <label for="tweetDoneCheck" style="font-size:.78rem;color:var(--muted);cursor:pointer">
+            ✓ I've shared the tweet — unlock tournament creation
+          </label>
+        </div>
+      </div>
+
+      <!-- Form (locked until tweet done) -->
+      <div id="createTourneyForm" style="opacity:.35;pointer-events:none;transition:opacity .3s">
+
+        <div class="ig" style="margin-bottom:12px">
+          <label class="il" style="font-size:.73rem;color:var(--muted);text-transform:uppercase;
+            letter-spacing:.5px;display:block;margin-bottom:5px">Tournament Name</label>
+          <input id="tName" maxlength="60"
+            placeholder="e.g. Friday Night Trivia Championship"
+            style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+            padding:12px 14px;border-radius:10px;font-size:.9rem;width:100%;box-sizing:border-box"/>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+          <div>
+            <label class="il" style="font-size:.73rem;color:var(--muted);text-transform:uppercase;
+              letter-spacing:.5px;display:block;margin-bottom:5px">Entry Fee</label>
+            <input id="tFee" type="number" min="0.001" step="0.001"
+              placeholder="e.g. 5.00"
+              style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+              padding:12px 14px;border-radius:10px;font-size:.9rem;width:100%;box-sizing:border-box"/>
+          </div>
+          <div>
+            <label class="il" style="font-size:.73rem;color:var(--muted);text-transform:uppercase;
+              letter-spacing:.5px;display:block;margin-bottom:5px">Max Players</label>
+            <input id="tMax" type="number" min="4" max="64" value="8"
+              style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+              padding:12px 14px;border-radius:10px;font-size:.9rem;width:100%;box-sizing:border-box"/>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div>
+            <label class="il" style="font-size:.73rem;color:var(--muted);text-transform:uppercase;
+              letter-spacing:.5px;display:block;margin-bottom:5px">Rounds</label>
+            <select id="tRounds"
+              style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+              padding:12px 14px;border-radius:10px;font-size:.9rem;width:100%">
+              <option value="2">2 Rounds</option>
+              <option value="3" selected>3 Rounds</option>
+              <option value="4">4 Rounds</option>
+              <option value="5">5 Rounds</option>
+            </select>
+          </div>
+          <div>
+            <label class="il" style="font-size:.73rem;color:var(--muted);text-transform:uppercase;
+              letter-spacing:.5px;display:block;margin-bottom:5px">Token</label>
+            <select id="tChain"
+              style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+              padding:12px 14px;border-radius:10px;font-size:.9rem;width:100%">
+              <option value="5042002">⚡ USDC (Arc Testnet)</option>
+              <option value="4441">🔷 zkLTC (LitVM Testnet)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Info box -->
+        <div style="background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.15);
+          border-radius:10px;padding:12px 14px;margin-bottom:16px;
+          font-size:.75rem;color:var(--muted);line-height:1.7">
+          🏆 Prizes auto-split <strong style="color:var(--gold)">60% / 25% / 15%</strong>
+            to top 3 finishers<br>
+          ⚡ Bottom half eliminated each round · Last 3 get prizes<br>
+          ⏰ Auto-expires 2 hours after creation if not filled<br>
+          🚫 One paid tournament per wallet per 24 hours
+        </div>
+
+        <div style="display:flex;gap:10px">
+          <button id="btnLaunchTourney" class="btn btn-primary"
+            style="flex:1;background:linear-gradient(135deg,var(--accent),var(--purple));
+            font-size:.95rem;padding:14px">
+            🚀 Launch Tournament
+          </button>
+          <button class="btn btn-ghost"
+            style="width:auto;padding:14px 18px"
+            onclick="document.getElementById('createTourneyModal').remove()">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  // Unlock form when tweet checkbox checked
+  const tweetCheck = document.getElementById("tweetDoneCheck");
+  const form = document.getElementById("createTourneyForm");
+  if (tweetCheck && form) {
+    tweetCheck.addEventListener("change", function () {
+      form.style.opacity = this.checked ? "1" : "0.35";
+      form.style.pointerEvents = this.checked ? "auto" : "none";
+    });
+  }
+
+  // Wire launch button
+  const launchBtn = document.getElementById("btnLaunchTourney");
+  if (launchBtn) {
+    launchBtn.addEventListener("click", submitCreateTournament);
+  }
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
 }
 
 function showTournamentTypeModal() {
