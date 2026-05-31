@@ -2638,7 +2638,11 @@ if (process.env.NODE_ENV === "production") {
   );
 }
 
-// ── LIST tournaments ──────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+// TOURNAMENT ROUTES — ORDER IS CRITICAL. Literals before :id params.
+// ════════════════════════════════════════════════════════════════════
+
+// 1. LIST all tournaments
 app.get("/tournaments", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -2646,7 +2650,11 @@ app.get("/tournaments", async (req, res) => {
         (SELECT COUNT(*) FROM tournament_players tp
          WHERE tp.tournament_id = t.id AND NOT tp.eliminated) AS player_count
       FROM tournaments t
-      ORDER BY t.created_at DESC LIMIT 50
+      WHERE t.status != 'cancelled'
+      ORDER BY
+        CASE t.status WHEN 'active' THEN 0 WHEN 'open' THEN 1 ELSE 2 END,
+        t.created_at DESC
+      LIMIT 50
     `);
     res.json(result.rows);
   } catch (e) {
@@ -2654,36 +2662,54 @@ app.get("/tournaments", async (req, res) => {
   }
 });
 
-// ── GET single tournament ─────────────────────────────────────────────────────
-app.get("/tournaments/:id", async (req, res) => {
+// 2. LEADERBOARD — MUST be before /:id
+app.get("/tournaments/leaderboard", async (req, res) => {
   try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
-    const players = await pool.query(
-      `
-      SELECT tp.*, u.username, u.avatar FROM tournament_players tp
-      LEFT JOIN users u ON u.id = tp.user_id
-      WHERE tp.tournament_id=$1 ORDER BY tp.total_score DESC
-    `,
-      [req.params.id],
-    );
-    const rounds = await pool.query(
-      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 ORDER BY round_number",
-      [req.params.id],
-    );
-    res.json({
-      tournament: t.rows[0],
-      players: players.rows,
-      rounds: rounds.rows,
-    });
+    const result = await pool.query(`
+      SELECT
+        tp.wallet,
+        MAX(u.username) AS username,
+        MAX(u.avatar)   AS avatar,
+        COUNT(DISTINCT tp.tournament_id) AS tournaments_played,
+        COUNT(DISTINCT CASE WHEN LOWER(t.winner) = LOWER(tp.wallet) THEN t.id END) AS wins,
+        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid' AND tc.token_symbol='USDC'),  0) AS usdc_earned,
+        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid' AND tc.token_symbol='zkLTC'), 0) AS litvm_earned
+      FROM tournament_players tp
+      LEFT JOIN users u       ON LOWER(u.wallet)   = LOWER(tp.wallet)
+      LEFT JOIN tournaments t ON t.id = tp.tournament_id
+      LEFT JOIN tournament_claims tc ON LOWER(tc.wallet) = LOWER(tp.wallet)
+      GROUP BY tp.wallet
+      HAVING COUNT(DISTINCT tp.tournament_id) > 0
+      ORDER BY wins DESC, usdc_earned DESC
+      LIMIT 20
+    `);
+    res.json(result.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── CREATE tournament ─────────────────────────────────────────────────────────
+// 3. STATS — MUST be before /:id
+app.get("/tournaments/stats", async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT
+        COUNT(*)                                                                      AS total_tournaments,
+        COUNT(*) FILTER (WHERE status = 'active')                                    AS live_count,
+        COUNT(*) FILTER (WHERE status = 'finished')                                  AS finished_count,
+        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='USDC'),  0)             AS usdc_volume,
+        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='zkLTC'), 0)             AS litvm_volume
+      FROM tournaments
+      WHERE tournament_type = 'paid'
+        AND status IN ('active','finished','open')
+    `);
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 4. CREATE paid tournament — before /:id
 app.post("/tournaments/create", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { name, chainId, entryFee, tokenSymbol, maxPlayers, rounds } = req.body;
@@ -2693,24 +2719,32 @@ app.post("/tournaments/create", async (req, res) => {
     return res.status(400).json({ error: "Max players: 4–64" });
   if (parseInt(rounds) < 2 || parseInt(rounds) > 5)
     return res.status(400).json({ error: "Rounds: 2–5" });
+
   const cleanName = sanitizeHtml(name, {
     allowedTags: [],
     allowedAttributes: {},
   });
+  const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
 
-  const creatorId = req.user.wallet || req.user.email;
   const recent = await pool.query(
-    "SELECT id FROM tournaments WHERE creator=LOWER($1) AND created_at > NOW() - INTERVAL '24 hours'",
+    `SELECT id FROM tournaments
+     WHERE LOWER(creator)=$1
+       AND tournament_type='paid'
+       AND created_at > NOW() - INTERVAL '24 hours'`,
     [creatorId],
   );
   if (recent.rows.length > 0)
-    return res.status(429).json({
-      error: "You can only create 1 tournament per 24 hours. Please wait.",
-    });
+    return res
+      .status(429)
+      .json({ error: "You can only create 1 paid tournament per 24 hours." });
+
   try {
     const result = await pool.query(
-      `INSERT INTO tournaments (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds, deadline_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '2 hours') RETURNING *`,
+      `INSERT INTO tournaments
+         (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds,
+          deadline_at, tournament_type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '2 hours', 'paid')
+       RETURNING *`,
       [
         cleanName,
         creatorId,
@@ -2727,7 +2761,235 @@ app.post("/tournaments/create", async (req, res) => {
   }
 });
 
-// ── JOIN tournament ───────────────────────────────────────────────────────────
+// 5. CREATE whitelist tournament — before /:id
+app.post("/tournaments/create-whitelist", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const {
+    name,
+    maxPlayers,
+    rounds,
+    prize1,
+    prize2,
+    prize3,
+    sponsorName,
+    discordInvite,
+  } = req.body;
+  if (!name || !maxPlayers || !rounds)
+    return res.status(400).json({ error: "Missing fields" });
+  if (parseInt(maxPlayers) < 4 || parseInt(maxPlayers) > 200)
+    return res.status(400).json({ error: "Max players: 4–200" });
+
+  const cleanName = sanitizeHtml(name, {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
+  const cleanSponsor = sanitizeHtml(sponsorName || "", {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
+  const cleanDiscord = sanitizeHtml(discordInvite || "", {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
+  const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+
+  const recent = await pool.query(
+    `SELECT id FROM tournaments
+     WHERE LOWER(creator)=$1
+       AND tournament_type='whitelist'
+       AND created_at > NOW() - INTERVAL '24 hours'`,
+    [creatorId],
+  );
+  if (recent.rows.length >= 3)
+    return res
+      .status(429)
+      .json({ error: "Max 3 whitelist tournaments per 24 hours" });
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO tournaments
+         (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds,
+          deadline_at, tournament_type, prize_1_text, prize_2_text, prize_3_text,
+          sponsor_name, discord_invite)
+       VALUES ($1,$2,5042002,0,'POINTS',$3,$4, NOW()+INTERVAL '7 days',
+               'whitelist',$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [
+        cleanName,
+        creatorId,
+        parseInt(maxPlayers),
+        parseInt(rounds),
+        sanitizeHtml(prize1 || "🥇 Whitelist Spot", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        sanitizeHtml(prize2 || "🥈 OG Role", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        sanitizeHtml(prize3 || "🥉 Early Access", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        cleanSponsor,
+        cleanDiscord,
+      ],
+    );
+    res.json({ tournament: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 6. CLAIM STATUS — before /:id
+app.get("/tournaments/:id/claim-status", async (req, res) => {
+  const { wallet } = req.query;
+  if (!wallet) return res.json({ status: null });
+  try {
+    const r = await pool.query(
+      `SELECT status, amount, tx_hash, token_symbol
+       FROM tournament_claims
+       WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+      [req.params.id, wallet],
+    );
+    res.json(r.rows[0] || { status: null });
+  } catch (e) {
+    res.json({ status: null });
+  }
+});
+
+// 7. ROUND STATUS — before /:id
+app.get("/tournaments/:id/round-status", async (req, res) => {
+  if (!req.user) return res.json({ played: false });
+  const { wallet } = req.query;
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.json({ played: false });
+    const tournament = t.rows[0];
+    const round = await pool.query(
+      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 AND round_number=$2",
+      [req.params.id, tournament.current_round],
+    );
+    if (!round.rows.length) return res.json({ played: false });
+    const score = await pool.query(
+      `SELECT score FROM tournament_scores
+       WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)`,
+      [req.params.id, round.rows[0].id, wallet || req.user.wallet || ""],
+    );
+    res.json({
+      played: score.rows.length > 0,
+      score: score.rows[0]?.score || 0,
+      currentRound: tournament.current_round,
+      totalRounds: tournament.rounds,
+    });
+  } catch (e) {
+    res.json({ played: false });
+  }
+});
+
+// 8. JOIN whitelist — before /:id
+app.post("/tournaments/:id/join-whitelist", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    if (tournament.tournament_type !== "whitelist")
+      return res.status(400).json({ error: "Use /join for paid tournaments" });
+    if (tournament.status !== "open")
+      return res.status(400).json({ error: "Tournament not open" });
+    const count = await pool.query(
+      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+      [req.params.id],
+    );
+    if (parseInt(count.rows[0].count) >= tournament.max_players)
+      return res.status(400).json({ error: "Tournament full" });
+
+    await pool.query(
+      `INSERT INTO tournament_players (tournament_id, wallet, user_id)
+       VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
+      [req.params.id, wallet.toLowerCase(), req.user.id],
+    );
+    const newCount = parseInt(count.rows[0].count) + 1;
+    if (newCount >= tournament.max_players) {
+      await pool.query(
+        "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
+        [req.params.id],
+      );
+      await pool.query(
+        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
+         VALUES ($1,1,'active',NOW()) ON CONFLICT DO NOTHING`,
+        [req.params.id],
+      );
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 9. DELETE tournament — before /:id submit/join/claim
+app.delete("/tournaments/:id", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (tournament.creator.toLowerCase() !== creatorId)
+      return res
+        .status(403)
+        .json({ error: "Only the creator can delete this tournament" });
+    if (tournament.status === "active")
+      return res
+        .status(400)
+        .json({ error: "Cannot delete an active tournament" });
+    await pool.query("DELETE FROM tournaments WHERE id=$1", [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 10. GET single tournament — /:id LAST
+app.get("/tournaments/:id", async (req, res) => {
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const players = await pool.query(
+      `SELECT tp.*, u.username, u.avatar
+       FROM tournament_players tp
+       LEFT JOIN users u ON u.id = tp.user_id
+       WHERE tp.tournament_id=$1
+       ORDER BY tp.total_score DESC`,
+      [req.params.id],
+    );
+    const rounds = await pool.query(
+      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 ORDER BY round_number",
+      [req.params.id],
+    );
+    res.json({
+      tournament: t.rows[0],
+      players: players.rows,
+      rounds: rounds.rows,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// 11. JOIN paid tournament
 app.post("/tournaments/:id/join", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
@@ -2749,23 +3011,20 @@ app.post("/tournaments/:id/join", async (req, res) => {
       return res.status(400).json({ error: "Tournament full" });
 
     await pool.query(
-      `
-      INSERT INTO tournament_players (tournament_id, wallet, user_id)
-      VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING
-    `,
+      `INSERT INTO tournament_players (tournament_id, wallet, user_id)
+       VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
       [req.params.id, wallet.toLowerCase(), req.user.id],
     );
-
     await pool.query(
       "UPDATE tournaments SET prize_pool = prize_pool + $1 WHERE id=$2",
       [tournament.entry_fee, req.params.id],
     );
 
+    // Track volume in platform_stats
     const isLitvmT = tournament.token_symbol === "zkLTC";
-    const volColT = isLitvmT ? "total_volume_litvm" : "total_volume";
     await pool
       .query(
-        `UPDATE platform_stats SET ${volColT} = ${volColT} + $1 WHERE id=1`,
+        `UPDATE platform_stats SET ${isLitvmT ? "total_volume_litvm" : "total_volume"} = ${isLitvmT ? "total_volume_litvm" : "total_volume"} + $1 WHERE id=1`,
         [tournament.entry_fee],
       )
       .catch(() => {});
@@ -2777,10 +3036,8 @@ app.post("/tournaments/:id/join", async (req, res) => {
         [req.params.id],
       );
       await pool.query(
-        `
-        INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
-        VALUES ($1,1,'active',NOW()) ON CONFLICT (tournament_id,round_number) DO NOTHING
-      `,
+        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
+         VALUES ($1,1,'active',NOW()) ON CONFLICT (tournament_id,round_number) DO NOTHING`,
         [req.params.id],
       );
     }
@@ -2790,7 +3047,7 @@ app.post("/tournaments/:id/join", async (req, res) => {
   }
 });
 
-// ── SUBMIT round score ────────────────────────────────────────────────────────
+// 12. SUBMIT round score
 app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet, answers } = req.body;
@@ -2814,7 +3071,7 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
     const round = roundRes.rows[0];
 
     const playerRes = await pool.query(
-      "SELECT * FROM tournament_players WHERE tournament_id=$1 AND wallet=LOWER($2)",
+      "SELECT * FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
       [req.params.id, wallet],
     );
     if (!playerRes.rows.length)
@@ -2823,11 +3080,11 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
       return res.status(400).json({ error: "Eliminated" });
 
     const existing = await pool.query(
-      "SELECT id FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND wallet=LOWER($3)",
+      "SELECT id FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)",
       [req.params.id, round.id, wallet],
     );
     if (existing.rows.length)
-      return res.status(400).json({ error: "Already submitted" });
+      return res.status(400).json({ error: "Already submitted this round" });
 
     const score = Math.min(
       answers.filter((a) => a.correct === true).length * 100,
@@ -2839,7 +3096,7 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
       [req.params.id, round.id, wallet, score],
     );
     await pool.query(
-      "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND wallet=LOWER($3)",
+      "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
       [score, req.params.id, wallet],
     );
 
@@ -2862,22 +3119,22 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
         [round.id],
       );
 
-      // Get current active player count and rankings
       const allRankings = await pool.query(
-        "SELECT wallet, total_score FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated ORDER BY total_score DESC",
+        `SELECT wallet, total_score FROM tournament_players
+         WHERE tournament_id=$1 AND NOT eliminated
+         ORDER BY total_score DESC`,
         [req.params.id],
       );
       const activeCount = allRankings.rows.length;
-      const isFinal = tournament.current_round >= tournament.rounds;
+      const isFinal =
+        tournament.current_round >= tournament.rounds || activeCount <= 3;
 
-      // ✅ RULE: Always need ≥3 players for a final. If we're at last round OR ≤3 remain, finish.
-      if (isFinal || activeCount <= 3) {
+      if (isFinal) {
         const winner = allRankings.rows[0]?.wallet;
         await pool.query(
           "UPDATE tournaments SET status='finished', finished_at=NOW(), winner=$1 WHERE id=$2",
           [winner, req.params.id],
         );
-        // Assign prize positions
         for (let i = 0; i < Math.min(3, allRankings.rows.length); i++) {
           await pool.query(
             "UPDATE tournament_players SET prize_position=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
@@ -2893,20 +3150,17 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
           winner,
         });
       } else {
-        // ✅ Eliminate bottom half BUT always keep at least 3 active
         const minKeep = 3;
         const survivors = Math.max(minKeep, Math.ceil(activeCount / 2));
         const toEliminate = allRankings.rows
           .slice(survivors)
           .map((p) => p.wallet);
-
         if (toEliminate.length > 0) {
           await pool.query(
             "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND wallet=ANY($2)",
             [req.params.id, toEliminate],
           );
         }
-
         const nextRound = tournament.current_round + 1;
         await pool.query(
           "UPDATE tournaments SET current_round=$1 WHERE id=$2",
@@ -2922,7 +3176,6 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
           roundFinished: true,
           tournamentFinished: false,
           nextRound,
-          remaining: survivors,
           eliminated: toEliminate,
           survivors: allRankings.rows.slice(0, survivors).map((p) => p.wallet),
         });
@@ -2934,13 +3187,12 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
   }
 });
 
-// ── TOURNAMENT CLAIM PRIZE ────────────────────────────────────────────────────
+// 13. CLAIM prize
 app.post("/tournaments/:id/claim", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
     return res.status(400).json({ error: "Invalid wallet" });
-
   try {
     const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
       req.params.id,
@@ -2950,20 +3202,17 @@ app.post("/tournaments/:id/claim", async (req, res) => {
     if (tournament.status !== "finished")
       return res.status(400).json({ error: "Tournament not finished yet" });
 
-    // Get final rankings
     const rankings = await pool.query(
       `SELECT wallet, total_score FROM tournament_players
        WHERE tournament_id=$1 ORDER BY total_score DESC LIMIT 3`,
       [req.params.id],
     );
-
     const myPos = rankings.rows.findIndex(
       (p) => p.wallet.toLowerCase() === wallet.toLowerCase(),
     );
     if (myPos < 0 || myPos > 2)
       return res.status(400).json({ error: "You are not a top-3 winner" });
 
-    // Check already claimed
     const existing = await pool.query(
       "SELECT * FROM tournament_claims WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
       [req.params.id, wallet],
@@ -2980,7 +3229,6 @@ app.post("/tournaments/:id/claim", async (req, res) => {
       decimals,
     );
 
-    // Record claim intent
     await pool.query(
       `INSERT INTO tournament_claims (tournament_id, wallet, amount, token_symbol, status)
        VALUES ($1,$2,$3,$4,'pending')
@@ -2993,12 +3241,10 @@ app.post("/tournaments/:id/claim", async (req, res) => {
       ],
     );
 
-    // Auto-payout via verifier wallet
     try {
       let txHash;
       if (isLitvm) {
-        const prov = makeLitvmProvider();
-        const ws = verifierWallet.connect(prov);
+        const ws = verifierWallet.connect(makeLitvmProvider());
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
@@ -3008,8 +3254,7 @@ app.post("/tournaments/:id/claim", async (req, res) => {
         txHash = tx.hash;
       } else {
         const ARC_USDC = "0x3600000000000000000000000000000000000000";
-        const prov = makeProvider();
-        const ws = verifierWallet.connect(prov);
+        const ws = verifierWallet.connect(makeProvider());
         const uc = new ethers.Contract(
           ARC_USDC,
           ["function transfer(address,uint256) external returns (bool)"],
@@ -3019,24 +3264,20 @@ app.post("/tournaments/:id/claim", async (req, res) => {
         await tx.wait();
         txHash = tx.hash;
       }
-
       await pool.query(
         "UPDATE tournament_claims SET status='paid', tx_hash=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
         [txHash, req.params.id, wallet],
       );
-
-      // Update player record
       await pool.query(
         "UPDATE tournament_players SET prize_position=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
         [myPos, req.params.id, wallet],
       );
-
-      // Track volume
-      await pool.query(
-        "UPDATE platform_stats SET tournament_volume = tournament_volume + $1 WHERE id=1",
-        [prizeAmount],
-      );
-
+      await pool
+        .query(
+          "UPDATE platform_stats SET tournament_volume = tournament_volume + $1 WHERE id=1",
+          [prizeAmount],
+        )
+        .catch(() => {});
       return res.json({
         ok: true,
         paid: true,
@@ -3051,95 +3292,9 @@ app.post("/tournaments/:id/claim", async (req, res) => {
         paid: false,
         pending: true,
         amount: prizeAmount,
-        message: "Payout queued — funds will arrive within 24 hours",
+        message: "Payout queued — funds arrive within 24h",
       });
     }
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── TOURNAMENT GLOBAL LEADERBOARD ─────────────────────────────────────────────
-app.get("/tournaments/leaderboard", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT
-        tp.wallet,
-        MAX(u.username) AS username,
-        MAX(u.avatar) AS avatar,
-        COUNT(DISTINCT tp.tournament_id) AS tournaments_played,
-        COUNT(DISTINCT CASE WHEN LOWER(t.winner) = LOWER(tp.wallet) THEN t.id END) AS wins,
-        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid' AND tc.token_symbol='USDC'), 0) AS usdc_earned,
-        COALESCE(SUM(tc.amount) FILTER (WHERE tc.status='paid' AND tc.token_symbol='zkLTC'), 0) AS litvm_earned
-      FROM tournament_players tp
-      LEFT JOIN users u ON LOWER(u.wallet) = LOWER(tp.wallet)
-      LEFT JOIN tournaments t ON t.id = tp.tournament_id
-      LEFT JOIN tournament_claims tc ON LOWER(tc.wallet) = LOWER(tp.wallet)
-      GROUP BY tp.wallet
-      HAVING COUNT(DISTINCT tp.tournament_id) > 0
-      ORDER BY wins DESC, usdc_earned DESC
-      LIMIT 15
-    `);
-    res.json(result.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── TOURNAMENT STATS (volume, counts) ─────────────────────────────────────────
-app.get("/tournaments/stats", async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT
-        COUNT(*) AS total_tournaments,
-        COUNT(*) FILTER (WHERE status='active') AS live_count,
-        COUNT(*) FILTER (WHERE status='finished') AS finished_count,
-        COALESCE(SUM(prize_pool), 0) AS total_volume,
-        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='USDC'), 0) AS usdc_volume,
-        COALESCE(SUM(prize_pool) FILTER (WHERE token_symbol='zkLTC'), 0) AS litvm_volume
-      FROM tournaments
-      WHERE tournament_type = 'paid'
-    `);
-    res.json(r.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/tournaments/:id/claim-status", async (req, res) => {
-  const { wallet } = req.query;
-  if (!wallet) return res.json({ status: null });
-  try {
-    const r = await pool.query(
-      "SELECT status, amount, tx_hash, token_symbol FROM tournament_claims WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-      [req.params.id, wallet],
-    );
-    res.json(r.rows[0] || { status: null });
-  } catch (e) {
-    res.json({ status: null });
-  }
-});
-
-app.delete("/tournaments/:id", async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
-    const tournament = t.rows[0];
-    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
-    if (tournament.creator.toLowerCase() !== creatorId)
-      return res
-        .status(403)
-        .json({ error: "Only the creator can delete this tournament" });
-    if (tournament.status === "active")
-      return res.status(400).json({
-        error: "Cannot delete an active tournament — wait for it to finish",
-      });
-
-    await pool.query("DELETE FROM tournaments WHERE id=$1", [req.params.id]);
-    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -3151,6 +3306,12 @@ function isAdmin(req) {
   const w = (req.user?.wallet || "").toLowerCase();
   return w && w === ADMIN_WALLET;
 }
+
+// ── WHO IS ADMIN (so frontend doesn't need hardcoded wallet) ──────────────
+app.get("/admin/me", (req, res) => {
+  if (!req.user) return res.json({ isAdmin: false });
+  res.json({ isAdmin: isAdmin(req) });
+});
 
 // ── GET ACTIVE TASKS ──────────────────────────────────────────────────────
 app.get("/tasks", async (req, res) => {
@@ -3234,160 +3395,6 @@ app.get("/tasks/status", async (req, res) => {
       tasks: tasks.rows,
       completed: [...completedIds],
     });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── CHECK ROUND ALREADY PLAYED ────────────────────────────────────────────
-app.get("/tournaments/:id/round-status", async (req, res) => {
-  if (!req.user) return res.json({ played: false });
-  const { wallet } = req.query;
-  try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.json({ played: false });
-    const tournament = t.rows[0];
-    const round = await pool.query(
-      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 AND round_number=$2",
-      [req.params.id, tournament.current_round],
-    );
-    if (!round.rows.length) return res.json({ played: false });
-    const score = await pool.query(
-      "SELECT score FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)",
-      [req.params.id, round.rows[0].id, wallet || req.user.wallet || ""],
-    );
-    res.json({
-      played: score.rows.length > 0,
-      score: score.rows[0]?.score || 0,
-      currentRound: tournament.current_round,
-      totalRounds: tournament.rounds,
-    });
-  } catch (e) {
-    res.json({ played: false });
-  }
-});
-
-// ── CREATE WHITELIST TOURNAMENT ───────────────────────────────────────────
-app.post("/tournaments/create-whitelist", async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const {
-    name,
-    maxPlayers,
-    rounds,
-    prize1,
-    prize2,
-    prize3,
-    sponsorName,
-    sponsorLogo,
-    discordInvite,
-  } = req.body;
-  if (!name || !maxPlayers || !rounds)
-    return res.status(400).json({ error: "Missing fields" });
-  if (parseInt(maxPlayers) < 4 || parseInt(maxPlayers) > 200)
-    return res.status(400).json({ error: "Max players: 4–200" });
-
-  const cleanName = sanitizeHtml(name, {
-    allowedTags: [],
-    allowedAttributes: {},
-  });
-  const creatorId = req.user.wallet || req.user.email;
-
-  const recent = await pool.query(
-    "SELECT id FROM tournaments WHERE creator=LOWER($1) AND created_at > NOW() - INTERVAL '24 hours' AND tournament_type='whitelist'",
-    [creatorId],
-  );
-  if (recent.rows.length >= 3)
-    return res
-      .status(429)
-      .json({ error: "Max 3 whitelist tournaments per 24 hours" });
-
-  try {
-    const result = await pool.query(
-      `INSERT INTO tournaments
-        (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds,
-         deadline_at, tournament_type, prize_1_text, prize_2_text, prize_3_text,
-         sponsor_name, sponsor_logo, discord_invite)
-       VALUES ($1,$2,5042002,0,'POINTS',$3,$4,NOW()+INTERVAL '7 days',
-               'whitelist',$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [
-        cleanName,
-        creatorId,
-        parseInt(maxPlayers),
-        parseInt(rounds),
-        sanitizeHtml(prize1 || "🥇 Whitelist Spot", {
-          allowedTags: [],
-          allowedAttributes: {},
-        }),
-        sanitizeHtml(prize2 || "🥈 OG Role", {
-          allowedTags: [],
-          allowedAttributes: {},
-        }),
-        sanitizeHtml(prize3 || "🥉 Early Access", {
-          allowedTags: [],
-          allowedAttributes: {},
-        }),
-        sanitizeHtml(sponsorName || "", {
-          allowedTags: [],
-          allowedAttributes: {},
-        }),
-        sanitizeHtml(sponsorLogo || "", {
-          allowedTags: [],
-          allowedAttributes: {},
-        }),
-        sanitizeHtml(discordInvite || "", {
-          allowedTags: [],
-          allowedAttributes: {},
-        }),
-      ],
-    );
-    res.json({ tournament: result.rows[0] });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── JOIN WHITELIST TOURNAMENT (no payment) ────────────────────────────────
-app.post("/tournaments/:id/join-whitelist", async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const { wallet } = req.body;
-  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
-    return res.status(400).json({ error: "Invalid wallet" });
-  try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
-    const tournament = t.rows[0];
-    if (tournament.tournament_type !== "whitelist")
-      return res.status(400).json({ error: "Use /join for paid tournaments" });
-    if (tournament.status !== "open")
-      return res.status(400).json({ error: "Tournament not open" });
-    const count = await pool.query(
-      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
-      [req.params.id],
-    );
-    if (parseInt(count.rows[0].count) >= tournament.max_players)
-      return res.status(400).json({ error: "Tournament full" });
-    await pool.query(
-      `INSERT INTO tournament_players (tournament_id, wallet, user_id)
-       VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
-      [req.params.id, wallet.toLowerCase(), req.user.id],
-    );
-    const newCount = parseInt(count.rows[0].count) + 1;
-    if (newCount >= tournament.max_players) {
-      await pool.query(
-        "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
-        [req.params.id],
-      );
-      await pool.query(
-        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
-         VALUES ($1,1,'active',NOW()) ON CONFLICT (tournament_id,round_number) DO NOTHING`,
-        [req.params.id],
-      );
-    }
-    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

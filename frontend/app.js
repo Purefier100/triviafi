@@ -5233,13 +5233,20 @@ async function submitTournamentScore(tournamentId, answers, score) {
 
 // ── ADMIN TASK MANAGER ────────────────────────────────────────────────────
 async function showAdminTaskPanel() {
-  const ADMIN = "YOUR_WALLET_ADDRESS_HERE".toLowerCase(); // match ADMIN_WALLET in .env
-  if (!userAddress || userAddress.toLowerCase() !== ADMIN)
-    return toast("Admin only", "error");
+  // ✅ Verify admin status from server — no hardcoded wallet needed
+  try {
+    const check = await fetch(`${BACKEND}/admin/me`, {
+      credentials: "include",
+    });
+    const { isAdmin } = await check.json();
+    if (!isAdmin) return toast("Admin access required", "error");
+  } catch (_) {
+    return toast("Could not verify admin status", "error");
+  }
 
   let tasks = [];
   try {
-    const res = await fetch(`${BACKEND}/tasks`);
+    const res = await fetch(`${BACKEND}/tasks`, { credentials: "include" });
     tasks = await res.json();
   } catch (_) {}
 
@@ -5247,73 +5254,117 @@ async function showAdminTaskPanel() {
   modal.id = "adminTaskModal";
   modal.className = "bet-modal-overlay";
   modal.innerHTML = `
-    <div class="bet-modal-box" style="max-width:560px;width:95%;max-height:85vh;display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h3 style="margin:0;color:var(--gold)">⚙️ Task Manager</h3>
+    <div class="bet-modal-box" style="max-width:580px;width:95%;max-height:88vh;
+      display:flex;flex-direction:column">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div>
+          <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.4rem;
+            letter-spacing:2px;color:var(--gold)">⚙️ Task Manager</h3>
+          <p style="font-size:.72rem;color:var(--muted);margin:4px 0 0">
+            Admin panel · Tasks gate tournament join/create
+          </p>
+        </div>
         <button onclick="document.getElementById('adminTaskModal').remove()"
-          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.3rem">✕</button>
+          style="background:rgba(255,255,255,.05);border:1px solid var(--border);
+          color:var(--muted);cursor:pointer;width:32px;height:32px;border-radius:8px;
+          font-size:1rem;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
-      <p style="font-size:.78rem;color:var(--muted);margin-bottom:16px">
-        Users must complete all active tasks before joining or creating tournaments.
-      </p>
 
-      <!-- Add Task -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;
-        padding:14px;margin-bottom:16px">
-        <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;
-          letter-spacing:.5px;margin-bottom:10px">Add New Task</div>
+      <!-- Add Task Form -->
+      <div style="background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.15);
+        border-radius:14px;padding:16px;margin-bottom:18px">
+        <div style="font-size:.72rem;color:var(--gold);text-transform:uppercase;
+          letter-spacing:.5px;margin-bottom:12px;font-weight:700">➕ Add New Task</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <select id="adminTaskType" style="background:var(--card);border:1px solid var(--border);
-            color:var(--text);padding:8px 12px;border-radius:8px;font-size:.85rem">
-            <option value="follow">👤 Follow</option>
+          <select id="adminTaskType" style="background:var(--surface);border:1px solid var(--border);
+            color:var(--text);padding:9px 12px;border-radius:8px;font-size:.84rem">
+            <option value="follow">👤 Follow on X</option>
             <option value="retweet">🔁 Retweet</option>
-            <option value="like">❤️ Like</option>
-            <option value="custom">✔️ Custom</option>
+            <option value="like">❤️ Like Post</option>
+            <option value="custom">✔️ Custom Task</option>
           </select>
-          <select id="adminTaskTarget" style="background:var(--card);border:1px solid var(--border);
-            color:var(--text);padding:8px 12px;border-radius:8px;font-size:.85rem">
-            <option value="all">All Actions</option>
-            <option value="join">Join Tournament</option>
-            <option value="create">Create Tournament</option>
+          <select id="adminTaskTarget" style="background:var(--surface);border:1px solid var(--border);
+            color:var(--text);padding:9px 12px;border-radius:8px;font-size:.84rem">
+            <option value="all">🔐 All Actions</option>
+            <option value="join">🎮 Join Tournament</option>
+            <option value="create">🚀 Create Tournament</option>
           </select>
         </div>
-        <input id="adminTaskLabel" placeholder="Task label (e.g. Follow @TriviaFi on X)"
-          style="background:var(--card);border:1px solid var(--border);color:var(--text);
-          padding:8px 12px;border-radius:8px;font-size:.85rem;width:100%;box-sizing:border-box;margin-bottom:8px"/>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-          <input id="adminTaskUrl" placeholder="Action URL (https://...)"
-            style="background:var(--card);border:1px solid var(--border);color:var(--text);
-            padding:8px 12px;border-radius:8px;font-size:.85rem;box-sizing:border-box"/>
-          <input id="adminTaskBtnText" placeholder="Button text (e.g. Follow Now)"
-            style="background:var(--card);border:1px solid var(--border);color:var(--text);
-            padding:8px 12px;border-radius:8px;font-size:.85rem;box-sizing:border-box"/>
+        <input id="adminTaskLabel"
+          placeholder="Task label e.g. Follow @TriviaFi on X/Twitter"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+          padding:9px 12px;border-radius:8px;font-size:.84rem;width:100%;
+          box-sizing:border-box;margin-bottom:8px"/>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+          <input id="adminTaskUrl" placeholder="Action URL (https://x.com/...)"
+            style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+            padding:9px 12px;border-radius:8px;font-size:.84rem;box-sizing:border-box"/>
+          <input id="adminTaskBtnText" placeholder='Button text (e.g. "Follow Now")'
+            style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+            padding:9px 12px;border-radius:8px;font-size:.84rem;box-sizing:border-box"/>
         </div>
-        <button class="btn btn-primary btn-sm" style="width:auto;padding:8px 20px"
-          onclick="adminAddTask()">+ Add Task</button>
+        <button onclick="adminAddTask()"
+          style="background:linear-gradient(135deg,var(--gold),var(--orange));
+          color:#000;border:none;padding:9px 20px;border-radius:10px;cursor:pointer;
+          font-size:.84rem;font-weight:800">+ Add Task</button>
       </div>
 
-      <!-- Active Tasks -->
-      <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;
-        letter-spacing:.5px;margin-bottom:8px">Active Tasks (${tasks.length})</div>
-      <div style="overflow-y:auto;flex:1">
+      <!-- Active Tasks List -->
+      <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;
+        letter-spacing:.5px;margin-bottom:10px">
+        Active Tasks
+        <span style="background:var(--surface);color:var(--accent);padding:1px 8px;
+          border-radius:20px;margin-left:6px">${tasks.length}</span>
+      </div>
+      <div style="overflow-y:auto;flex:1;padding-right:2px">
         ${
           tasks.length === 0
-            ? `<p style="color:var(--muted);text-align:center;padding:20px;font-size:.82rem">No active tasks. Add one above.</p>`
+            ? `<div style="text-align:center;padding:32px;color:var(--muted)">
+              <div style="font-size:2.5rem;margin-bottom:8px">📋</div>
+              <p style="font-size:.83rem">No active tasks. Add one above.<br>
+              <span style="font-size:.72rem">Users can currently join without completing any tasks.</span></p>
+            </div>`
             : tasks
                 .map(
                   (t) => `
-            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;
-              border-radius:10px;background:var(--surface);border:1px solid var(--border);
-              margin-bottom:8px">
-              <span style="font-size:1rem">${t.task_type === "follow" ? "👤" : t.task_type === "retweet" ? "🔁" : t.task_type === "like" ? "❤️" : "✔️"}</span>
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;
+              border-radius:12px;background:var(--surface);border:1px solid var(--border);
+              margin-bottom:8px;transition:.15s"
+              onmouseover="this.style.borderColor='rgba(0,229,255,.2)'"
+              onmouseout="this.style.borderColor='var(--border)'">
+              <div style="width:36px;height:36px;border-radius:10px;
+                background:rgba(0,229,255,.06);display:flex;align-items:center;
+                justify-content:center;font-size:1.1rem;flex-shrink:0">
+                ${t.task_type === "follow" ? "👤" : t.task_type === "retweet" ? "🔁" : t.task_type === "like" ? "❤️" : "✔️"}
+              </div>
               <div style="flex:1;min-width:0">
-                <div style="font-size:.85rem;font-weight:600">${t.label}</div>
-                <div style="font-size:.7rem;color:var(--muted)">${t.target} · ${t.action_url ? `<a href="${t.action_url}" target="_blank" style="color:var(--accent)">${t.action_url.slice(0, 40)}...</a>` : "No URL"}</div>
+                <div style="font-size:.86rem;font-weight:600;white-space:nowrap;
+                  overflow:hidden;text-overflow:ellipsis">${t.label}</div>
+                <div style="font-size:.7rem;color:var(--muted);margin-top:2px;
+                  display:flex;gap:8px;flex-wrap:wrap">
+                  <span style="background:rgba(0,229,255,.08);color:var(--accent);
+                    padding:1px 7px;border-radius:10px">${t.target}</span>
+                  ${
+                    t.action_url
+                      ? `<a href="${t.action_url}" target="_blank"
+                        style="color:var(--muted);text-decoration:none;overflow:hidden;
+                        text-overflow:ellipsis;max-width:200px;white-space:nowrap"
+                        onmouseover="this.style.color='var(--accent)'"
+                        onmouseout="this.style.color='var(--muted)'">${t.action_url}</a>`
+                      : "<span>No URL</span>"
+                  }
+                </div>
               </div>
               <button onclick="adminDeleteTask(${t.id})"
-                style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);
-                color:var(--red);padding:4px 10px;border-radius:8px;cursor:pointer;font-size:.75rem">
-                Remove
+                style="background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.2);
+                color:var(--red);padding:6px 12px;border-radius:8px;cursor:pointer;
+                font-size:.75rem;font-weight:700;white-space:nowrap;flex-shrink:0;
+                transition:.15s"
+                onmouseover="this.style.background='rgba(239,71,111,.18)'"
+                onmouseout="this.style.background='rgba(239,71,111,.08)'">
+                🗑 Remove
               </button>
             </div>`,
                 )
@@ -5321,6 +5372,7 @@ async function showAdminTaskPanel() {
         }
       </div>
     </div>`;
+
   document.body.appendChild(modal);
 }
 
@@ -5714,72 +5766,102 @@ function fmtTournamentTime(t) {
 }
 
 function showTournamentTypeModal() {
-  if (!userAddress && !currentProfile)
-    return toast("Connect wallet or login first", "error");
   const existing = document.getElementById("tourneyTypeModal");
   if (existing) existing.remove();
+
   const modal = document.createElement("div");
   modal.id = "tourneyTypeModal";
   modal.className = "bet-modal-overlay";
   modal.innerHTML = `
     <div class="bet-modal-box" style="max-width:480px;width:95%;text-align:center">
-      <div style="font-size:2rem;margin-bottom:12px">🏟️</div>
+      <div style="font-size:2.5rem;margin-bottom:12px">🏟️</div>
       <h3 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px;
-        margin-bottom:6px">CHOOSE TOURNAMENT TYPE</h3>
+        margin-bottom:6px;color:var(--text)">CHOOSE TOURNAMENT TYPE</h3>
       <p style="color:var(--muted);font-size:.8rem;margin-bottom:24px">
         Select what kind of tournament you want to create
       </p>
       <div style="display:flex;flex-direction:column;gap:12px">
 
         <!-- Paid Tournament -->
-        <button onclick="document.getElementById('tourneyTypeModal').remove();showCreateTournamentModal()"
+        <button id="btnPaidTourney"
           style="background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.25);
-          border-radius:14px;padding:18px;cursor:pointer;text-align:left;transition:.2s;width:100%"
-          onmouseover="this.style.borderColor='var(--accent)'"
-          onmouseout="this.style.borderColor='rgba(0,229,255,.25)'">
-          <div style="display:flex;align-items:center;gap:12px">
-            <span style="font-size:1.8rem">💰</span>
-            <div>
-              <div style="font-weight:700;color:var(--accent);font-size:.95rem">Paid Tournament</div>
-              <div style="font-size:.75rem;color:var(--muted);margin-top:2px">
+          border-radius:14px;padding:18px 20px;cursor:pointer;text-align:left;transition:.2s;width:100%"
+          onmouseover="this.style.borderColor='var(--accent)';this.style.background='rgba(0,229,255,.1)'"
+          onmouseout="this.style.borderColor='rgba(0,229,255,.25)';this.style.background='rgba(0,229,255,.06)'">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:44px;height:44px;border-radius:12px;
+              background:rgba(0,229,255,.1);display:flex;align-items:center;
+              justify-content:center;font-size:1.4rem;flex-shrink:0">💰</div>
+            <div style="text-align:left">
+              <div style="font-weight:700;color:var(--accent);font-size:.95rem;margin-bottom:2px">
+                Paid Tournament
+              </div>
+              <div style="font-size:.75rem;color:var(--muted)">
                 USDC or zkLTC entry fee · 60/25/15% prize split · Onchain payouts
               </div>
             </div>
-            <span style="margin-left:auto;color:var(--muted)">→</span>
+            <span style="margin-left:auto;color:var(--muted);font-size:1.2rem">→</span>
           </div>
         </button>
 
         <!-- Whitelist Battle -->
-        <button onclick="document.getElementById('tourneyTypeModal').remove();showCreateWhitelistModal()"
+        <button id="btnWhitelistTourney"
           style="background:rgba(88,101,242,.06);border:1px solid rgba(88,101,242,.25);
-          border-radius:14px;padding:18px;cursor:pointer;text-align:left;transition:.2s;width:100%;
-          position:relative;overflow:hidden"
-          onmouseover="this.style.borderColor='#7289da'"
-          onmouseout="this.style.borderColor='rgba(88,101,242,.25)'">
-          <div style="position:absolute;top:8px;right:10px;background:linear-gradient(135deg,var(--purple),var(--accent));
-            color:#fff;font-size:.6rem;font-weight:900;padding:2px 8px;border-radius:20px;letter-spacing:.5px">
-            NEW
-          </div>
-          <div style="display:flex;align-items:center;gap:12px">
-            <span style="font-size:1.8rem">💬</span>
-            <div>
-              <div style="font-weight:700;color:#7289da;font-size:.95rem">Whitelist Battle</div>
-              <div style="font-size:.75rem;color:var(--muted);margin-top:2px">
-                Free to play · Points-based · Win NFT/WL spots · Discord communities
+          border-radius:14px;padding:18px 20px;cursor:pointer;text-align:left;
+          transition:.2s;width:100%;position:relative;overflow:hidden"
+          onmouseover="this.style.borderColor='#7289da';this.style.background='rgba(88,101,242,.12)'"
+          onmouseout="this.style.borderColor='rgba(88,101,242,.25)';this.style.background='rgba(88,101,242,.06)'">
+          <div style="position:absolute;top:10px;right:12px;
+            background:linear-gradient(135deg,var(--purple),var(--accent));
+            color:#fff;font-size:.58rem;font-weight:900;padding:2px 9px;
+            border-radius:20px;letter-spacing:.5px">NEW</div>
+          <div style="display:flex;align-items:center;gap:14px">
+            <div style="width:44px;height:44px;border-radius:12px;
+              background:rgba(88,101,242,.12);display:flex;align-items:center;
+              justify-content:center;font-size:1.4rem;flex-shrink:0">💬</div>
+            <div style="text-align:left">
+              <div style="font-weight:700;color:#7289da;font-size:.95rem;margin-bottom:2px">
+                Whitelist Battle
+              </div>
+              <div style="font-size:.75rem;color:var(--muted)">
+                Free to play · Points-based · Win WL/NFT spots · Discord ready
               </div>
             </div>
-            <span style="margin-left:auto;color:var(--muted)">→</span>
+            <span style="margin-left:auto;color:var(--muted);font-size:1.2rem">→</span>
           </div>
         </button>
 
       </div>
-      <button class="btn btn-ghost btn-sm" style="margin-top:14px;width:auto;padding:10px 20px"
-        onclick="document.getElementById('tourneyTypeModal').remove()">Cancel</button>
+      <button class="btn btn-ghost btn-sm"
+        style="margin-top:14px;width:auto;padding:10px 24px"
+        onclick="document.getElementById('tourneyTypeModal').remove()">
+        Cancel
+      </button>
     </div>`;
+
+  // Wire up buttons AFTER adding to DOM — avoids inline onclick parsing issues
+  document.body.appendChild(modal);
+
+  document.getElementById("btnPaidTourney").addEventListener("click", () => {
+    modal.remove();
+    if (!userAddress && !currentProfile)
+      return toast(
+        "Connect wallet or login first to create a tournament",
+        "error",
+      );
+    showCreateTournamentModal();
+  });
+
+  document
+    .getElementById("btnWhitelistTourney")
+    .addEventListener("click", () => {
+      modal.remove();
+      showCreateWhitelistModal();
+    });
+
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.remove();
   });
-  document.body.appendChild(modal);
 }
 
 async function submitCreateTournament() {
