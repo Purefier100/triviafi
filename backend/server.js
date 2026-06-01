@@ -36,6 +36,25 @@ app.set("trust proxy", 1);
 const verifierWallet = new ethers.Wallet(process.env.VERIFIER_PRIVATE_KEY);
 console.log("Verifier:", verifierWallet.address);
 
+// ── Treasury wallet — receives all tournament entry fees ────────────────────
+// All entry fees go HERE. Prizes are sent FROM here via VERIFIER_PRIVATE_KEY.
+// Set TREASURY_ADDRESS in your Render env vars.
+const TREASURY_ADDRESS = (
+  process.env.TREASURY_ADDRESS || "0xAe699B48004F1507CbcB05EaCc0D7528c4F0d407"
+).toLowerCase();
+
+// ✅ Security check: confirm verifier wallet matches treasury address
+const verifierAddress = verifierWallet.address.toLowerCase();
+if (verifierAddress !== TREASURY_ADDRESS) {
+  console.warn(
+    `⚠️  WARNING: VERIFIER wallet (${verifierWallet.address}) ` +
+      `does not match TREASURY_ADDRESS (${TREASURY_ADDRESS}). ` +
+      `Entry fees will go to TREASURY_ADDRESS but prizes will be sent FROM VERIFIER.`,
+  );
+} else {
+  console.log(`✅ Treasury = Verifier: ${verifierWallet.address}`);
+}
+
 const CONTRACT_ABI = [
   "function getPlayerStatus(uint256,address) view returns (bool,bool,bool,uint256)",
   "function nonces(address) view returns (uint256)",
@@ -2761,12 +2780,15 @@ app.get("/admin/reconcile-volume", async (req, res) => {
 // ════════════════════════════════════════════════════════════════════
 
 // 1. LIST all tournaments
+// 1. LIST all tournaments
 app.get("/tournaments", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT t.*,
-        (SELECT COUNT(*) FROM tournament_players tp
-         WHERE tp.tournament_id = t.id AND NOT tp.eliminated) AS player_count
+        (SELECT COUNT(*)
+         FROM tournament_players tp
+         WHERE tp.tournament_id = t.id
+        ) AS player_count
       FROM tournaments t
       WHERE t.status != 'cancelled'
       ORDER BY
@@ -2779,7 +2801,6 @@ app.get("/tournaments", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
-
 // 2. LEADERBOARD — MUST be before /:id
 app.get("/tournaments/leaderboard", async (req, res) => {
   try {
@@ -3491,6 +3512,14 @@ app.delete("/admin/tasks/:id", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get("/config/treasury", (req, res) => {
+  res.json({
+    address: TREASURY_ADDRESS,
+    // Confirm it matches the verifier (they should be the same wallet)
+    verified: verifierWallet.address.toLowerCase() === TREASURY_ADDRESS,
+  });
 });
 
 // ── MARK TASK DONE ────────────────────────────────────────────────────────

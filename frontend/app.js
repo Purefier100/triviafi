@@ -9,6 +9,21 @@
 const BACKEND = "https://name-triviafi-backend.onrender.com";
 let currentProfile = null;
 
+// ── Treasury address — loaded from backend, not hardcoded ─────────────────
+let TREASURY_ADDRESS = "0xAe699B48004F1507CbcB05EaCc0D7528c4F0d407"; // fallback
+async function loadTreasuryAddress() {
+  try {
+    const res = await fetch(`${BACKEND}/config/treasury`);
+    const data = await res.json();
+    if (data.address && /^0x[a-fA-F0-9]{40}$/i.test(data.address)) {
+      TREASURY_ADDRESS = data.address.toLowerCase();
+      console.log("✅ Treasury address loaded:", TREASURY_ADDRESS);
+    }
+  } catch (_) {
+    console.warn("Could not load treasury address, using fallback");
+  }
+}
+
 async function initAuth() {
   try {
     const res = await fetch(`${BACKEND}/auth/me`, { credentials: "include" });
@@ -183,13 +198,19 @@ function renderAuthState() {
   }
   if (hasWallet) loadDropdownStats();
 
+  // ✅ Admin button — always hidden by default, shown only after server confirms
   const adminBtn = document.getElementById("adminTaskBtn");
-
   if (adminBtn) {
-    const ADMIN_W = "0x5de073EfED60A6a12f08f303B2DA4CaA9743442b".toLowerCase();
-
-    adminBtn.style.display =
-      userAddress?.toLowerCase() === ADMIN_W ? "flex" : "none";
+    // Never expose admin wallet in frontend JS — use server-side check
+    adminBtn.style.display = "none";
+    if (userAddress) {
+      fetch(`${BACKEND}/admin/me`, { credentials: "include" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (adminBtn && d.isAdmin) adminBtn.style.display = "flex";
+        })
+        .catch(() => {});
+    }
   }
   const old = document.getElementById("profileCard");
   if (old) old.style.display = "none";
@@ -1192,6 +1213,7 @@ async function createProvider(chainId) {
 window.addEventListener("DOMContentLoaded", async () => {
   readProvider = await createProvider();
   readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
+  await loadTreasuryAddress();
   buildCatGrid();
   checkUrlGame();
   startTickerLoop();
@@ -4992,7 +5014,12 @@ async function joinTournament(id) {
       parseFloat(t.entry_fee).toFixed(decimals),
       decimals,
     );
-    const PLATFORM = platformAddress || (await readContract.platform());
+
+    // ✅ Always use TREASURY_ADDRESS — never trust contract.platform() alone
+    const PLATFORM = TREASURY_ADDRESS;
+    if (!PLATFORM || !/^0x[a-fA-F0-9]{40}$/i.test(PLATFORM)) {
+      return toast("Treasury address not loaded. Try again.", "error");
+    }
 
     const tasksPassed = await checkTasksGate("join");
     if (!tasksPassed) return;
@@ -5002,16 +5029,18 @@ async function joinTournament(id) {
       const tx = await signer.sendTransaction({
         to: PLATFORM,
         value: entryFee,
+        gasLimit: 21000,
       });
+      toast("⛓️ Confirming zkLTC payment...", "info");
       await tx.wait();
+      toast("✅ zkLTC payment confirmed!", "success");
     } else {
-      // Use Arc's USDC address regardless of active network
+      // Arc USDC path
       const arcUsdcAddress = NETWORKS[5042002].tokenAddress;
-
-      // If we're on a different network, switch to Arc first
       const currentChainId = provider
         ? Number((await provider.getNetwork()).chainId)
         : null;
+
       if (currentChainId !== 5042002) {
         toast("Switching to Arc network for USDC payment...", "info");
         try {
@@ -5033,24 +5062,31 @@ async function joinTournament(id) {
         }
       }
 
-      // Now build fresh contracts with current signer
       const freshUsdc = new ethers.Contract(arcUsdcAddress, USDC_ABI, signer);
+
+      // Check allowance
       const allowance = await freshUsdc.allowance(userAddress, PLATFORM);
       if (allowance < entryFee) {
-        toast("Approving USDC...", "info");
-        const tx1 = await freshUsdc.approve(PLATFORM, entryFee);
-        await tx1.wait();
+        toast("Step 1/2: Approving USDC transfer...", "info");
+        const approveTx = await freshUsdc.approve(PLATFORM, entryFee);
+        toast("⛓️ Confirming approval...", "info");
+        await approveTx.wait();
+        toast("✅ USDC approved!", "success");
       }
-      toast("Transferring entry fee...", "info");
+
+      toast("Step 2/2: Transferring entry fee...", "info");
       const usdcW = new ethers.Contract(
         arcUsdcAddress,
         ["function transfer(address,uint256) external returns (bool)"],
         signer,
       );
-      const tx2 = await usdcW.transfer(PLATFORM, entryFee);
-      await tx2.wait();
+      const transferTx = await usdcW.transfer(PLATFORM, entryFee);
+      toast("⛓️ Confirming payment...", "info");
+      await transferTx.wait();
+      toast("✅ Entry fee sent!", "success");
     }
 
+    // ✅ Register join in backend
     let csrfToken = "";
     try {
       const ct = await fetch(`${BACKEND}/csrf-token`, {
@@ -5061,14 +5097,17 @@ async function joinTournament(id) {
 
     const joinRes = await fetch(`${BACKEND}/tournaments/${id}/join`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "CSRF-Token": csrfToken,
+      },
       credentials: "include",
       body: JSON.stringify({ wallet: userAddress }),
     });
     const data = await joinRes.json();
     if (!joinRes.ok) return toast(data.error || "Join failed", "error");
 
-    toast("✅ Entered tournament!", "success");
+    toast("🏆 Successfully entered tournament!", "success");
     openTournament(id);
   } catch (e) {
     toast("Failed: " + (e.reason || e.message), "error");
