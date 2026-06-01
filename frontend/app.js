@@ -2495,20 +2495,20 @@ async function openGameReadOnly(gameId, gameChainId) {
     }
 
     // ── Check if current user joined but never played ─────────────────────
+    // ✅ FIX: never show refund banner to actual winners
     let neverPlayedRefundHtml = "";
-    if (userAddress && s === 1) {
+    if (userAddress && s === 1 && myWinnerPos < 0) {
       try {
-        // Check onchain: joined but not finished
         const playerStatus = await readContract.getPlayerStatus(
           gameId,
           userAddress,
         );
         const userJoined = playerStatus[0];
-        const userFinished = playerStatus[1];
+        const userFinished = playerStatus[1]; // true = submitted score onchain
         const userClaimed = playerStatus[2];
 
+        // Only eligible if joined, never submitted score, and not claimed
         if (userJoined && !userFinished && !userClaimed) {
-          // Check DB: did they ever submit a score?
           const refundStatusRes = await fetch(
             `${BACKEND}/games/${gameId}/refund-status?wallet=${userAddress}&chainId=${currentGameChainId || 5042002}`,
             { credentials: "include" },
@@ -2516,43 +2516,42 @@ async function openGameReadOnly(gameId, gameChainId) {
           const refundStatus = await refundStatusRes.json();
 
           if (refundStatus.status === "paid") {
-            // Already refunded
             neverPlayedRefundHtml = `
-              <div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
-                border-radius:12px;padding:16px;margin-bottom:16px;text-align:center">
-                <div style="font-size:1.5rem;margin-bottom:8px">✅</div>
-                <p style="color:var(--green);font-weight:700">Entry Fee Refunded</p>
-                <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
-                  ${parseFloat(refundStatus.amount || 0).toFixed(gameDecimals === 18 ? 4 : 2)} ${gameSymbol} was returned to your wallet.
-                </p>
-                ${
-                  refundStatus.tx_hash
-                    ? `<div style="font-size:.68rem;color:var(--muted);margin-top:8px;word-break:break-all">
-                      TX: ${refundStatus.tx_hash}
-                    </div>`
-                    : ""
-                }
-              </div>`;
+             <div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
+               border-radius:12px;padding:16px;margin-bottom:16px;text-align:center">
+               <div style="font-size:1.5rem;margin-bottom:8px">✅</div>
+               <p style="color:var(--green);font-weight:700">Entry Fee Refunded</p>
+               <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
+                 ${parseFloat(refundStatus.amount || 0).toFixed(dp)} ${gameSymbol}
+                 was returned to your wallet.
+               </p>
+               ${
+                 refundStatus.tx_hash
+                   ? `<div style="font-size:.68rem;color:var(--muted);margin-top:8px;
+                     word-break:break-all">TX: ${refundStatus.tx_hash}</div>`
+                   : ""
+               }
+             </div>`;
           } else {
-            // Eligible for refund — never played
             neverPlayedRefundHtml = `
-              <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
-                border-radius:12px;padding:18px;margin-bottom:16px;text-align:center">
-                <div style="font-size:1.8rem;margin-bottom:8px">😴</div>
-                <p style="color:var(--gold);font-weight:700;font-size:.95rem">
-                  You registered but didn't play
-                </p>
-                <p style="color:var(--muted);font-size:.8rem;margin-top:6px;margin-bottom:14px">
-                  You paid the entry fee but never submitted a score.<br>
-                  You can claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> back.
-                </p>
-                <button id="gameRefundBtn" class="btn btn-primary"
-                  style="background:linear-gradient(135deg,var(--gold),var(--orange));
-                  width:auto;padding:12px 32px"
-                  onclick="claimGameRefund(${gameId}, ${currentGameChainId || 5042002})">
-                  💸 Claim ${fee} ${gameSymbol} Refund
-                </button>
-              </div>`;
+             <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
+               border-radius:12px;padding:18px;margin-bottom:16px;text-align:center">
+               <div style="font-size:1.8rem;margin-bottom:8px">😴</div>
+               <p style="color:var(--gold);font-weight:700;font-size:.95rem">
+                 You registered but didn't play
+               </p>
+               <p style="color:var(--muted);font-size:.8rem;margin-top:6px;margin-bottom:14px">
+                 You paid the entry fee but never submitted a score.<br>
+                 You can claim your
+                 <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> back.
+               </p>
+               <button id="gameRefundBtn" class="btn btn-primary"
+                 style="background:linear-gradient(135deg,var(--gold),var(--orange));
+                 width:auto;padding:12px 32px"
+                 onclick="claimGameRefund(${gameId}, ${currentGameChainId || 5042002})">
+                 💸 Claim ${fee} ${gameSymbol} Refund
+               </button>
+             </div>`;
           }
         }
       } catch (_) {}
@@ -5619,11 +5618,11 @@ async function showApplicationsPanel(tournamentId) {
         a.status === "pending"
           ? `
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button onclick="reviewApp(${tournamentId},${a.id},'approved')"
+          <button onclick="reviewApp(${tournamentId},${a.id},'approved',this)"
             style="background:rgba(6,214,160,.15);border:1px solid rgba(6,214,160,.3);
             color:var(--green);padding:6px 14px;border-radius:8px;cursor:pointer;
             font-size:.75rem;font-weight:700">✅ Approve</button>
-          <button onclick="reviewApp(${tournamentId},${a.id},'rejected')"
+          <button onclick="reviewApp(${tournamentId},${a.id},'rejected',this)"
             style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.25);
             color:var(--red);padding:6px 14px;border-radius:8px;cursor:pointer;
             font-size:.75rem;font-weight:700">❌ Reject</button>
@@ -5722,6 +5721,43 @@ async function reviewApp(tournamentId, appId, decision) {
   } catch (e) {
     toast("Failed: " + e.message, "error");
     btn.disabled = false;
+  }
+}
+
+async function reviewApp(tournamentId, appId, decision, btn) {
+  // ✅ Use passed element — don't rely on global event.target in async context
+  if (!btn) btn = event?.target;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳...";
+  }
+  try {
+    const res = await fetch(
+      `${BACKEND}/tournaments/${tournamentId}/applications/${appId}/review`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ decision }),
+      },
+    );
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || "Failed", "error");
+    toast(
+      decision === "approved"
+        ? "✅ Player approved and added!"
+        : "❌ Application rejected.",
+      decision === "approved" ? "success" : "info",
+    );
+    document.getElementById("wlAppsModal")?.remove();
+    setTimeout(() => showApplicationsPanel(tournamentId), 300);
+    loadTournaments();
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = decision === "approved" ? "✅ Approve" : "❌ Reject";
+    }
   }
 }
 

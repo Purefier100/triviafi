@@ -296,6 +296,26 @@ async function initDB() {
   );
 `);
 
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS tournament_applications (
+    id            SERIAL PRIMARY KEY,
+    tournament_id INT REFERENCES tournaments(id) ON DELETE CASCADE,
+    wallet        TEXT NOT NULL,
+    user_id       INT REFERENCES users(id) ON DELETE CASCADE,
+    status        TEXT DEFAULT 'pending',
+    applied_at    TIMESTAMPTZ DEFAULT NOW(),
+    reviewed_at   TIMESTAMPTZ,
+    UNIQUE(tournament_id, wallet)
+  );
+`);
+
+    // ✅ ADD THIS — reviewed_by column was missing
+    await pool
+      .query(
+        `ALTER TABLE tournament_applications ADD COLUMN IF NOT EXISTS reviewed_by TEXT`,
+      )
+      .catch(() => {});
+
     // ── TOURNAMENT REFUNDS ────────────────────────────────────────────────────
     await pool.query(`
   ALTER TABLE tournament_players
@@ -2948,22 +2968,77 @@ app.post("/games/:gameId/refund", async (req, res) => {
       });
     }
 
-    // ── 5. Look up entry fee from DB ──────────────────────────────────
+    // ── 5. Look up entry fee — DB first, onchain fallback ─────────────────
+    let entryFee, tokenSymbol;
+
     const gameRow = await pool.query(
       `SELECT entry_fee, token_symbol FROM games
-       WHERE contract_game_id=$1 AND chain_id=$2`,
+      WHERE contract_game_id=$1 AND chain_id=$2`,
       [gameId, chainId],
     );
 
-    if (!gameRow.rows.length) {
-      return res.status(400).json({
-        error: "Game not found in database. Contact support.",
-      });
-    }
+    if (gameRow.rows.length > 0) {
+      // ✅ Found in DB — use stored values
+      entryFee = parseFloat(gameRow.rows[0].entry_fee || 0);
+      tokenSymbol =
+        gameRow.rows[0].token_symbol || (isLitvm ? "zkLTC" : "USDC");
+    } else {
+      // ✅ Not in DB — fetch entry fee directly from the contract
+      console.warn(
+        `Game ${gameId} on chain ${chainId} not in DB — fetching from chain`,
+      );
+      try {
+        const fallbackProvider = isLitvm ? makeLitvmProvider() : makeProvider();
+        const fallbackAddr = isLitvm
+          ? LITVM_CONTRACT_ADDRESS
+          : CONTRACT_ADDRESS;
+        const fallbackContract = new ethers.Contract(
+          fallbackAddr,
+          [
+            "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
+          ],
+          fallbackProvider,
+        );
+        const onchainGame = await Promise.race([
+          fallbackContract.getGame(gameId),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 10000),
+          ),
+        ]);
+        const decimals = isLitvm ? 18 : 6;
+        entryFee = parseFloat(
+          ethers.formatUnits(onchainGame.entryFee, decimals),
+        );
+        tokenSymbol = isLitvm ? "zkLTC" : "USDC";
 
-    const entryFee = parseFloat(gameRow.rows[0].entry_fee || 0);
-    const tokenSymbol =
-      gameRow.rows[0].token_symbol || (isLitvm ? "zkLTC" : "USDC");
+        // ✅ Opportunistically save to DB so future requests hit the cache
+        try {
+          await pool.query(
+            `INSERT INTO games
+              (chain_id, contract_game_id, creator, name, category,
+               difficulty, entry_fee, token_symbol, max_players, tx_hash, prize_pool)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'',0)
+            ON CONFLICT (chain_id, contract_game_id) DO NOTHING`,
+            [
+              chainId,
+              gameId,
+              onchainGame.creator?.toLowerCase() || "",
+              onchainGame.name || `Game #${gameId}`,
+              onchainGame.categoryName || "",
+              Number(onchainGame.difficulty || 0),
+              entryFee,
+              tokenSymbol,
+              Number(onchainGame.maxPlayers || 0),
+            ],
+          );
+        } catch (_) {} // non-fatal — just a cache save
+      } catch (fetchErr) {
+        console.error("Onchain game fetch failed:", fetchErr.message);
+        return res.status(503).json({
+          error: "Could not retrieve game data. Please try again.",
+        });
+      }
+    }
 
     if (entryFee <= 0) {
       return res.status(400).json({ error: "No entry fee to refund." });
