@@ -1773,6 +1773,7 @@ async function loadGames() {
       }
     }
 
+    // ── Volume display — always show both USDC and zkLTC ─────────────────
     let dbArcVol = 0,
       dbLitvmVol = 0;
     try {
@@ -1782,32 +1783,33 @@ async function loadGames() {
       dbLitvmVol = parseFloat(statsData.litvmVolume || 0);
     } catch (_) {}
 
-    // Use on-chain active pool if larger (means active games have more locked in)
-    const onchainArcUSDC = parseFloat(ethers.formatUnits(arcPool, 6));
-    const onchainLitvmZKL = parseFloat(ethers.formatUnits(litvmPool, 18));
-    const displayArcVol = Math.max(onchainArcUSDC, dbArcVol).toFixed(2);
-    const displayLitvmVol = Math.max(onchainLitvmZKL, dbLitvmVol).toFixed(4);
+    // On-chain active pool values
+    const onchainArc = parseFloat(ethers.formatUnits(arcPool, 6));
+    const onchainLitvm = parseFloat(ethers.formatUnits(litvmPool, 18));
 
-    const hasArc = parseFloat(displayArcVol) > 0;
-    const hasLitvm = parseFloat(displayLitvmVol) > 0;
+    // Use the higher of on-chain (active games) vs DB (historical total)
+    const finalArc = Math.max(onchainArc, dbArcVol);
+    const finalLitvm = Math.max(onchainLitvm, dbLitvmVol);
 
-    let poolHtml = "";
-    if (hasArc) {
-      poolHtml += `<span style="color:var(--accent);font-weight:700">$${displayArcVol} USDC</span>`;
-    }
-    if (hasArc && hasLitvm) {
-      poolHtml += `<span style="color:var(--muted);font-size:.7rem;margin:0 5px">+</span>`;
-    }
-    if (hasLitvm) {
-      poolHtml += `<span style="color:var(--purple);font-weight:700">${displayLitvmVol} zkLTC</span>`;
-    }
-    if (!hasArc && !hasLitvm) {
-      poolHtml = `<span style="color:var(--muted)">—</span>`;
-    }
-    poolHtml += `<div style="font-size:.68rem;color:var(--muted);text-transform:uppercase;
-  letter-spacing:.5px;margin-top:4px">Total Volume</div>`;
+    // ✅ ALWAYS render both tokens — show 0 if none yet
+    const arcDisplay = finalArc > 0 ? `$${finalArc.toFixed(2)}` : "$0.00";
+    const litvmDisplay = finalLitvm > 0 ? finalLitvm.toFixed(4) : "0.0000";
 
-    document.getElementById("gPool").innerHTML = poolHtml;
+    document.getElementById("gPool").innerHTML = `
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+        justify-content:center">
+        <span style="color:var(--accent);font-weight:700;font-size:1rem">
+          ${arcDisplay} USDC
+        </span>
+        <span style="color:var(--muted);font-size:.75rem">+</span>
+        <span style="color:var(--purple);font-weight:700;font-size:1rem">
+          ${litvmDisplay} zkLTC
+        </span>
+      </div>
+      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;
+        letter-spacing:.6px;margin-top:5px">Total Volume</div>
+    `;
+
     document.getElementById("gActive").textContent = activeCount;
 
     renderGames();
@@ -4518,31 +4520,20 @@ async function loadTournaments() {
     if (volEl && stats) {
       const usdcVol = parseFloat(stats.usdc_volume || 0).toFixed(2);
       const litvmVol = parseFloat(stats.litvm_volume || 0).toFixed(4);
-      const hasUsdc = parseFloat(usdcVol) > 0;
-      const hasLitvm = parseFloat(litvmVol) > 0;
 
-      if (!hasUsdc && !hasLitvm) {
-        volEl.innerHTML = `
-          <span style="color:var(--muted)">$0.00 USDC</span>
-          <span style="color:var(--muted);font-size:.68rem;margin-left:6px;
-            text-transform:uppercase;letter-spacing:.5px">TOTAL PAID OUT</span>`;
-      } else {
-        let html = "";
-        if (hasUsdc) {
-          html += `<span style="color:var(--accent);font-weight:700;font-size:1.05rem">
-            $${usdcVol} USDC</span>`;
-        }
-        if (hasUsdc && hasLitvm) {
-          html += `<span style="color:var(--muted);margin:0 6px;font-size:.85rem">+</span>`;
-        }
-        if (hasLitvm) {
-          html += `<span style="color:var(--purple);font-weight:700;font-size:1.05rem">
-            ${litvmVol} zkLTC</span>`;
-        }
-        html += `<span style="color:var(--muted);font-size:.68rem;margin-left:8px;
-          text-transform:uppercase;letter-spacing:.5px">TOTAL PAID OUT</span>`;
-        volEl.innerHTML = html;
-      }
+      // ✅ Always show both — display 0.0000 zkLTC even if no LitVM tournaments yet
+      volEl.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="color:var(--accent);font-weight:700;font-size:1.05rem">
+            $${usdcVol} USDC
+          </span>
+          <span style="color:var(--muted);font-size:.8rem">+</span>
+          <span style="color:var(--purple);font-weight:700;font-size:1.05rem">
+            ${litvmVol} zkLTC
+          </span>
+          <span style="color:var(--muted);font-size:.68rem;text-transform:uppercase;
+            letter-spacing:.5px">TOTAL PAID OUT</span>
+        </div>`;
     }
 
     renderTournaments();

@@ -2435,22 +2435,41 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       [score, req.user.id, gameId, chainId],
     );
 
-    const game = await client.query(
-      `
-  SELECT entry_fee
-  FROM games
-  WHERE contract_game_id = $1
-  AND chain_id = $2
-  `,
-      [gameId, chainId],
-    );
-
-    if (game.rows.length > 0) {
-      const volumeCol = isLitvm ? "total_volume_litvm" : "total_volume";
-      await client.query(
-        `UPDATE platform_stats SET ${volumeCol} = ${volumeCol} + $1 WHERE id = 1`,
-        [game.rows[0].entry_fee],
+    // ── Volume tracking — always update platform_stats ────────────────────────
+    try {
+      const gameRow = await client.query(
+        `SELECT entry_fee FROM games
+     WHERE contract_game_id = $1 AND chain_id = $2`,
+        [gameId, chainId],
       );
+
+      if (gameRow.rows.length > 0) {
+        const entryFee = parseFloat(gameRow.rows[0].entry_fee || 0);
+        if (entryFee > 0) {
+          const volumeCol = isLitvm ? "total_volume_litvm" : "total_volume";
+          await client.query(
+            `UPDATE platform_stats
+         SET ${volumeCol} = ${volumeCol} + $1
+         WHERE id = 1`,
+            [entryFee],
+          );
+        }
+      } else {
+        // Game not in DB yet — still increment from request data if available
+        const fallbackFee = parseFloat(req.body.entryFee || 0);
+        if (fallbackFee > 0) {
+          const volumeCol = isLitvm ? "total_volume_litvm" : "total_volume";
+          await client.query(
+            `UPDATE platform_stats
+         SET ${volumeCol} = ${volumeCol} + $1
+         WHERE id = 1`,
+            [fallbackFee],
+          );
+        }
+      }
+    } catch (volErr) {
+      console.warn("Volume tracking failed (non-fatal):", volErr.message);
+      // Non-fatal — don't roll back the score submission
     }
 
     // Increment DB nonce as fallback backup
@@ -2499,30 +2518,79 @@ app.post("/bets/place", async (req, res) => {
 
 app.get("/stats/global", async (req, res) => {
   try {
-    const r = await pool.query(`
+    // ── Player & session counts ───────────────────────────────────────────
+    const countR = await pool.query(`
       SELECT
-        (SELECT COUNT(*) FROM users)                              AS total_players,
-        COUNT(*)                                                  AS total_games_played,
-        COUNT(*) FILTER (WHERE finished = true)                   AS total_finished
-      FROM game_sessions
+        (SELECT COUNT(*) FROM users)                                    AS total_players,
+        COUNT(*)                                                        AS total_games_played,
+        COUNT(*) FILTER (WHERE gs.finished = true)                     AS total_finished
+      FROM game_sessions gs
     `);
 
-    // ✅ Use platform_stats for accurate cumulative volume (updated on every submission)
-    const volResult = await pool.query(`
+    // ── Volume: use BOTH sources, take the MAX of each ────────────────────
+    // Source A: platform_stats cumulative counter (updated on each submission)
+    const statsVolR = await pool.query(`
       SELECT
-        COALESCE(total_volume,       0) AS arc_volume,
-        COALESCE(total_volume_litvm, 0) AS litvm_volume
+        COALESCE(total_volume,       0) AS arc_vol,
+        COALESCE(total_volume_litvm, 0) AS litvm_vol
       FROM platform_stats
       WHERE id = 1
     `);
 
+    // Source B: recalculate from game_sessions × games join (ground truth)
+    const sessionVolR = await pool.query(`
+      SELECT
+        COALESCE(SUM(g.entry_fee) FILTER (
+          WHERE g.chain_id = 5042002 AND gs.finished = true
+        ), 0) AS arc_vol,
+        COALESCE(SUM(g.entry_fee) FILTER (
+          WHERE g.chain_id = 4441 AND gs.finished = true
+        ), 0) AS litvm_vol
+      FROM game_sessions gs
+      JOIN games g
+        ON g.contract_game_id = gs.game_id
+       AND g.chain_id         = gs.chain_id
+    `);
+
+    // Take the higher of the two sources for each token (most accurate)
+    const arcVol = Math.max(
+      parseFloat(statsVolR.rows[0]?.arc_vol || 0),
+      parseFloat(sessionVolR.rows[0]?.arc_vol || 0),
+    );
+    const litvmVol = Math.max(
+      parseFloat(statsVolR.rows[0]?.litvm_vol || 0),
+      parseFloat(sessionVolR.rows[0]?.litvm_vol || 0),
+    );
+
+    // ── Sync platform_stats if it drifted behind ──────────────────────────
+    // Silently update so future calls are accurate
+    if (
+      arcVol > parseFloat(statsVolR.rows[0]?.arc_vol || 0) ||
+      litvmVol > parseFloat(statsVolR.rows[0]?.litvm_vol || 0)
+    ) {
+      await pool
+        .query(
+          `
+        UPDATE platform_stats
+        SET total_volume       = GREATEST(total_volume,       $1),
+            total_volume_litvm = GREATEST(total_volume_litvm, $2)
+        WHERE id = 1
+      `,
+          [arcVol, litvmVol],
+        )
+        .catch(() => {});
+    }
+
+    // ── Top players leaderboard ───────────────────────────────────────────
     const topPlayers = await pool.query(`
       SELECT
-        u.username, u.wallet, u.avatar,
-        COUNT(gs.id)                                          AS games_played,
-        COUNT(gs.id) FILTER (WHERE gs.finished = true)        AS games_finished,
-        COALESCE(SUM(gs.score) FILTER (WHERE gs.finished = true), 0) AS total_score,
-        COALESCE(MAX(gs.score), 0)                            AS best_score
+        u.username,
+        u.wallet,
+        u.avatar,
+        COUNT(gs.id)                                                 AS games_played,
+        COUNT(gs.id)   FILTER (WHERE gs.finished = true)            AS games_finished,
+        COALESCE(SUM(gs.score) FILTER (WHERE gs.finished = true),0) AS total_score,
+        COALESCE(MAX(gs.score), 0)                                   AS best_score
       FROM users u
       LEFT JOIN game_sessions gs ON gs.user_id = u.id
       GROUP BY u.id, u.username, u.wallet, u.avatar
@@ -2532,14 +2600,15 @@ app.get("/stats/global", async (req, res) => {
     `);
 
     res.json({
-      totalPlayers: parseInt(r.rows[0].total_players) || 0,
-      totalGamesPlayed: parseInt(r.rows[0].total_games_played) || 0,
-      totalFinished: parseInt(r.rows[0].total_finished) || 0,
-      arcVolume: parseFloat(volResult.rows[0]?.arc_volume || 0).toFixed(2),
-      litvmVolume: parseFloat(volResult.rows[0]?.litvm_volume || 0).toFixed(4),
+      totalPlayers: parseInt(countR.rows[0].total_players) || 0,
+      totalGamesPlayed: parseInt(countR.rows[0].total_games_played) || 0,
+      totalFinished: parseInt(countR.rows[0].total_finished) || 0,
+      arcVolume: arcVol.toFixed(2),
+      litvmVolume: litvmVol.toFixed(4),
       topPlayers: topPlayers.rows,
     });
   } catch (e) {
+    console.error("stats/global error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2636,6 +2705,56 @@ if (process.env.NODE_ENV === "production") {
     8 * 60 * 1000,
   );
 }
+
+// ── ONE-TIME VOLUME RECONCILIATION ────────────────────────────────────────
+// Call GET /admin/reconcile-volume?key=YOUR_ADMIN_SECRET once to fix history
+app.get("/admin/reconcile-volume", async (req, res) => {
+  if (req.query.key !== process.env.ADMIN_SECRET && !isAdmin(req)) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  try {
+    // Calculate true totals from game_sessions × games
+    const r = await pool.query(`
+      SELECT
+        COALESCE(SUM(g.entry_fee) FILTER (
+          WHERE g.chain_id = 5042002 AND gs.finished = true
+        ), 0) AS arc_total,
+        COALESCE(SUM(g.entry_fee) FILTER (
+          WHERE g.chain_id = 4441 AND gs.finished = true
+        ), 0) AS litvm_total
+      FROM game_sessions gs
+      JOIN games g
+        ON g.contract_game_id = gs.game_id
+       AND g.chain_id = gs.chain_id
+    `);
+
+    const arcTotal = parseFloat(r.rows[0].arc_total || 0);
+    const litvmTotal = parseFloat(r.rows[0].litvm_total || 0);
+
+    // Update platform_stats to the GREATER of current or recalculated
+    await pool.query(
+      `
+      UPDATE platform_stats
+      SET total_volume       = GREATEST(total_volume,       $1),
+          total_volume_litvm = GREATEST(total_volume_litvm, $2)
+      WHERE id = 1
+    `,
+      [arcTotal, litvmTotal],
+    );
+
+    const updated = await pool.query(
+      "SELECT total_volume, total_volume_litvm FROM platform_stats WHERE id=1",
+    );
+
+    res.json({
+      ok: true,
+      recalculated: { arcTotal, litvmTotal },
+      stored: updated.rows[0],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ════════════════════════════════════════════════════════════════════
 // TOURNAMENT ROUTES — ORDER IS CRITICAL. Literals before :id params.
