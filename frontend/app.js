@@ -2493,6 +2493,90 @@ async function openGameReadOnly(gameId, gameChainId) {
     } catch (_) {
       lbHtml = `<p style="color:var(--muted)">No scores yet.</p>`;
     }
+
+    // ── Check if current user joined but never played ─────────────────────
+    let neverPlayedRefundHtml = "";
+    if (userAddress && s === 1) {
+      try {
+        // Check onchain: joined but not finished
+        const playerStatus = await readContract.getPlayerStatus(
+          gameId,
+          userAddress,
+        );
+        const userJoined = playerStatus[0];
+        const userFinished = playerStatus[1];
+        const userClaimed = playerStatus[2];
+
+        if (userJoined && !userFinished && !userClaimed) {
+          // Check DB: did they ever submit a score?
+          const refundStatusRes = await fetch(
+            `${BACKEND}/games/${gameId}/refund-status?wallet=${userAddress}&chainId=${currentGameChainId || 5042002}`,
+            { credentials: "include" },
+          );
+          const refundStatus = await refundStatusRes.json();
+
+          if (refundStatus.status === "paid") {
+            // Already refunded
+            neverPlayedRefundHtml = `
+              <div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
+                border-radius:12px;padding:16px;margin-bottom:16px;text-align:center">
+                <div style="font-size:1.5rem;margin-bottom:8px">✅</div>
+                <p style="color:var(--green);font-weight:700">Entry Fee Refunded</p>
+                <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
+                  ${parseFloat(refundStatus.amount || 0).toFixed(gameDecimals === 18 ? 4 : 2)} ${gameSymbol} was returned to your wallet.
+                </p>
+                ${
+                  refundStatus.tx_hash
+                    ? `<div style="font-size:.68rem;color:var(--muted);margin-top:8px;word-break:break-all">
+                      TX: ${refundStatus.tx_hash}
+                    </div>`
+                    : ""
+                }
+              </div>`;
+          } else {
+            // Eligible for refund — never played
+            neverPlayedRefundHtml = `
+              <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
+                border-radius:12px;padding:18px;margin-bottom:16px;text-align:center">
+                <div style="font-size:1.8rem;margin-bottom:8px">😴</div>
+                <p style="color:var(--gold);font-weight:700;font-size:.95rem">
+                  You registered but didn't play
+                </p>
+                <p style="color:var(--muted);font-size:.8rem;margin-top:6px;margin-bottom:14px">
+                  You paid the entry fee but never submitted a score.<br>
+                  You can claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> back.
+                </p>
+                <button id="gameRefundBtn" class="btn btn-primary"
+                  style="background:linear-gradient(135deg,var(--gold),var(--orange));
+                  width:auto;padding:12px 32px"
+                  onclick="claimGameRefund(${gameId}, ${currentGameChainId || 5042002})">
+                  💸 Claim ${fee} ${gameSymbol} Refund
+                </button>
+              </div>`;
+          }
+        }
+      } catch (_) {}
+    }
+
+    let claimBannerHtml = "";
+    if (myWinnerPos >= 0 && myPrize > 0) {
+      const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
+      claimBannerHtml = `<div class="winner-banner" style="margin-bottom:16px">
+        <h3>${medals[myWinnerPos]} — YOU WON!</h3>
+        <div class="winner-prize">${myPrize.toFixed(dp)} ${gameSymbol}</div>
+        ${
+          !alreadyClaimed
+            ? `<button class="btn btn-gold" onclick="doClaimPrize()"
+              style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">
+              💰 Claim Your Prize
+            </button>`
+            : `<p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">
+              ✅ Prize Already Claimed!
+            </p>`
+        }
+      </div>`;
+    }
+
     // ── Refund banner for cancelled games ──
     let refundHtml = "";
     if (s === 2 && userAddress) {
@@ -2513,19 +2597,6 @@ async function openGameReadOnly(gameId, gameChainId) {
       </div>`;
         }
       } catch (_) {}
-    }
-    let claimBannerHtml = "";
-    if (myWinnerPos >= 0 && myPrize > 0) {
-      const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
-      claimBannerHtml = `<div class="winner-banner" style="margin-bottom:16px"><h3>${
-        medals[myWinnerPos]
-      } — YOU WON!</h3><div class="winner-prize">${myPrize.toFixed(
-        2,
-      )} ${activeNet.symbol}</div>${
-        !alreadyClaimed
-          ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">💰 Claim Your Prize</button>`
-          : `<p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">✅ Prize Already Claimed!</p>`
-      }</div>`;
     }
     let winnersHtml = "";
     if (
@@ -2568,7 +2639,7 @@ async function openGameReadOnly(gameId, gameChainId) {
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
       </div>
-      ${refundHtml}${claimBannerHtml}${winnersHtml}
+      ${neverPlayedRefundHtml}${refundHtml}${claimBannerHtml}${winnersHtml}
       <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:10px">📊 Final Leaderboard</div>${lbHtml}
       ${
         !userAddress
@@ -2578,6 +2649,89 @@ async function openGameReadOnly(gameId, gameChainId) {
     showScreen("screenJoin");
   } catch (e) {
     toast("Error loading game: " + e.message, "error");
+  }
+}
+
+// ── Claim refund for normal game (joined but never played) ────────────────
+async function claimGameRefund(gameId, chainId) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+
+  const btn = document.getElementById("gameRefundBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Processing refund...";
+  }
+
+  // Make sure we are on the correct network
+  const targetNet = NETWORKS[chainId];
+  if (targetNet && provider) {
+    const currentChainId = Number((await provider.getNetwork()).chainId);
+    if (currentChainId !== chainId) {
+      try {
+        toast(`Switching to ${targetNet.name}...`, "info");
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: targetNet.hexChainId }],
+        });
+        await new Promise((r) => setTimeout(r, 500));
+        activeNet = targetNet;
+        CONTRACT_ADDRESS = activeNet.contractAddress;
+        USDC_ADDRESS = activeNet.tokenAddress;
+        provider = new ethers.BrowserProvider(window.ethereum);
+        signer = await provider.getSigner();
+        contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+        if (!activeNet.isNative) {
+          usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+        } else {
+          usdcContract = null;
+        }
+        updateNetBar();
+      } catch (e) {
+        toast("Failed to switch network: " + e.message, "error");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "💸 Claim Refund";
+        }
+        return;
+      }
+    }
+  }
+
+  try {
+    const res = await fetch(`${BACKEND}/games/${gameId}/refund`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        wallet: userAddress,
+        chainId,
+      }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      toast(data.error || "Refund failed", "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "💸 Claim Refund";
+      }
+      return;
+    }
+
+    toast(
+      `💸 ${data.amount.toFixed(data.tokenSymbol === "zkLTC" ? 4 : 2)} ${data.tokenSymbol} refunded to your wallet!`,
+      "success",
+    );
+
+    // Refresh the game view after a short delay
+    setTimeout(() => openGameReadOnly(gameId, chainId), 1500);
+  } catch (e) {
+    toast("Refund failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💸 Claim Refund";
+    }
   }
 }
 
@@ -2890,6 +3044,48 @@ async function openGame(gameId, gameChainId) {
     actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)"><p style="color:var(--green);font-weight:600">✅ Score submitted!</p><button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="doTriggerEnd(${gameId})">Check if game can end</button></div>`;
   else if (!inRegPhase && !inPlayPhase)
     actionHtml = `<button class="btn btn-ghost" onclick="doTriggerEnd(${gameId})">🏁 End Game & See Results</button>`;
+  // ── Game ended — player joined but never played ───────────────────────────
+  // This appears after all the phase checks, before the creator controls
+  let gameRefundBannerHtml = "";
+  if (s === 1 && !finished && !alreadySubmitted(gameId)) {
+    try {
+      // Check if they actually played in DB
+      const refundStatusRes = await fetch(
+        `${BACKEND}/games/${gameId}/refund-status?wallet=${userAddress}&chainId=${currentGameChainId || 5042002}`,
+        { credentials: "include" },
+      );
+      const refundData = await refundStatusRes.json();
+
+      if (refundData.status === "paid") {
+        gameRefundBannerHtml = `
+          <div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
+            border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">
+            <p style="color:var(--green);font-weight:600">✅ Entry Fee Refunded</p>
+            <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
+              ${fee} ${gameSymbol} was returned to your wallet.
+            </p>
+          </div>`;
+      } else if (refundData.status !== "pending") {
+        // Not yet refunded — show option
+        gameRefundBannerHtml = `
+          <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
+            border-radius:12px;padding:16px;margin-bottom:14px;text-align:center">
+            <div style="font-size:1.5rem;margin-bottom:8px">😴</div>
+            <p style="color:var(--gold);font-weight:700">You didn't play this game</p>
+            <p style="color:var(--muted);font-size:.78rem;margin-top:6px;margin-bottom:12px">
+              You registered but the game ended without your score.
+              Claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> entry fee back.
+            </p>
+            <button id="gameRefundBtn" class="btn btn-primary"
+              style="background:linear-gradient(135deg,var(--gold),var(--orange));
+              width:auto;padding:11px 28px"
+              onclick="claimGameRefund(${gameId},${currentGameChainId || 5042002})">
+              💸 Claim ${fee} ${gameSymbol} Refund
+            </button>
+          </div>`;
+      }
+    } catch (_) {}
+  }
   let creatorHtml = "";
   if (creator.toLowerCase() === userAddress.toLowerCase())
     creatorHtml = `<hr/><div style="color:var(--accent);font-size:.82rem;font-weight:600;margin-bottom:10px">👑 Your Room — Creator earns 2.5%</div><div style="display:flex;gap:10px"><button class="btn btn-ghost btn-sm" style="flex:1" onclick="doTriggerEnd(${gameId})">🏁 Force End</button><button class="btn btn-danger btn-sm" style="flex:1" onclick="doCancelRoom(${gameId})">✕ Cancel & Refund All</button></div>`;
@@ -2921,7 +3117,7 @@ async function openGame(gameId, gameChainId) {
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px"><div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Breakdown</div>${breakdownHtml}</div>
     <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Players (${n}/${maxPlayers})</div>
     <div style="margin-bottom:14px">${playerRows}</div>
-    ${betsHtml}
+    ${betsHtml}${gameRefundBannerHtml}
     <div style="margin-top:14px">${actionHtml}</div>
      <div id="gameActions" style="margin-top:10px"></div>
     <div class="share-box" style="margin-top:14px"><span style="font-size:1.3rem">🔗</span><div style="flex:1"><div style="font-size:.75rem;color:var(--muted);margin-bottom:3px">Share</div><div class="share-link" style="font-size:.72rem">${shareUrl}</div></div><button class="btn btn-ghost btn-sm" onclick="copyShare(\`${discordMsg}\`)">Copy</button></div>
@@ -4646,28 +4842,36 @@ async function openTournament(id) {
   try {
     const res = await fetch(`${BACKEND}/tournaments/${id}`);
     const { tournament: t, players, rounds } = await res.json();
-
+    const isWL = t.tournament_type === "whitelist";
+    const myWallet = userAddress?.toLowerCase();
+    const me = players.find((p) => p.wallet?.toLowerCase() === myWallet);
+    const isJoined = !!me;
+    const isEliminated = me?.eliminated;
+    const isFull = players.length >= t.max_players;
+    const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
     const dp = t.token_symbol === "zkLTC" ? 4 : 2;
-    const fee = parseFloat(t.entry_fee).toFixed(dp);
-    const pool2 = parseFloat(t.prize_pool).toFixed(dp);
+    const fee = parseFloat(t.entry_fee || 0).toFixed(dp);
+    const pool2 = parseFloat(t.prize_pool || 0).toFixed(dp);
+    const myCreatorId = (
+      currentProfile?.wallet ||
+      userAddress ||
+      ""
+    ).toLowerCase();
+    const isMyTournament = t.creator?.toLowerCase() === myCreatorId;
+
     const prizes = {
       first: (parseFloat(pool2) * 0.6).toFixed(dp),
       second: (parseFloat(pool2) * 0.25).toFixed(dp),
       third: (parseFloat(pool2) * 0.15).toFixed(dp),
     };
-    const myWallet = userAddress?.toLowerCase();
-    const me = players.find((p) => p.wallet === myWallet);
-    const isJoined = !!me,
-      isEliminated = me?.eliminated;
-    const isFull = players.length >= t.max_players;
-    const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
 
+    // ── Player rows ──────────────────────────────────────────────────────
     const playerRows = players
       .map(
         (p, i) => `
       <div class="lb-row" style="${p.eliminated ? "opacity:.4" : ""}">
-        <span class="lb-rank">${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)}</span>
-        <span class="lb-addr">${p.username ? "@" + p.username : fmt(p.wallet)}${p.wallet === myWallet ? " (you)" : ""}</span>
+        <span class="lb-rank">${["🥇", "🥈", "🥉"][i] || "#" + (i + 1)}</span>
+        <span class="lb-addr">${p.username ? "@" + p.username : fmt(p.wallet)}${p.wallet?.toLowerCase() === myWallet ? " (you)" : ""}</span>
         <span class="lb-score">${p.total_score} pts</span>
         <span class="lb-tag ${p.eliminated ? "lb-wait" : "lb-done"}">${p.eliminated ? "Out" : "Active"}</span>
       </div>`,
@@ -4678,296 +4882,420 @@ async function openTournament(id) {
       .map(
         (r) => `
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-        <span style="font-size:.85rem;font-weight:700;color:var(--accent)">Round ${r.round_number}</span>
-        <span style="font-size:.75rem;color:${r.status === "active" ? "var(--gold)" : r.status === "finished" ? "var(--green)" : "var(--muted)"}">
+        <span style="font-weight:700;color:var(--accent)">Round ${r.round_number}</span>
+        <span style="color:${r.status === "active" ? "var(--gold)" : r.status === "finished" ? "var(--green)" : "var(--muted)"}">
           ${r.status === "active" ? "🔴 Live" : r.status === "finished" ? "✅ Done" : "⏳ Pending"}
         </span>
       </div>`,
       )
       .join("");
 
+    // ── Build action HTML based on tournament type & state ───────────────
     let actionHtml = "";
-    if (t.status === "open" && !isJoined && !isFull && userAddress) {
-      actionHtml = `<button class="btn btn-primary" onclick="joinTournament(${t.id})">
-        💰 Pay ${fee} ${t.token_symbol} & Enter Tournament</button>`;
-    } else if (t.status === "open" && isJoined) {
-      actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2)">
-        <p style="color:var(--accent);font-weight:600">✓ You are registered!</p>
-        <p style="color:var(--muted);font-size:.82rem;margin-top:4px">Waiting for ${t.max_players - players.length} more players to start.</p>
-      </div>`;
-    } else if (t.status === "active" && isJoined && !isEliminated) {
-      // ✅ Check if already played this round server-side
-      let roundStatus = { played: false, score: 0 };
-      try {
-        const rs = await fetch(
-          `${BACKEND}/tournaments/${t.id}/round-status?wallet=${myWallet}`,
-          {
-            credentials: "include",
-          },
-        );
-        roundStatus = await rs.json();
-      } catch (_) {}
 
-      if (roundStatus.played) {
-        actionHtml = `
-          <div style="background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.3);
-            border-radius:12px;padding:16px;text-align:center">
-            <div style="font-size:1.5rem;margin-bottom:6px">✅</div>
-            <p style="color:var(--green);font-weight:700;font-size:.95rem">
-              Round ${t.current_round} Submitted!
-            </p>
-            <p style="color:var(--muted);font-size:.82rem;margin-top:4px">
-              Your score: <strong style="color:var(--gold)">${roundStatus.score} pts</strong>
-            </p>
-            <p style="color:var(--muted);font-size:.75rem;margin-top:6px">
-              Waiting for other players to finish...
-            </p>
-            <div style="margin-top:10px;width:100%;height:3px;background:var(--border);border-radius:2px;overflow:hidden">
-              <div style="height:100%;width:60%;background:linear-gradient(90deg,var(--green),var(--accent));
-                animation:shimmer 2s linear infinite;background-size:200% 100%"></div>
-            </div>
-          </div>`;
-      } else {
-        actionHtml = `
-          <button class="btn btn-primary"
-            style="background:linear-gradient(135deg,var(--gold),var(--orange));
-            padding:16px;font-size:1rem;letter-spacing:.5px"
-            onclick="playTournamentRound(${t.id},${t.current_round})">
-            🎮 Play Round ${t.current_round} of ${t.rounds}!
-          </button>
-          <p style="text-align:center;color:var(--muted);font-size:.75rem;margin-top:8px">
-            10 questions · 15s each · Score as high as you can
-          </p>`;
-      }
-    } else if (t.status === "active" && isEliminated) {
-      actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.25)">
-        <p style="color:var(--red);font-weight:600">❌ You were eliminated in Round ${t.current_round - 1}</p>
-      </div>`;
-    } else if (t.status === "finished") {
-      const myRank = players.findIndex((p) => p.wallet === myWallet);
+    // ══ WHITELIST TOURNAMENT FLOW ════════════════════════════════════════
+    if (isWL) {
+      // Load tasks and application status in parallel
+      const [wlTasksRes, myAppRes] = await Promise.allSettled([
+        fetch(`${BACKEND}/tournaments/${id}/wl-tasks?wallet=${myWallet || ""}`),
+        myWallet
+          ? fetch(
+              `${BACKEND}/tournaments/${id}/my-application?wallet=${myWallet}`,
+            )
+          : Promise.resolve(null),
+      ]);
 
-      const splitPcts = [0.6, 0.25, 0.15];
+      const wlData =
+        wlTasksRes.status === "fulfilled"
+          ? await wlTasksRes.value.json()
+          : { tasks: [], completedIds: [] };
+      const myApp =
+        myAppRes?.status === "fulfilled" && myAppRes.value
+          ? await myAppRes.value.json()
+          : { status: null };
 
-      const myPrize =
-        myRank >= 0 && myRank < 3
-          ? (parseFloat(pool2) * splitPcts[myRank]).toFixed(dp)
-          : null;
+      const wlTasks = wlData.tasks || [];
+      const completedIds = new Set(wlData.completedIds || []);
+      const allTasksDone =
+        wlTasks.length === 0 || wlTasks.every((tk) => completedIds.has(tk.id));
 
-      const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
-
-      if (myPrize && parseFloat(myPrize) > 0 && userAddress) {
-        let claimStatus = null;
-
+      if (t.status === "finished") {
+        actionHtml = `<div class="winner-banner"><h3>🏆 Whitelist Battle Complete!</h3>
+          <p style="color:rgba(255,255,255,.7);margin-top:8px;font-size:.88rem">
+            Winners receive their prizes directly from the sponsor.<br>
+            Check Discord for prize distribution details.
+          </p></div>`;
+      } else if (t.status === "active" && isJoined && !isEliminated) {
+        let roundStatus = { played: false, score: 0 };
         try {
-          const cs = await fetch(
-            `${BACKEND}/tournaments/${t.id}/claim-status?wallet=${userAddress}`,
-            {
-              credentials: "include",
-            },
+          const rs = await fetch(
+            `${BACKEND}/tournaments/${id}/round-status?wallet=${myWallet}`,
+            { credentials: "include" },
           );
-
-          claimStatus = await cs.json();
+          roundStatus = await rs.json();
         } catch (_) {}
 
-        if (claimStatus?.status === "paid") {
-          actionHtml = `
-            <div style="
-              background:rgba(6,214,160,.08);
-              border:2px solid rgba(6,214,160,.3);
-              border-radius:16px;
-              padding:24px;
-              text-align:center;
-              margin-bottom:16px">
-    
-              <div style="font-size:2rem;margin-bottom:8px">✅</div>
-    
-              <h3 style="
-                font-family:'Bebas Neue',sans-serif;
-                font-size:1.3rem;
-                letter-spacing:2px;
-                color:var(--green);
-                margin:0 0 6px">
-    
-                ${medals[myRank]} — PRIZE SENT!
-    
-              </h3>
-    
-              <div style="
-                font-size:1.8rem;
-                font-weight:700;
-                color:var(--green);
-                margin-bottom:6px">
-    
-                ${myPrize} ${t.token_symbol}
-    
-              </div>
-    
-              <p style="
-                color:var(--muted);
-                font-size:.78rem;
-                margin:0 0 10px">
-    
-                Sent directly to your wallet on-chain
-    
-              </p>
-    
-              ${
-                claimStatus.tx_hash
-                  ? `
-                <div style="
-                  font-size:.72rem;
-                  background:var(--surface);
-                  border:1px solid var(--border);
-                  border-radius:8px;
-                  padding:8px 12px;
-                  word-break:break-all;
-                  color:var(--muted)">
-    
-                  TX: ${claimStatus.tx_hash}
-    
-                </div>
-              `
-                  : ""
-              }
-    
-            </div>`;
-        } else {
-          actionHtml = `
-            <div class="winner-banner" style="margin-bottom:16px">
-    
-              <h3>${medals[myRank]} — YOU WON!</h3>
-    
-              <div class="winner-prize" style="font-size:2rem">
-                ${myPrize} ${t.token_symbol}
-              </div>
-    
-              <p style="
-                color:rgba(255,255,255,.6);
-                font-size:.8rem;
-                margin-top:4px">
-    
-                Prize is paid directly to your wallet from the prize pool
-    
-              </p>
-    
-              <button
-                id="claimTourneyBtn"
-                class="btn btn-gold"
-                onclick="claimTournamentPrize(${t.id}, '${t.token_symbol}')"
-                style="
-                  margin-top:16px;
-                  width:auto;
-                  padding:14px 48px;
-                  font-size:1.1rem;
-                  box-shadow:0 4px 20px rgba(255,209,102,.4)">
-    
-                💰 Claim ${myPrize} ${t.token_symbol}
-    
-              </button>
-    
-            </div>`;
-        }
-      } else {
-        const winner = players[0];
-
-        actionHtml = `
-          <div class="winner-banner">
-    
-            <h3>🏆 Tournament Complete!</h3>
-    
-            <div class="winner-prize">
-              ${prizes.first} ${t.token_symbol}
+        actionHtml = roundStatus.played
+          ? `<div style="background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.3);border-radius:12px;padding:16px;text-align:center">
+              <div style="font-size:1.5rem;margin-bottom:6px">✅</div>
+              <p style="color:var(--green);font-weight:700">Round ${t.current_round} Submitted!</p>
+              <p style="color:var(--muted);font-size:.82rem;margin-top:4px">Score: <strong style="color:var(--gold)">${roundStatus.score} pts</strong></p>
+              <p style="color:var(--muted);font-size:.75rem;margin-top:6px">Waiting for other players...</p>
+            </div>`
+          : `<button class="btn btn-primary" style="background:linear-gradient(135deg,var(--gold),var(--orange));padding:16px;font-size:1rem"
+               onclick="playTournamentRound(${id},${t.current_round})">
+               🎮 Play Round ${t.current_round} of ${t.rounds}!
+             </button>`;
+      } else if (t.status === "active" && isEliminated) {
+        actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.25)">
+          <p style="color:var(--red);font-weight:600">❌ Eliminated in Round ${t.current_round - 1}</p></div>`;
+      } else if (t.status === "open" && isJoined) {
+        actionHtml = `<div style="text-align:center;padding:16px;border-radius:12px;background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.25)">
+          <div style="font-size:1.5rem;margin-bottom:8px">✅</div>
+          <p style="color:var(--green);font-weight:700">You are approved and registered!</p>
+          <p style="color:var(--muted);font-size:.82rem;margin-top:6px">Waiting for ${t.max_players - players.length} more approved players to start.</p>
+        </div>`;
+      } else if (t.status === "open" && myApp.status === "pending") {
+        actionHtml = `<div style="text-align:center;padding:16px;border-radius:12px;background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.25)">
+          <div style="font-size:1.5rem;margin-bottom:8px">⏳</div>
+          <p style="color:var(--gold);font-weight:700">Application Under Review</p>
+          <p style="color:var(--muted);font-size:.82rem;margin-top:6px">The creator will review your application soon.</p>
+        </div>`;
+      } else if (t.status === "open" && myApp.status === "rejected") {
+        actionHtml = `<div style="text-align:center;padding:16px;border-radius:12px;background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.25)">
+          <div style="font-size:1.5rem;margin-bottom:8px">❌</div>
+          <p style="color:var(--red);font-weight:700">Application Rejected</p>
+          <p style="color:var(--muted);font-size:.82rem;margin-top:6px">Your application was not approved for this tournament.</p>
+        </div>`;
+      } else if (t.status === "open" && !isJoined && !isFull && userAddress) {
+        // ── Task gate UI ─────────────────────────────────────────────────
+        const taskRows = wlTasks
+          .map((tk) => {
+            const done = completedIds.has(tk.id);
+            return `
+          <div id="wlTask_${tk.id}" style="display:flex;align-items:center;gap:12px;padding:12px 14px;
+            border-radius:12px;background:${done ? "rgba(6,214,160,.06)" : "rgba(255,255,255,.03)"};
+            border:1px solid ${done ? "rgba(6,214,160,.25)" : "rgba(255,255,255,.08)"};margin-bottom:8px">
+            <div style="width:32px;height:32px;border-radius:50%;
+              background:${done ? "rgba(6,214,160,.2)" : "rgba(255,255,255,.05)"};
+              display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0">
+              ${done ? "✅" : tk.task_type === "follow" ? "👤" : tk.task_type === "retweet" ? "🔁" : tk.task_type === "like" ? "❤️" : "✔️"}
             </div>
-    
-            <p style="
-              color:rgba(255,255,255,.6);
-              margin-top:8px;
-              font-size:.85rem">
-    
-              Winner:
-              <strong>
-                ${
-                  winner?.username ? "@" + winner.username : fmt(winner?.wallet)
-                }
-              </strong>
-    
-            </p>
-    
+            <div style="flex:1;min-width:0">
+              <div style="font-size:.85rem;font-weight:600;${done ? "color:var(--green)" : ""}">${sanitizeText(tk.label)}</div>
+              ${done ? `<div style="font-size:.7rem;color:var(--green)">✓ Completed</div>` : ""}
+            </div>
             ${
-              myRank >= 0
-                ? `
-              <p style="
-                color:var(--muted);
-                font-size:.78rem;
-                margin-top:6px">
-    
-                You finished #${myRank + 1}
-    
-              </p>
-            `
+              !done && tk.action_url
+                ? `<a href="${sanitizeUrl(tk.action_url)}" target="_blank" rel="noopener noreferrer"
+                  onclick="markWlTaskDone(${id},${tk.id})"
+                  style="background:${tk.task_type === "follow" ? "#1da1f2" : tk.task_type === "like" ? "#ef476f" : "rgba(0,229,255,.12)"};
+                  color:#fff;padding:6px 14px;border-radius:20px;text-decoration:none;
+                  font-size:.75rem;font-weight:700;white-space:nowrap">
+                  ${sanitizeText(tk.action_text || "Complete")}
+                </a>`
                 : ""
             }
-    
           </div>`;
+          })
+          .join("");
+
+        actionHtml = `
+          <div style="background:rgba(88,101,242,.05);border:1px solid rgba(88,101,242,.2);
+            border-radius:14px;padding:18px;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+              <span style="font-size:1.3rem">🔐</span>
+              <div>
+                <div style="font-weight:700;color:#7289da;font-size:.9rem">
+                  Complete Tasks to Apply
+                </div>
+                <div style="font-size:.72rem;color:var(--muted);margin-top:2px">
+                  ${wlTasks.length} task${wlTasks.length !== 1 ? "s" : ""} required · Creator reviews all applications
+                </div>
+              </div>
+            </div>
+            ${
+              wlTasks.length === 0
+                ? `<div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
+                  border-radius:10px;padding:12px;text-align:center;font-size:.83rem;color:var(--green);margin-bottom:14px">
+                  ✅ No tasks required — you can apply directly!
+                </div>`
+                : taskRows
+            }
+            <div style="display:flex;gap:10px;margin-top:14px">
+              <button class="btn btn-primary" id="wlApplyBtn"
+                ${!allTasksDone && wlTasks.length > 0 ? "disabled" : ""}
+                onclick="applyToWlTournament(${id})"
+                style="flex:1;background:linear-gradient(135deg,#7289da,var(--purple));
+                  ${!allTasksDone && wlTasks.length > 0 ? "opacity:.4;cursor:not-allowed" : ""}">
+                📋 Apply to Join
+              </button>
+              ${
+                !allTasksDone && wlTasks.length > 0
+                  ? `<button class="btn btn-ghost" style="width:auto;padding:13px 16px"
+                    onclick="recheckWlTasks(${id})">
+                    🔄 Recheck Tasks
+                  </button>`
+                  : ""
+              }
+            </div>
+            ${
+              !allTasksDone && wlTasks.length > 0
+                ? `<p style="text-align:center;font-size:.72rem;color:var(--muted);margin-top:8px">
+                  Complete all ${wlTasks.length} task${wlTasks.length !== 1 ? "s" : ""} above to unlock the Apply button
+                </p>`
+                : ""
+            }
+          </div>`;
+      } else if (t.status === "open" && isFull) {
+        actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(239,71,111,.06);border:1px solid rgba(239,71,111,.2)">
+          <p style="color:var(--red);font-weight:600">🔴 Tournament Full</p>
+          <p style="color:var(--muted);font-size:.82rem;margin-top:4px">All spots have been filled.</p></div>`;
+      }
+
+      // ── Creator review panel (whitelist only) ─────────────────────────
+      if (isMyTournament && t.status === "open") {
+        actionHtml += `
+          <div style="margin-top:16px;padding:16px;background:rgba(255,209,102,.04);
+            border:1px solid rgba(255,209,102,.15);border-radius:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div>
+                <div style="font-size:.8rem;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:.5px">
+                  👑 Creator Panel
+                </div>
+                <div style="font-size:.72rem;color:var(--muted);margin-top:2px">
+                  Manage tasks and review applications
+                </div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button onclick="showWlTaskManager(${id})"
+                  style="background:rgba(0,229,255,.1);border:1px solid rgba(0,229,255,.25);
+                  color:var(--accent);padding:7px 14px;border-radius:8px;cursor:pointer;
+                  font-size:.78rem;font-weight:700">
+                  ⚙️ Manage Tasks
+                </button>
+                <button onclick="showApplicationsPanel(${id})"
+                  style="background:rgba(123,97,255,.15);border:1px solid rgba(123,97,255,.35);
+                  color:var(--purple);padding:7px 14px;border-radius:8px;cursor:pointer;
+                  font-size:.78rem;font-weight:700">
+                  📋 Review Applications
+                </button>
+              </div>
+            </div>
+            <div style="font-size:.75rem;color:var(--muted)">
+              Players: <strong style="color:var(--text)">${players.length}/${t.max_players}</strong> approved
+            </div>
+          </div>`;
+      }
+
+      // ══ PAID TOURNAMENT FLOW ══════════════════════════════════════════════
+    } else {
+      if (t.status === "open" && !isJoined && !isFull && userAddress) {
+        actionHtml = `<button class="btn btn-primary" onclick="joinTournament(${t.id})">
+          💰 Pay ${fee} ${t.token_symbol} & Enter Tournament</button>`;
+      } else if (t.status === "open" && isJoined) {
+        actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;
+          background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2)">
+          <p style="color:var(--accent);font-weight:600">✓ You are registered!</p>
+          <p style="color:var(--muted);font-size:.82rem;margin-top:4px">
+            Waiting for ${t.max_players - players.length} more players.
+          </p></div>`;
+      } else if (t.status === "active" && isJoined && !isEliminated) {
+        let roundStatus = { played: false, score: 0 };
+        try {
+          const rs = await fetch(
+            `${BACKEND}/tournaments/${t.id}/round-status?wallet=${myWallet}`,
+            { credentials: "include" },
+          );
+          roundStatus = await rs.json();
+        } catch (_) {}
+
+        actionHtml = roundStatus.played
+          ? `<div style="background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.3);
+              border-radius:12px;padding:16px;text-align:center">
+              <p style="color:var(--green);font-weight:700">✅ Round ${t.current_round} Submitted!</p>
+              <p style="color:var(--muted);font-size:.82rem;margin-top:4px">
+                Score: <strong style="color:var(--gold)">${roundStatus.score} pts</strong>
+              </p></div>`
+          : `<button class="btn btn-primary"
+              style="background:linear-gradient(135deg,var(--gold),var(--orange));padding:16px;font-size:1rem"
+              onclick="playTournamentRound(${t.id},${t.current_round})">
+              🎮 Play Round ${t.current_round} of ${t.rounds}!
+            </button>`;
+      } else if (t.status === "active" && isEliminated) {
+        actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;
+          background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.25)">
+          <p style="color:var(--red);font-weight:600">❌ Eliminated in Round ${t.current_round - 1}</p>
+        </div>`;
+      } else if (t.status === "finished") {
+        const myRank = players.findIndex(
+          (p) => p.wallet?.toLowerCase() === myWallet,
+        );
+        const splitPcts = [0.6, 0.25, 0.15];
+        const myPrize =
+          myRank >= 0 && myRank < 3
+            ? (parseFloat(pool2) * splitPcts[myRank]).toFixed(dp)
+            : null;
+        const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
+
+        // ✅ Check if player actually played before showing prize
+        let didPlay = false;
+        if (myWallet && isJoined) {
+          try {
+            const chk = await fetch(
+              `${BACKEND}/tournaments/${id}/round-status?wallet=${myWallet}`,
+              { credentials: "include" },
+            );
+            const chkData = await chk.json();
+            // If they have a score at all, they played
+            didPlay = chkData.score > 0 || chkData.played;
+          } catch (_) {}
+        }
+
+        if (!didPlay && isJoined && !isWL) {
+          // Registered but never played — show refund option
+          const refundCheck = me?.refunded;
+          actionHtml = refundCheck
+            ? `<div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
+                border-radius:12px;padding:16px;text-align:center">
+                <p style="color:var(--green);font-weight:600">✅ Entry Fee Refunded</p>
+                <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
+                  ${fee} ${t.token_symbol} was returned to your wallet.
+                </p></div>`
+            : `<div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
+                border-radius:12px;padding:18px;text-align:center">
+                <div style="font-size:1.5rem;margin-bottom:8px">😴</div>
+                <p style="color:var(--gold);font-weight:700;font-size:.95rem">You didn't play any rounds</p>
+                <p style="color:var(--muted);font-size:.8rem;margin-top:6px;margin-bottom:14px">
+                  You registered but didn't participate. You can claim your ${fee} ${t.token_symbol} entry fee back.
+                </p>
+                <button id="refundBtn" class="btn btn-primary"
+                  style="background:linear-gradient(135deg,var(--gold),var(--orange));width:auto;padding:12px 32px"
+                  onclick="claimTournamentRefund(${t.id},'${t.token_symbol}')">
+                  💸 Claim ${fee} ${t.token_symbol} Refund
+                </button></div>`;
+        } else if (
+          myPrize &&
+          parseFloat(myPrize) > 0 &&
+          userAddress &&
+          didPlay
+        ) {
+          let claimStatus = null;
+          try {
+            const cs = await fetch(
+              `${BACKEND}/tournaments/${t.id}/claim-status?wallet=${userAddress}`,
+              { credentials: "include" },
+            );
+            claimStatus = await cs.json();
+          } catch (_) {}
+
+          actionHtml =
+            claimStatus?.status === "paid"
+              ? `<div style="background:rgba(6,214,160,.08);border:2px solid rgba(6,214,160,.3);
+                border-radius:16px;padding:24px;text-align:center">
+                <div style="font-size:2rem;margin-bottom:8px">✅</div>
+                <h3 style="font-family:'Bebas Neue',sans-serif;font-size:1.3rem;color:var(--green);margin:0 0 6px">
+                  ${medals[myRank]} — PRIZE SENT!
+                </h3>
+                <div style="font-size:1.8rem;font-weight:700;color:var(--green);margin-bottom:6px">
+                  ${myPrize} ${t.token_symbol}
+                </div>
+                ${
+                  claimStatus.tx_hash
+                    ? `<div style="font-size:.72rem;background:var(--surface);border:1px solid var(--border);
+                      border-radius:8px;padding:8px 12px;word-break:break-all;color:var(--muted)">
+                      TX: ${claimStatus.tx_hash}</div>`
+                    : ""
+                }
+              </div>`
+              : `<div class="winner-banner" style="margin-bottom:16px">
+                <h3>${medals[myRank]} — YOU WON!</h3>
+                <div class="winner-prize" style="font-size:2rem">${myPrize} ${t.token_symbol}</div>
+                <button id="claimTourneyBtn" class="btn btn-gold"
+                  onclick="claimTournamentPrize(${t.id},'${t.token_symbol}')"
+                  style="margin-top:16px;width:auto;padding:14px 48px;font-size:1.1rem">
+                  💰 Claim ${myPrize} ${t.token_symbol}
+                </button></div>`;
+        } else {
+          const winner = players[0];
+          actionHtml = `<div class="winner-banner">
+            <h3>🏆 Tournament Complete!</h3>
+            <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
+            <p style="color:rgba(255,255,255,.6);margin-top:8px;font-size:.85rem">
+              Winner: <strong>${winner?.username ? "@" + winner.username : fmt(winner?.wallet)}</strong>
+            </p>
+            ${myRank >= 0 ? `<p style="color:var(--muted);font-size:.78rem;margin-top:6px">You finished #${myRank + 1}</p>` : ""}
+          </div>`;
+        }
       }
     }
 
-    const myCreatorId = (
-      currentProfile?.wallet ||
-      userAddress ||
-      ""
-    ).toLowerCase();
-    const isMyTournament = t.creator?.toLowerCase() === myCreatorId;
+    // ── Creator delete controls ───────────────────────────────────────────
     const canDelete =
-      isMyTournament &&
-      (t.status === "open" ||
-        t.status === "cancelled" ||
-        t.status === "finished");
-    const isExpired = t.deadline_at && new Date(t.deadline_at) < new Date();
-
+      isMyTournament && ["open", "cancelled", "finished"].includes(t.status);
     const creatorControlsHtml = canDelete
-      ? `
-  <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-    <div style="font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:10px">
-      👑 YOUR TOURNAMENT
-    </div>
-    ${
-      isExpired && t.status === "open"
-        ? `
-    <div style="background:rgba(239,71,111,.07);border:1px solid rgba(239,71,111,.2);
-      border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:.78rem;color:var(--muted)">
-      ⏰ Join period expired — this tournament is archived. You can delete it.
-    </div>`
-        : ""
-    }
-    <button onclick="deleteTournament(${t.id})"
-      style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);
-      color:var(--red);padding:10px 20px;border-radius:10px;cursor:pointer;
-      font-size:.8rem;font-weight:700;width:100%">
-      🗑️ Delete Tournament
-    </button>
-  </div>`
+      ? `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+          <button onclick="deleteTournament(${t.id})"
+            style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);
+            color:var(--red);padding:10px 20px;border-radius:10px;cursor:pointer;
+            font-size:.8rem;font-weight:700;width:100%">
+            🗑️ Delete Tournament
+          </button></div>`
       : "";
+
+    // ── Whitelist prize display (non-cash) ────────────────────────────────
+    const prizeDistHtml = isWL
+      ? `<div style="background:rgba(88,101,242,.05);border:1px solid rgba(88,101,242,.2);
+          border-radius:10px;padding:14px;margin-bottom:14px">
+          <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
+            🎁 Prizes
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div>🥇 <strong style="color:var(--gold)">${sanitizeText(t.prize_1_text || "1st Place")}</strong></div>
+            <div>🥈 <strong style="color:#ccc">${sanitizeText(t.prize_2_text || "2nd Place")}</strong></div>
+            <div>🥉 <strong style="color:#cd7f32">${sanitizeText(t.prize_3_text || "3rd Place")}</strong></div>
+          </div>
+          ${t.sponsor_name ? `<div style="margin-top:10px;font-size:.72rem;color:var(--muted)">Sponsored by <strong style="color:var(--accent)">${sanitizeText(t.sponsor_name)}</strong></div>` : ""}
+          ${
+            t.discord_invite
+              ? `<a href="${sanitizeUrl(t.discord_invite)}" target="_blank" rel="noopener noreferrer"
+            style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;background:rgba(88,101,242,.15);
+            color:#7289da;padding:6px 14px;border-radius:20px;font-size:.75rem;font-weight:700;text-decoration:none">
+            💬 Join Discord
+          </a>`
+              : ""
+          }
+        </div>`
+      : `<div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:14px;margin-bottom:14px">
+          <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Distribution</div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap">
+            <span>🥇 <strong style="color:var(--gold)">${prizes.first} ${t.token_symbol}</strong> (60%)</span>
+            <span>🥈 <strong style="color:#ccc">${prizes.second} ${t.token_symbol}</strong> (25%)</span>
+            <span>🥉 <strong style="color:#cd7f32">${prizes.third} ${t.token_symbol}</strong> (15%)</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:8px">Bottom half eliminated each round</div>
+        </div>`;
 
     document.getElementById("joinContent").innerHTML = `
       <div style="margin-bottom:16px">
         <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">
-          🏟️ ${sanitizeText(t.name)}</h2>
+          ${isWL ? "💬" : "🏟️"} ${sanitizeText(t.name)}</h2>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <span class="badge b-wait">${chainIcon} ${t.token_symbol}</span>
+          <span class="badge b-wait">${isWL ? "💬 WHITELIST" : chainIcon + " " + t.token_symbol}</span>
           <span class="cat-pill">${t.rounds} Rounds</span>
-          <span class="cat-pill">${t.max_players} Players</span>
+          <span class="cat-pill">${t.max_players} Players Max</span>
+          ${t.status === "active" ? `<span class="badge" style="color:var(--red);border-color:var(--red)">🔴 LIVE</span>` : ""}
         </div>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div>
-          <div style="font-size:.72rem;color:var(--muted)">Entry (${t.token_symbol})</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${isWL ? "FREE" : fee}</div>
+          <div style="font-size:.72rem;color:var(--muted)">Entry ${isWL ? "" : "(" + t.token_symbol + ")"}</div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool2}</div>
-          <div style="font-size:.72rem;color:var(--muted)">Prize Pool</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${isWL ? "—" : pool2}</div>
+          <div style="font-size:.72rem;color:var(--muted)">${isWL ? "Points Based" : "Prize Pool"}</div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
           <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${players.length}/${t.max_players}</div>
@@ -4975,15 +5303,7 @@ async function openTournament(id) {
         </div>
       </div>
 
-      <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:14px;margin-bottom:14px">
-        <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Distribution</div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap">
-          <span>🥇 <strong style="color:var(--gold)">${prizes.first} ${t.token_symbol}</strong> (60%)</span>
-          <span>🥈 <strong style="color:#ccc">${prizes.second} ${t.token_symbol}</strong> (25%)</span>
-          <span>🥉 <strong style="color:#cd7f32">${prizes.third} ${t.token_symbol}</strong> (15%)</span>
-        </div>
-        <div style="font-size:.72rem;color:var(--muted);margin-top:8px">Bottom half eliminated each round · Last players standing split prizes</div>
-      </div>
+      ${prizeDistHtml}
 
       <div style="margin-bottom:14px">
         <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Rounds</div>
@@ -4991,15 +5311,455 @@ async function openTournament(id) {
       </div>
 
       <div style="margin-bottom:14px">
-        <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Standings</div>
+        <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
+          Standings <span style="color:var(--accent);font-size:.68rem;margin-left:6px">${players.length} players</span>
+        </div>
         ${playerRows || '<p style="color:var(--muted);font-size:.83rem">No players yet</p>'}
       </div>
 
-      <div style="margin-top:14px">${actionHtml}</div>`;
+      <div style="margin-top:14px">${actionHtml}</div>
+      ${creatorControlsHtml}`;
 
     showScreen("screenJoin");
   } catch (e) {
     toast("Error: " + e.message, "error");
+  }
+}
+
+// ── Mark WL task done (for whitelist tournament tasks specifically) ────────
+async function markWlTaskDone(tournamentId, taskId) {
+  if (!userAddress) return;
+  try {
+    await fetch(`${BACKEND}/tournaments/${tournamentId}/wl-task-done`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress, taskId }),
+    });
+    // Update UI
+    const row = document.getElementById(`wlTask_${taskId}`);
+    if (row) {
+      row.style.background = "rgba(6,214,160,.06)";
+      row.style.border = "1px solid rgba(6,214,160,.25)";
+    }
+  } catch (_) {}
+}
+
+// ── Recheck WL tasks and re-enable apply button if all done ───────────────
+async function recheckWlTasks(tournamentId) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  try {
+    const res = await fetch(
+      `${BACKEND}/tournaments/${tournamentId}/wl-tasks?wallet=${userAddress}`,
+    );
+    const data = await res.json();
+    const tasks = data.tasks || [];
+    const done = new Set(data.completedIds || []);
+    const allDone = tasks.every((t) => done.has(t.id));
+    if (allDone) {
+      toast("✅ All tasks completed! You can now apply.", "success");
+      const btn = document.getElementById("wlApplyBtn");
+      if (btn) {
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        btn.style.cursor = "pointer";
+      }
+      // Refresh task rows
+      tasks.forEach((t) => {
+        const row = document.getElementById(`wlTask_${t.id}`);
+        if (row && done.has(t.id)) {
+          row.style.background = "rgba(6,214,160,.06)";
+          row.style.border = "1px solid rgba(6,214,160,.25)";
+        }
+      });
+    } else {
+      const remaining = tasks.filter((t) => !done.has(t.id)).length;
+      toast(
+        `${remaining} task${remaining > 1 ? "s" : ""} still pending. Complete them and try again.`,
+        "error",
+      );
+    }
+  } catch (_) {
+    toast("Could not check tasks. Try again.", "error");
+  }
+}
+
+// ── Apply to whitelist tournament ─────────────────────────────────────────
+async function applyToWlTournament(tournamentId) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const btn = document.getElementById("wlApplyBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Submitting...";
+  }
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.message || data.error || "Apply failed", "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "📋 Apply to Join";
+      }
+      return;
+    }
+    toast(
+      "✅ Application submitted! The creator will review it shortly.",
+      "success",
+    );
+    await openTournament(tournamentId);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "📋 Apply to Join";
+    }
+  }
+}
+
+// ── Creator: show WL task manager modal ───────────────────────────────────
+async function showWlTaskManager(tournamentId) {
+  let wlData = { tasks: [], completedIds: [] };
+  try {
+    const r = await fetch(`${BACKEND}/tournaments/${tournamentId}/wl-tasks`);
+    wlData = await r.json();
+  } catch (_) {}
+  const tasks = wlData.tasks || [];
+
+  const existing = document.getElementById("wlTaskMgrModal");
+  if (existing) existing.remove();
+  const modal = document.createElement("div");
+  modal.id = "wlTaskMgrModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:540px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div>
+          <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:2px;color:var(--gold)">
+            ⚙️ Manage Tasks
+          </h3>
+          <p style="font-size:.72rem;color:var(--muted);margin:4px 0 0">
+            Tasks applicants must complete before applying
+          </p>
+        </div>
+        <button onclick="document.getElementById('wlTaskMgrModal').remove()"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.3rem">✕</button>
+      </div>
+
+      <!-- Add task form -->
+      <div style="background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.15);
+        border-radius:12px;padding:14px;margin-bottom:16px">
+        <div style="font-size:.72rem;color:var(--gold);font-weight:700;text-transform:uppercase;
+          letter-spacing:.5px;margin-bottom:10px">➕ Add New Task</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <select id="wlTaskType" style="background:var(--surface);border:1px solid var(--border);
+            color:var(--text);padding:9px 12px;border-radius:8px;font-size:.84rem">
+            <option value="follow">👤 Follow on X</option>
+            <option value="retweet">🔁 Retweet Post</option>
+            <option value="like">❤️ Like Post</option>
+            <option value="discord">💬 Join Discord</option>
+            <option value="custom">✔️ Custom Task</option>
+          </select>
+          <input id="wlTaskBtnText" placeholder='Button text e.g. "Follow Now"'
+            style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+            padding:9px 12px;border-radius:8px;font-size:.84rem;box-sizing:border-box"/>
+        </div>
+        <input id="wlTaskLabel" placeholder="Task description e.g. Follow @TriviaFi on X"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+          padding:9px 12px;border-radius:8px;font-size:.84rem;width:100%;
+          box-sizing:border-box;margin-bottom:8px"/>
+        <input id="wlTaskUrl" placeholder="Action URL (https://x.com/...)"
+          style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+          padding:9px 12px;border-radius:8px;font-size:.84rem;width:100%;
+          box-sizing:border-box;margin-bottom:12px"/>
+        <button onclick="addWlTask(${tournamentId})"
+          style="background:linear-gradient(135deg,var(--gold),var(--orange));color:#000;
+          border:none;padding:9px 20px;border-radius:10px;cursor:pointer;
+          font-size:.84rem;font-weight:800">+ Add Task</button>
+      </div>
+
+      <!-- Task list -->
+      <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">
+        Tasks <span style="background:var(--surface);color:var(--accent);padding:1px 8px;border-radius:20px;margin-left:6px">${tasks.length}</span>
+      </div>
+      <div id="wlTaskList" style="overflow-y:auto;flex:1">
+        ${
+          tasks.length === 0
+            ? `<div style="text-align:center;padding:32px;color:var(--muted)">
+              <div style="font-size:2.5rem;margin-bottom:8px">📋</div>
+              <p>No tasks yet. Add tasks above that applicants must complete.</p>
+            </div>`
+            : tasks
+                .map(
+                  (tk) => `
+            <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;
+              border-radius:12px;background:var(--surface);border:1px solid var(--border);
+              margin-bottom:8px">
+              <div style="width:36px;height:36px;border-radius:10px;background:rgba(0,229,255,.06);
+                display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0">
+                ${tk.task_type === "follow" ? "👤" : tk.task_type === "retweet" ? "🔁" : tk.task_type === "like" ? "❤️" : tk.task_type === "discord" ? "💬" : "✔️"}
+              </div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:.86rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                  ${sanitizeText(tk.label)}
+                </div>
+                <div style="font-size:.7rem;color:var(--muted);margin-top:2px">
+                  ${
+                    tk.action_url
+                      ? `<a href="${sanitizeUrl(tk.action_url)}" target="_blank" style="color:var(--accent);text-decoration:none">${tk.action_url.slice(0, 40)}...</a>`
+                      : "No URL"
+                  }
+                </div>
+              </div>
+              <button onclick="deleteWlTask(${tournamentId},${tk.id})"
+                style="background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.2);
+                color:var(--red);padding:6px 12px;border-radius:8px;cursor:pointer;
+                font-size:.75rem;font-weight:700;flex-shrink:0">🗑</button>
+            </div>`,
+                )
+                .join("")
+        }
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function addWlTask(tournamentId) {
+  const type = document.getElementById("wlTaskType")?.value;
+  const label = document.getElementById("wlTaskLabel")?.value.trim();
+  const url = document.getElementById("wlTaskUrl")?.value.trim();
+  const btnText = document.getElementById("wlTaskBtnText")?.value.trim();
+  if (!label) return toast("Enter a task description", "error");
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/wl-tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        task_type: type,
+        label,
+        action_url: url,
+        action_text: btnText,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || "Failed", "error");
+    toast("✅ Task added!", "success");
+    document.getElementById("wlTaskMgrModal")?.remove();
+    setTimeout(() => showWlTaskManager(tournamentId), 200);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+  }
+}
+
+async function deleteWlTask(tournamentId, taskId) {
+  if (!confirm("Remove this task?")) return;
+  try {
+    await fetch(`${BACKEND}/tournaments/${tournamentId}/wl-tasks/${taskId}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    toast("Task removed", "info");
+    document.getElementById("wlTaskMgrModal")?.remove();
+    setTimeout(() => showWlTaskManager(tournamentId), 200);
+  } catch (_) {
+    toast("Failed", "error");
+  }
+}
+
+// ── Creator: show applications review panel ───────────────────────────────
+async function showApplicationsPanel(tournamentId) {
+  let apps = [];
+  try {
+    const res = await fetch(
+      `${BACKEND}/tournaments/${tournamentId}/applications`,
+      { credentials: "include" },
+    );
+    apps = await res.json();
+    if (!res.ok) return toast(apps.error || "Failed", "error");
+  } catch (_) {}
+
+  const pending = apps.filter((a) => a.status === "pending");
+  const approved = apps.filter((a) => a.status === "approved");
+  const rejected = apps.filter((a) => a.status === "rejected");
+
+  const existing = document.getElementById("wlAppsModal");
+  if (existing) existing.remove();
+  const modal = document.createElement("div");
+  modal.id = "wlAppsModal";
+  modal.className = "bet-modal-overlay";
+
+  const appRow = (a) => `
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;
+      border-radius:12px;background:var(--surface);border:1px solid var(--border);margin-bottom:8px">
+      <div style="width:34px;height:34px;border-radius:50%;background:rgba(0,229,255,.1);
+        display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;
+        flex-shrink:0;overflow:hidden">
+        ${
+          a.avatar
+            ? `<img src="${sanitizeUrl(a.avatar)}" style="width:100%;height:100%;object-fit:cover">`
+            : (a.username || a.wallet || "?")[0].toUpperCase()
+        }
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.86rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+          ${a.username ? "@" + a.username : fmt(a.wallet)}
+        </div>
+        <div style="font-size:.7rem;color:var(--muted);margin-top:2px">
+          ${parseInt(a.tasks_done)}/${parseInt(a.tasks_total)} tasks done ·
+          Applied ${new Date(a.applied_at).toLocaleDateString()}
+        </div>
+      </div>
+      ${
+        a.status === "pending"
+          ? `
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button onclick="reviewApp(${tournamentId},${a.id},'approved')"
+            style="background:rgba(6,214,160,.15);border:1px solid rgba(6,214,160,.3);
+            color:var(--green);padding:6px 14px;border-radius:8px;cursor:pointer;
+            font-size:.75rem;font-weight:700">✅ Approve</button>
+          <button onclick="reviewApp(${tournamentId},${a.id},'rejected')"
+            style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.25);
+            color:var(--red);padding:6px 14px;border-radius:8px;cursor:pointer;
+            font-size:.75rem;font-weight:700">❌ Reject</button>
+        </div>`
+          : `
+        <span style="font-size:.75rem;font-weight:700;color:${a.status === "approved" ? "var(--green)" : "var(--red)"}">
+          ${a.status === "approved" ? "✅ Approved" : "❌ Rejected"}
+        </span>`
+      }
+    </div>`;
+
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:560px;width:95%;max-height:88vh;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div>
+          <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:2px;color:var(--gold)">
+            📋 Applications
+          </h3>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:4px;display:flex;gap:12px">
+            <span style="color:var(--gold)">⏳ ${pending.length} pending</span>
+            <span style="color:var(--green)">✅ ${approved.length} approved</span>
+            <span style="color:var(--red)">❌ ${rejected.length} rejected</span>
+          </div>
+        </div>
+        <button onclick="document.getElementById('wlAppsModal').remove()"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.3rem">✕</button>
+      </div>
+
+      ${
+        pending.length > 0
+          ? `
+        <div style="font-size:.72rem;color:var(--gold);font-weight:700;text-transform:uppercase;
+          letter-spacing:.5px;margin-bottom:8px">⏳ Pending Review (${pending.length})</div>
+        ${pending.map(appRow).join("")}`
+          : ""
+      }
+
+      ${
+        approved.length > 0
+          ? `
+        <div style="font-size:.72rem;color:var(--green);font-weight:700;text-transform:uppercase;
+          letter-spacing:.5px;margin:12px 0 8px">✅ Approved (${approved.length})</div>
+        ${approved.map(appRow).join("")}`
+          : ""
+      }
+
+      ${
+        rejected.length > 0
+          ? `
+        <div style="font-size:.72rem;color:var(--red);font-weight:700;text-transform:uppercase;
+          letter-spacing:.5px;margin:12px 0 8px">❌ Rejected (${rejected.length})</div>
+        ${rejected.map(appRow).join("")}`
+          : ""
+      }
+
+      ${
+        apps.length === 0
+          ? `
+        <div style="text-align:center;padding:40px;color:var(--muted)">
+          <div style="font-size:2.5rem;margin-bottom:12px">📭</div>
+          <p>No applications yet. Share your tournament link!</p>
+        </div>`
+          : ""
+      }
+    </div>`;
+
+  document.body.appendChild(modal);
+}
+
+async function reviewApp(tournamentId, appId, decision) {
+  const btn = event.target;
+  btn.disabled = true;
+  btn.textContent = "⏳...";
+  try {
+    const res = await fetch(
+      `${BACKEND}/tournaments/${tournamentId}/applications/${appId}/review`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ decision }),
+      },
+    );
+    const data = await res.json();
+    if (!res.ok) return toast(data.error || "Failed", "error");
+    toast(
+      decision === "approved"
+        ? "✅ Player approved and added!"
+        : "❌ Application rejected.",
+      decision === "approved" ? "success" : "info",
+    );
+    document.getElementById("wlAppsModal")?.remove();
+    setTimeout(() => showApplicationsPanel(tournamentId), 300);
+    // Refresh the tournament view in background
+    loadTournaments();
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    btn.disabled = false;
+  }
+}
+
+// ── Tournament refund (for no-shows) ─────────────────────────────────────
+async function claimTournamentRefund(tournamentId, tokenSymbol) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const btn = document.getElementById("refundBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Processing refund...";
+  }
+  try {
+    const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/refund`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || "Refund failed", "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "💸 Claim Refund";
+      }
+      return;
+    }
+    toast(
+      `💸 ${data.amount} ${tokenSymbol} refunded to your wallet!`,
+      "success",
+    );
+    setTimeout(() => openTournament(tournamentId), 1500);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "💸 Claim Refund";
+    }
   }
 }
 

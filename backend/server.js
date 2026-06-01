@@ -240,6 +240,70 @@ async function initDB() {
       );
     `);
 
+    // ── GAME REFUNDS — tracks refunds sent to players who joined but never played ──
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS game_refunds (
+    id              SERIAL PRIMARY KEY,
+    game_id         INT NOT NULL,
+    chain_id        INT NOT NULL DEFAULT 5042002,
+    wallet          TEXT NOT NULL,
+    amount          NUMERIC(36,18) NOT NULL,
+    token_symbol    TEXT NOT NULL DEFAULT 'USDC',
+    tx_hash         TEXT,
+    status          TEXT DEFAULT 'pending',
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(game_id, chain_id, wallet)
+  );
+`);
+
+    // ── TOURNAMENT APPLICATIONS (whitelist approval system) ───────────────────
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS tournament_applications (
+    id            SERIAL PRIMARY KEY,
+    tournament_id INT REFERENCES tournaments(id) ON DELETE CASCADE,
+    wallet        TEXT NOT NULL,
+    user_id       INT REFERENCES users(id) ON DELETE CASCADE,
+    status        TEXT DEFAULT 'pending',
+    applied_at    TIMESTAMPTZ DEFAULT NOW(),
+    reviewed_at   TIMESTAMPTZ,
+    UNIQUE(tournament_id, wallet)
+  );
+`);
+
+    // ── WHITELIST TOURNAMENT TASKS (per-tournament, set by creator) ───────────
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tournament_wl_tasks (
+      id            SERIAL PRIMARY KEY,
+      tournament_id INT REFERENCES tournaments(id) ON DELETE CASCADE,
+      task_type     TEXT NOT NULL DEFAULT 'custom',
+      label         TEXT NOT NULL,
+      action_url    TEXT DEFAULT '',
+      action_text   TEXT DEFAULT 'Complete',
+      sort_order    INT DEFAULT 0,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+    // ── WHITELIST TASK COMPLETIONS (per wallet per task) ─────────────────────
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS tournament_wl_completions (
+    id            SERIAL PRIMARY KEY,
+    tournament_id INT REFERENCES tournaments(id) ON DELETE CASCADE,
+    task_id       INT REFERENCES tournament_wl_tasks(id) ON DELETE CASCADE,
+    wallet        TEXT NOT NULL,
+    completed_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tournament_id, task_id, wallet)
+  );
+`);
+
+    // ── TOURNAMENT REFUNDS ────────────────────────────────────────────────────
+    await pool.query(`
+  ALTER TABLE tournament_players
+    ADD COLUMN IF NOT EXISTS refunded      BOOLEAN     DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS refunded_at   TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS refund_tx     TEXT;
+`);
+
     // =========================================================================
     // GAME SESSIONS — drop and recreate constraint safely
     // =========================================================================
@@ -2775,6 +2839,223 @@ app.get("/admin/reconcile-volume", async (req, res) => {
   }
 });
 
+// ── GAME REFUND — for players who joined but never played ─────────────────
+// Conditions: game finished, player joined onchain, player never submitted score
+app.post("/games/:gameId/refund", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet, chainId: reqChainId } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+
+  const gameId = parseInt(req.params.gameId);
+  const chainId = parseInt(reqChainId || "5042002");
+  const isLitvm = chainId === 4441;
+  const walletLow = wallet.toLowerCase();
+
+  if (req.user.wallet && req.user.wallet.toLowerCase() !== walletLow)
+    return res.status(403).json({ error: "Wallet mismatch" });
+
+  try {
+    // ── 1. Check already refunded ─────────────────────────────────────
+    const existingRefund = await pool.query(
+      `SELECT * FROM game_refunds
+       WHERE game_id=$1 AND chain_id=$2 AND LOWER(wallet)=LOWER($3)`,
+      [gameId, chainId, wallet],
+    );
+    if (
+      existingRefund.rows.length > 0 &&
+      existingRefund.rows[0].status === "paid"
+    ) {
+      return res.status(400).json({ error: "Already refunded" });
+    }
+
+    // ── 2. Verify player joined onchain ───────────────────────────────
+    let joined = false,
+      alreadyFinishedOnchain = false;
+    try {
+      const retryFn = isLitvm ? withLitvmRetry : withRetry;
+      [joined, alreadyFinishedOnchain] = await retryFn(
+        (c) => c.getPlayerStatus(gameId, wallet),
+        "refund-playerStatus",
+      );
+    } catch (e) {
+      return res
+        .status(503)
+        .json({ error: "Blockchain unavailable. Try again." });
+    }
+
+    if (!joined)
+      return res
+        .status(400)
+        .json({ error: "You did not join this game onchain" });
+
+    // ── 3. Check game is finished or past deadline (not still open) ───
+    let gameStatus = null;
+    try {
+      const provider = isLitvm ? makeLitvmProvider() : makeProvider();
+      const contractAddr = isLitvm ? LITVM_CONTRACT_ADDRESS : CONTRACT_ADDRESS;
+      const statusContract = new ethers.Contract(
+        contractAddr,
+        [
+          "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
+        ],
+        provider,
+      );
+      const gameData = await Promise.race([
+        statusContract.getGame(gameId),
+        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 10000)),
+      ]);
+      gameStatus = Number(gameData.status);
+
+      // Only refund if game has ended (status=1) OR cancelled (status=2)
+      if (gameStatus === 0) {
+        const playDeadline = Number(gameData.playDeadline);
+        const now = Math.floor(Date.now() / 1000);
+        if (playDeadline > now) {
+          return res.status(400).json({
+            error:
+              "Game is still active. Wait for it to end before requesting a refund.",
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Could not fetch game status:", e.message);
+      // Continue — we still check DB for play status
+    }
+
+    // ── 4. Check player never actually played (no finished session) ───
+    const sessionCheck = await pool.query(
+      `SELECT id, finished, score
+       FROM game_sessions
+       WHERE user_id=$1 AND game_id=$2 AND chain_id=$3`,
+      [req.user.id, gameId, chainId],
+    );
+
+    const played =
+      sessionCheck.rows.length > 0 && sessionCheck.rows[0].finished;
+    if (played) {
+      return res.status(400).json({
+        error:
+          "You played this game — refunds are only for players who registered but never played.",
+      });
+    }
+
+    // Also check if they submitted a score onchain
+    if (alreadyFinishedOnchain) {
+      return res.status(400).json({
+        error:
+          "Your score was submitted onchain — you are not eligible for a refund.",
+      });
+    }
+
+    // ── 5. Look up entry fee from DB ──────────────────────────────────
+    const gameRow = await pool.query(
+      `SELECT entry_fee, token_symbol FROM games
+       WHERE contract_game_id=$1 AND chain_id=$2`,
+      [gameId, chainId],
+    );
+
+    if (!gameRow.rows.length) {
+      return res.status(400).json({
+        error: "Game not found in database. Contact support.",
+      });
+    }
+
+    const entryFee = parseFloat(gameRow.rows[0].entry_fee || 0);
+    const tokenSymbol =
+      gameRow.rows[0].token_symbol || (isLitvm ? "zkLTC" : "USDC");
+
+    if (entryFee <= 0) {
+      return res.status(400).json({ error: "No entry fee to refund." });
+    }
+
+    const decimals = isLitvm ? 18 : 6;
+    const amountWei = ethers.parseUnits(entryFee.toFixed(decimals), decimals);
+
+    // ── 6. Insert pending refund record (idempotent) ──────────────────
+    await pool.query(
+      `INSERT INTO game_refunds (game_id, chain_id, wallet, amount, token_symbol, status)
+       VALUES ($1,$2,LOWER($3),$4,$5,'pending')
+       ON CONFLICT (game_id, chain_id, wallet) DO UPDATE SET status='pending'`,
+      [gameId, chainId, wallet, entryFee, tokenSymbol],
+    );
+
+    // ── 7. Send refund from treasury ──────────────────────────────────
+    try {
+      let txHash;
+      if (isLitvm) {
+        const ws = verifierWallet.connect(makeLitvmProvider());
+        const tx = await ws.sendTransaction({
+          to: wallet,
+          value: amountWei,
+          gasLimit: 21000,
+        });
+        await tx.wait();
+        txHash = tx.hash;
+      } else {
+        const ARC_USDC = "0x3600000000000000000000000000000000000000";
+        const ws = verifierWallet.connect(makeProvider());
+        const uc = new ethers.Contract(
+          ARC_USDC,
+          ["function transfer(address,uint256) external returns (bool)"],
+          ws,
+        );
+        const tx = await uc.transfer(wallet, amountWei);
+        await tx.wait();
+        txHash = tx.hash;
+      }
+
+      // Mark paid
+      await pool.query(
+        `UPDATE game_refunds
+         SET status='paid', tx_hash=$1
+         WHERE game_id=$2 AND chain_id=$3 AND LOWER(wallet)=LOWER($4)`,
+        [txHash, gameId, chainId, wallet],
+      );
+
+      console.log(
+        `✅ Game refund: game=${gameId} chain=${chainId} wallet=${wallet} ` +
+          `amount=${entryFee} ${tokenSymbol} tx=${txHash}`,
+      );
+
+      return res.json({
+        ok: true,
+        refunded: true,
+        amount: entryFee,
+        tokenSymbol,
+        txHash,
+      });
+    } catch (payErr) {
+      console.error("Game refund tx failed:", payErr.message);
+      return res.status(500).json({
+        error:
+          "Refund transaction failed. Please try again or contact support.",
+        gameId,
+      });
+    }
+  } catch (e) {
+    console.error("Game refund error:", e.message);
+    res.status(500).json({ error: "Server error: " + e.message });
+  }
+});
+
+// ── CHECK refund status for a wallet + game ───────────────────────────────
+app.get("/games/:gameId/refund-status", async (req, res) => {
+  const { wallet, chainId } = req.query;
+  if (!wallet) return res.json({ status: null });
+  try {
+    const r = await pool.query(
+      `SELECT status, amount, tx_hash, token_symbol
+       FROM game_refunds
+       WHERE game_id=$1 AND chain_id=$2 AND LOWER(wallet)=LOWER($3)`,
+      [req.params.gameId, parseInt(chainId || "5042002"), wallet],
+    );
+    res.json(r.rows[0] || { status: null });
+  } catch (_) {
+    res.json({ status: null });
+  }
+});
+
 // ════════════════════════════════════════════════════════════════════
 // TOURNAMENT ROUTES — ORDER IS CRITICAL. Literals before :id params.
 // ════════════════════════════════════════════════════════════════════
@@ -3354,11 +3635,35 @@ app.post("/tournaments/:id/claim", async (req, res) => {
     if (tournament.status !== "finished")
       return res.status(400).json({ error: "Tournament not finished yet" });
 
+    // ✅ SECURITY: verify player actually submitted scores in at least one round
+    const playedCheck = await pool.query(
+      `SELECT COUNT(*) AS cnt
+       FROM tournament_scores
+       WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+      [req.params.id, wallet],
+    );
+    if (parseInt(playedCheck.rows[0].cnt) === 0) {
+      return res.status(400).json({
+        error: "no_play",
+        message:
+          "You registered but did not play any rounds. You can request a refund instead.",
+      });
+    }
+
+    // ✅ Only top-3 by score are prize winners
     const rankings = await pool.query(
-      `SELECT wallet, total_score FROM tournament_players
-       WHERE tournament_id=$1 ORDER BY total_score DESC LIMIT 3`,
+      `SELECT tp.wallet, tp.total_score
+       FROM tournament_players tp
+       WHERE tp.tournament_id=$1
+         AND EXISTS (
+           SELECT 1 FROM tournament_scores ts
+           WHERE ts.tournament_id=$1 AND LOWER(ts.wallet)=LOWER(tp.wallet)
+         )
+       ORDER BY tp.total_score DESC
+       LIMIT 3`,
       [req.params.id],
     );
+
     const myPos = rankings.rows.findIndex(
       (p) => p.wallet.toLowerCase() === wallet.toLowerCase(),
     );
@@ -3382,9 +3687,9 @@ app.post("/tournaments/:id/claim", async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO tournament_claims (tournament_id, wallet, amount, token_symbol, status)
+      `INSERT INTO tournament_claims (tournament_id,wallet,amount,token_symbol,status)
        VALUES ($1,$2,$3,$4,'pending')
-       ON CONFLICT (tournament_id, wallet) DO UPDATE SET status='pending'`,
+       ON CONFLICT (tournament_id,wallet) DO UPDATE SET status='pending'`,
       [
         req.params.id,
         wallet.toLowerCase(),
@@ -3417,16 +3722,18 @@ app.post("/tournaments/:id/claim", async (req, res) => {
         txHash = tx.hash;
       }
       await pool.query(
-        "UPDATE tournament_claims SET status='paid', tx_hash=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
+        `UPDATE tournament_claims SET status='paid', tx_hash=$1
+         WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)`,
         [txHash, req.params.id, wallet],
       );
       await pool.query(
-        "UPDATE tournament_players SET prize_position=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
+        `UPDATE tournament_players SET prize_position=$1
+         WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)`,
         [myPos, req.params.id, wallet],
       );
       await pool
         .query(
-          "UPDATE platform_stats SET tournament_volume = tournament_volume + $1 WHERE id=1",
+          `UPDATE platform_stats SET tournament_volume=tournament_volume+$1 WHERE id=1`,
           [prizeAmount],
         )
         .catch(() => {});
@@ -3447,6 +3754,420 @@ app.post("/tournaments/:id/claim", async (req, res) => {
         message: "Payout queued — funds arrive within 24h",
       });
     }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── REFUND for registered-but-never-played tournament players ─────────────
+app.post("/tournaments/:id/refund", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+
+    // Must be finished or cancelled — not open/active
+    if (tournament.status === "active")
+      return res.status(400).json({ error: "Tournament is still active" });
+    if (tournament.tournament_type === "whitelist")
+      return res
+        .status(400)
+        .json({ error: "Whitelist tournaments have no entry fee" });
+
+    // Check player is registered
+    const playerRow = await pool.query(
+      `SELECT * FROM tournament_players
+       WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+      [req.params.id, wallet],
+    );
+    if (!playerRow.rows.length)
+      return res
+        .status(404)
+        .json({ error: "You are not registered in this tournament" });
+
+    const player = playerRow.rows[0];
+    if (player.refunded)
+      return res.status(400).json({ error: "Already refunded" });
+
+    // ✅ Only refund if player never played any round
+    const scoresCheck = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM tournament_scores
+       WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+      [req.params.id, wallet],
+    );
+    if (parseInt(scoresCheck.rows[0].cnt) > 0) {
+      return res.status(400).json({
+        error: "You played at least one round — refunds are only for no-shows",
+      });
+    }
+
+    // Calculate refund = entry fee
+    const refundAmount = parseFloat(tournament.entry_fee);
+    if (refundAmount <= 0)
+      return res.status(400).json({ error: "No entry fee to refund" });
+
+    const isLitvm = tournament.token_symbol === "zkLTC";
+    const decimals = isLitvm ? 18 : 6;
+    const amountWei = ethers.parseUnits(
+      refundAmount.toFixed(decimals),
+      decimals,
+    );
+
+    try {
+      let txHash;
+      if (isLitvm) {
+        const ws = verifierWallet.connect(makeLitvmProvider());
+        const tx = await ws.sendTransaction({
+          to: wallet,
+          value: amountWei,
+          gasLimit: 21000,
+        });
+        await tx.wait();
+        txHash = tx.hash;
+      } else {
+        const ARC_USDC = "0x3600000000000000000000000000000000000000";
+        const ws = verifierWallet.connect(makeProvider());
+        const uc = new ethers.Contract(
+          ARC_USDC,
+          ["function transfer(address,uint256) external returns (bool)"],
+          ws,
+        );
+        const tx = await uc.transfer(wallet, amountWei);
+        await tx.wait();
+        txHash = tx.hash;
+      }
+      // Mark as refunded
+      await pool.query(
+        `UPDATE tournament_players
+         SET refunded=TRUE, refunded_at=NOW(), refund_tx=$1
+         WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)`,
+        [txHash, req.params.id, wallet],
+      );
+      return res.json({
+        ok: true,
+        refunded: true,
+        amount: refundAmount,
+        txHash,
+      });
+    } catch (payErr) {
+      console.error("Refund failed:", payErr.message);
+      return res.status(500).json({
+        error:
+          "Refund transaction failed. Contact support with tournament ID: " +
+          req.params.id,
+      });
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── WL TASKS: get tasks for a tournament ─────────────────────────────────
+app.get("/tournaments/:id/wl-tasks", async (req, res) => {
+  try {
+    const tasks = await pool.query(
+      "SELECT * FROM tournament_wl_tasks WHERE tournament_id=$1 ORDER BY sort_order,id",
+      [req.params.id],
+    );
+    // If wallet provided, also return which tasks they completed
+    const { wallet } = req.query;
+    let completedIds = [];
+    if (wallet && /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+      const done = await pool.query(
+        `SELECT task_id FROM tournament_wl_completions
+         WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+        [req.params.id, wallet],
+      );
+      completedIds = done.rows.map((r) => r.task_id);
+    }
+    res.json({ tasks: tasks.rows, completedIds });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── WL TASKS: creator adds a task ────────────────────────────────────────
+app.post("/tournaments/:id/wl-tasks", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (t.rows[0].creator.toLowerCase() !== creatorId)
+      return res.status(403).json({ error: "Only creator can add tasks" });
+
+    const { task_type, label, action_url, action_text } = req.body;
+    if (!label) return res.status(400).json({ error: "Label required" });
+
+    const cleanLabel = sanitizeHtml(label, {
+      allowedTags: [],
+      allowedAttributes: {},
+    });
+    const cleanUrl = sanitizeHtml(action_url || "", {
+      allowedTags: [],
+      allowedAttributes: {},
+    });
+    const cleanText = sanitizeHtml(action_text || "Complete", {
+      allowedTags: [],
+      allowedAttributes: {},
+    });
+
+    const r = await pool.query(
+      `INSERT INTO tournament_wl_tasks (tournament_id,task_type,label,action_url,action_text)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [req.params.id, task_type || "custom", cleanLabel, cleanUrl, cleanText],
+    );
+    res.json({ task: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── WL TASKS: creator deletes a task ─────────────────────────────────────
+app.delete("/tournaments/:id/wl-tasks/:taskId", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (t.rows[0].creator.toLowerCase() !== creatorId)
+      return res.status(403).json({ error: "Only creator can delete tasks" });
+    await pool.query(
+      "DELETE FROM tournament_wl_tasks WHERE id=$1 AND tournament_id=$2",
+      [req.params.taskId, req.params.id],
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── WL COMPLETIONS: mark a task done for applicant ───────────────────────
+app.post("/tournaments/:id/wl-task-done", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet, taskId } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  try {
+    await pool.query(
+      `INSERT INTO tournament_wl_completions (tournament_id,task_id,wallet)
+       VALUES ($1,$2,LOWER($3)) ON CONFLICT DO NOTHING`,
+      [req.params.id, taskId, wallet],
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── APPLICATIONS: user applies to whitelist tournament ───────────────────
+app.post("/tournaments/:id/apply", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    if (tournament.tournament_type !== "whitelist")
+      return res.status(400).json({ error: "Not a whitelist tournament" });
+    if (tournament.status !== "open")
+      return res.status(400).json({ error: "Tournament not open" });
+
+    // ✅ Check all required tasks are completed
+    const tasks = await pool.query(
+      "SELECT id FROM tournament_wl_tasks WHERE tournament_id=$1",
+      [req.params.id],
+    );
+    if (tasks.rows.length > 0) {
+      const done = await pool.query(
+        `SELECT task_id FROM tournament_wl_completions
+         WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+        [req.params.id, wallet],
+      );
+      const doneIds = new Set(done.rows.map((r) => r.task_id));
+      const missing = tasks.rows.filter((t) => !doneIds.has(t.id));
+      if (missing.length > 0) {
+        return res.status(400).json({
+          error: "Complete all tasks before applying",
+          missingCount: missing.length,
+        });
+      }
+    }
+
+    // Check not already applied
+    const existing = await pool.query(
+      "SELECT * FROM tournament_applications WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+      [req.params.id, wallet],
+    );
+    if (existing.rows.length > 0) {
+      const app = existing.rows[0];
+      if (app.status === "approved")
+        return res.status(400).json({ error: "Already approved and joined" });
+      if (app.status === "pending")
+        return res
+          .status(400)
+          .json({ error: "Application already pending review" });
+      if (app.status === "rejected")
+        return res.status(400).json({ error: "Your application was rejected" });
+    }
+
+    // Check capacity
+    const playerCount = await pool.query(
+      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+      [req.params.id],
+    );
+    if (parseInt(playerCount.rows[0].count) >= tournament.max_players)
+      return res.status(400).json({ error: "Tournament is full" });
+
+    await pool.query(
+      `INSERT INTO tournament_applications (tournament_id,wallet,user_id,status)
+       VALUES ($1,LOWER($2),$3,'pending')
+       ON CONFLICT (tournament_id,wallet) DO UPDATE SET status='pending',applied_at=NOW()`,
+      [req.params.id, wallet, req.user.id],
+    );
+    res.json({ ok: true, status: "pending" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── APPLICATIONS: get application status for a wallet ────────────────────
+app.get("/tournaments/:id/my-application", async (req, res) => {
+  const { wallet } = req.query;
+  if (!wallet) return res.json({ status: null });
+  try {
+    const r = await pool.query(
+      `SELECT status FROM tournament_applications
+       WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+      [req.params.id, wallet],
+    );
+    res.json({ status: r.rows[0]?.status || null });
+  } catch (e) {
+    res.json({ status: null });
+  }
+});
+
+// ── APPLICATIONS: creator gets all applications ───────────────────────────
+app.get("/tournaments/:id/applications", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (t.rows[0].creator.toLowerCase() !== creatorId && !isAdmin(req))
+      return res
+        .status(403)
+        .json({ error: "Only creator can view applications" });
+
+    const apps = await pool.query(
+      `SELECT a.*, u.username, u.avatar,
+        (SELECT COUNT(*) FROM tournament_wl_completions c
+         WHERE c.tournament_id=a.tournament_id AND LOWER(c.wallet)=LOWER(a.wallet)
+        ) AS tasks_done,
+        (SELECT COUNT(*) FROM tournament_wl_tasks tk WHERE tk.tournament_id=a.tournament_id
+        ) AS tasks_total
+       FROM tournament_applications a
+       LEFT JOIN users u ON u.id=a.user_id
+       WHERE a.tournament_id=$1
+       ORDER BY a.applied_at DESC`,
+      [req.params.id],
+    );
+    res.json(apps.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── APPLICATIONS: creator approves or rejects ─────────────────────────────
+app.post("/tournaments/:id/applications/:appId/review", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { decision } = req.body; // 'approved' or 'rejected'
+  if (!["approved", "rejected"].includes(decision))
+    return res.status(400).json({ error: "Invalid decision" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (tournament.creator.toLowerCase() !== creatorId && !isAdmin(req))
+      return res
+        .status(403)
+        .json({ error: "Only creator can review applications" });
+
+    const app = await pool.query(
+      "SELECT * FROM tournament_applications WHERE id=$1 AND tournament_id=$2",
+      [req.params.appId, req.params.id],
+    );
+    if (!app.rows.length)
+      return res.status(404).json({ error: "Application not found" });
+    if (app.rows[0].status !== "pending")
+      return res.status(400).json({ error: "Application already reviewed" });
+
+    // Check capacity before approving
+    if (decision === "approved") {
+      const playerCount = await pool.query(
+        "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+        [req.params.id],
+      );
+      if (parseInt(playerCount.rows[0].count) >= tournament.max_players)
+        return res
+          .status(400)
+          .json({ error: "Tournament is full — cannot approve more players" });
+    }
+
+    await pool.query(
+      `UPDATE tournament_applications
+       SET status=$1, reviewed_at=NOW(), reviewed_by=$2
+       WHERE id=$3`,
+      [decision, creatorId, req.params.appId],
+    );
+
+    // If approved → add to tournament_players
+    if (decision === "approved") {
+      const appRow = app.rows[0];
+      await pool.query(
+        `INSERT INTO tournament_players (tournament_id,wallet,user_id)
+         VALUES ($1,$2,$3) ON CONFLICT (tournament_id,wallet) DO NOTHING`,
+        [req.params.id, appRow.wallet, appRow.user_id],
+      );
+
+      // Auto-start if full
+      const newCount = await pool.query(
+        "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+        [req.params.id],
+      );
+      if (parseInt(newCount.rows[0].count) >= tournament.max_players) {
+        await pool.query(
+          "UPDATE tournaments SET status='active',started_at=NOW(),current_round=1 WHERE id=$1",
+          [req.params.id],
+        );
+        await pool.query(
+          `INSERT INTO tournament_rounds (tournament_id,round_number,status,started_at)
+           VALUES ($1,1,'active',NOW()) ON CONFLICT DO NOTHING`,
+          [req.params.id],
+        );
+      }
+    }
+
+    res.json({ ok: true, decision });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
