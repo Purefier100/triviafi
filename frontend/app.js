@@ -2846,7 +2846,23 @@ async function openGame(gameId, gameChainId) {
   ] = g;
   const s = Number(status),
     now = Math.floor(Date.now() / 1000);
+
+  // Need finished status BEFORE the s===1 branch so we can route a
+  // registered-but-never-played user to the read-only view, which has
+  // the "claim your entry fee" refund banner.
+  let finishedEarly = false;
+  if (userAddress) {
+    try {
+      const ps = await readContract.getPlayerStatus(gameId, userAddress);
+      finishedEarly = ps[1];
+    } catch (_) {}
+  }
+
   if (s === 1) {
+    if (!finishedEarly && !alreadySubmitted(gameId)) {
+      await openGameReadOnly(gameId, currentGameChainId);
+      return;
+    }
     showScreen("screenResults");
     await refreshResults();
     startAutoRefresh(gameId);
@@ -5138,18 +5154,7 @@ async function openTournament(id) {
         const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
 
         // ✅ Check if player actually played before showing prize
-        let didPlay = false;
-        if (myWallet && isJoined) {
-          try {
-            const chk = await fetch(
-              `${BACKEND}/tournaments/${id}/round-status?wallet=${myWallet}`,
-              { credentials: "include" },
-            );
-            const chkData = await chk.json();
-            // If they have a score at all, they played
-            didPlay = chkData.score > 0 || chkData.played;
-          } catch (_) {}
-        }
+        const didPlay = !!(me && Number(me.total_score) > 0);
 
         if (!didPlay && isJoined && !isWL) {
           // Registered but never played — show refund option
