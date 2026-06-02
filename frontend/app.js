@@ -99,6 +99,17 @@ function sanitizeText(str) {
   return d.innerHTML;
 }
 
+function goBackFromJoin() {
+  stopTournamentAutoRefresh();
+  if (window._joinScreenOrigin === "tournaments") {
+    showScreen("screenTournaments");
+    loadTournaments();
+  } else {
+    showScreen("screenLobby");
+    loadGames();
+  }
+}
+
 function renderAuthState() {
   const u = currentProfile,
     hasGoogle = !!(u && u.google_id),
@@ -976,6 +987,32 @@ function startAutoRefresh() {
   }, 10000);
 }
 
+let tournamentRefreshInterval = null;
+function startTournamentAutoRefresh(tournamentId) {
+  stopTournamentAutoRefresh();
+  tournamentRefreshInterval = setInterval(async () => {
+    // Only refresh if still viewing this tournament on the join screen
+    const active = document.querySelector(".screen.active")?.id;
+    if (active === "screenJoin" && currentTournamentId === tournamentId) {
+      // Don't refresh while a modal is open (would wipe user input)
+      const modalOpen = document.querySelector(".bet-modal-overlay");
+      if (!modalOpen) {
+        try {
+          await openTournament(tournamentId);
+        } catch (_) {}
+      }
+    } else {
+      stopTournamentAutoRefresh();
+    }
+  }, 8000);
+}
+function stopTournamentAutoRefresh() {
+  if (tournamentRefreshInterval) {
+    clearInterval(tournamentRefreshInterval);
+    tournamentRefreshInterval = null;
+  }
+}
+
 function stopAutoRefresh() {
   if (autoRefreshInterval) {
     clearInterval(autoRefreshInterval);
@@ -1230,6 +1267,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   setInterval(() => {
     const screen = document.querySelector(".screen.active");
     if (screen?.id === "screenLobby") loadGames();
+  }, 10000);
+  setInterval(() => {
+    const screen = document.querySelector(".screen.active");
+    if (screen?.id === "screenTournaments") loadTournaments();
   }, 10000);
 });
 
@@ -2645,6 +2686,7 @@ async function openGameReadOnly(gameId, gameChainId) {
           ? `<div style="margin-top:16px;padding:12px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2);border-radius:10px;text-align:center"><p style="color:var(--muted);font-size:.83rem">Connect wallet to join active games</p><button class="btn btn-primary" style="margin-top:10px;width:auto;padding:10px 24px" onclick="connectWallet()">🦊 Connect Wallet</button></div>`
           : ""
       }`;
+    window._joinScreenOrigin = "lobby";
     showScreen("screenJoin");
   } catch (e) {
     toast("Error loading game: " + e.message, "error");
@@ -3140,6 +3182,7 @@ async function openGame(gameId, gameChainId) {
       𝕏 Tweet
     </button>
   </div>${creatorHtml}`;
+  window._joinScreenOrigin = "lobby";
   showScreen("screenJoin");
   loadGameStatus(currentGameId);
   startAutoRefresh(gameId);
@@ -4437,10 +4480,12 @@ async function checkUnclaimedPrizes() {
             .getPlayerStatus(i, userAddress)
             .then(async (statusResult) => {
               const joined = statusResult[0];
-              const finished = statusResult[1];
+              const finished = statusResult[1]; // true = submitted score onchain
               const claimed = statusResult[2];
-              // Skip if not joined, or prize already claimed by this player
-              if (!joined || claimed) return null;
+              // Skip if not joined, already claimed, OR never submitted a score.
+              // A sole-entrant who never played can land in topPlayers but is
+              // NOT a real winner — requiring `finished` blocks that false claim.
+              if (!joined || claimed || !finished) return null;
               const g = await rc.getGame(i).catch(() => null);
               if (!g) return null;
               const status = Number(g.status ?? g[14]);
@@ -5411,7 +5456,9 @@ async function openTournament(id) {
       ${winnerContactHtml}
       ${creatorControlsHtml}`;
 
+    window._joinScreenOrigin = "tournaments";
     showScreen("screenJoin");
+    startTournamentAutoRefresh(id);
   } catch (e) {
     toast("Error: " + e.message, "error");
   }
