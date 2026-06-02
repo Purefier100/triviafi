@@ -5233,7 +5233,7 @@ async function openTournament(id) {
     const canDelete =
       isMyTournament && ["open", "cancelled", "finished"].includes(t.status);
     const winnerContactsBtn =
-      isMyTournament && t.status === "finished"
+      isWL && isMyTournament && t.status === "finished"
         ? `<button onclick="showWinnerContacts(${t.id})"
             style="background:rgba(29,161,242,.1);border:1px solid rgba(29,161,242,.3);
             color:#1da1f2;padding:10px 20px;border-radius:10px;cursor:pointer;
@@ -5292,8 +5292,9 @@ async function openTournament(id) {
         </div>`;
 
     // ── Winner contact: top-3 submit X handle so the host can reach them ──
+    // ── Winner contact: top-3 submit X handle (WHITELIST tournaments only) ──
     let winnerContactHtml = "";
-    if (t.status === "finished" && myWallet && isJoined) {
+    if (isWL && t.status === "finished" && myWallet && isJoined) {
       const top3 = players.slice(0, 3).map((p) => p.wallet?.toLowerCase());
       const myRank3 = top3.indexOf(myWallet);
       const myPlayer = players.find(
@@ -5776,38 +5777,6 @@ async function showApplicationsPanel(tournamentId) {
     </div>`;
 
   document.body.appendChild(modal);
-}
-
-async function reviewApp(tournamentId, appId, decision) {
-  const btn = event.target;
-  btn.disabled = true;
-  btn.textContent = "⏳...";
-  try {
-    const res = await fetch(
-      `${BACKEND}/tournaments/${tournamentId}/applications/${appId}/review`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ decision }),
-      },
-    );
-    const data = await res.json();
-    if (!res.ok) return toast(data.error || "Failed", "error");
-    toast(
-      decision === "approved"
-        ? "✅ Player approved and added!"
-        : "❌ Application rejected.",
-      decision === "approved" ? "success" : "info",
-    );
-    document.getElementById("wlAppsModal")?.remove();
-    setTimeout(() => showApplicationsPanel(tournamentId), 300);
-    // Refresh the tournament view in background
-    loadTournaments();
-  } catch (e) {
-    toast("Failed: " + e.message, "error");
-    btn.disabled = false;
-  }
 }
 
 async function reviewApp(tournamentId, appId, decision, btn) {
