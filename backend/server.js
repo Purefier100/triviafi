@@ -103,6 +103,17 @@ function calculateScore(serverAnswers, submittedAnswers) {
   return score;
 }
 
+// Accepts "@handle", "handle", or an x.com/twitter.com URL → returns clean handle or null
+function normalizeTwitter(input) {
+  if (!input) return null;
+  let s = String(input).trim();
+  const m = s.match(/(?:twitter\.com|x\.com)\/(@?[A-Za-z0-9_]{1,15})/i);
+  if (m) s = m[1];
+  s = s.replace(/^@/, "");
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(s)) return null;
+  return s;
+}
+
 const arcProvider = makeProvider();
 const arcContract = new ethers.Contract(
   CONTRACT_ADDRESS,
@@ -508,6 +519,19 @@ async function initDB() {
     status          TEXT DEFAULT 'pending',
     tx_hash         TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tournament_id, wallet)
+  );
+`);
+
+    // ── WINNER CONTACTS — top-3 submit their X/Twitter so the host can reach them ──
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS tournament_winner_contacts (
+    id            SERIAL PRIMARY KEY,
+    tournament_id INT REFERENCES tournaments(id) ON DELETE CASCADE,
+    wallet        TEXT NOT NULL,
+    position      INT,
+    twitter       TEXT,
+    submitted_at  TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(tournament_id, wallet)
   );
 `);
@@ -3366,6 +3390,104 @@ app.get("/tournaments/:id/claim-status", async (req, res) => {
   }
 });
 
+// ── WINNER CONTACT: top-3 winner submits their X handle ───────────────────
+app.post("/tournaments/:id/winner-contact", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { wallet, twitter } = req.body;
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  if (req.user.wallet && req.user.wallet.toLowerCase() !== wallet.toLowerCase())
+    return res.status(403).json({ error: "Wallet mismatch" });
+
+  const handle = normalizeTwitter(twitter);
+  if (!handle)
+    return res.status(400).json({ error: "Enter a valid X/Twitter handle" });
+
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    if (t.rows[0].status !== "finished")
+      return res.status(400).json({ error: "Tournament not finished yet" });
+
+    // ✅ Server-side verification: only genuine top-3 winners who PLAYED
+    const ranked = await pool.query(
+      `SELECT tp.wallet FROM tournament_players tp
+       WHERE tp.tournament_id=$1
+         AND EXISTS (
+           SELECT 1 FROM tournament_scores ts
+           WHERE ts.tournament_id=$1 AND LOWER(ts.wallet)=LOWER(tp.wallet)
+         )
+       ORDER BY tp.total_score DESC
+       LIMIT 3`,
+      [req.params.id],
+    );
+    const pos = ranked.rows.findIndex(
+      (r) => r.wallet.toLowerCase() === wallet.toLowerCase(),
+    );
+    if (pos < 0)
+      return res
+        .status(403)
+        .json({ error: "Only top-3 winners can submit contact info" });
+
+    await pool.query(
+      `INSERT INTO tournament_winner_contacts (tournament_id, wallet, position, twitter)
+       VALUES ($1, LOWER($2), $3, $4)
+       ON CONFLICT (tournament_id, wallet)
+       DO UPDATE SET twitter=EXCLUDED.twitter, position=EXCLUDED.position, submitted_at=NOW()`,
+      [req.params.id, wallet, pos, handle],
+    );
+    res.json({ ok: true, twitter: handle, position: pos });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── WINNER CONTACT: get own submission status ─────────────────────────────
+app.get("/tournaments/:id/winner-contact", async (req, res) => {
+  const { wallet } = req.query;
+  if (!wallet) return res.json({ twitter: null });
+  try {
+    const r = await pool.query(
+      `SELECT twitter, position FROM tournament_winner_contacts
+       WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+      [req.params.id, wallet],
+    );
+    res.json(r.rows[0] || { twitter: null });
+  } catch (_) {
+    res.json({ twitter: null });
+  }
+});
+
+// ── WINNER CONTACTS: creator views all submitted handles ──────────────────
+app.get("/tournaments/:id/winner-contacts", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      req.params.id,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+    if (t.rows[0].creator.toLowerCase() !== creatorId && !isAdmin(req))
+      return res
+        .status(403)
+        .json({ error: "Only the creator can view winner contacts" });
+
+    const c = await pool.query(
+      `SELECT wc.wallet, wc.position, wc.twitter, wc.submitted_at, u.username
+       FROM tournament_winner_contacts wc
+       LEFT JOIN users u ON LOWER(u.wallet)=LOWER(wc.wallet)
+       WHERE wc.tournament_id=$1
+       ORDER BY wc.position ASC`,
+      [req.params.id],
+    );
+    res.json(c.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 7. ROUND STATUS — before /:id
 app.get("/tournaments/:id/round-status", async (req, res) => {
   if (!req.user) return res.json({ played: false });
@@ -3627,67 +3749,78 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
         [round.id],
       );
 
-      const allRankings = await pool.query(
+      // Active players ranked best→worst. Deterministic tiebreak by join order.
+      const ranked = await pool.query(
         `SELECT wallet, total_score FROM tournament_players
          WHERE tournament_id=$1 AND NOT eliminated
-         ORDER BY total_score DESC`,
+         ORDER BY total_score DESC, joined_at ASC`,
         [req.params.id],
       );
-      const activeCount = allRankings.rows.length;
-      const isFinal =
-        tournament.current_round >= tournament.rounds || activeCount <= 3;
+      const activeCount = ranked.rows.length;
 
-      if (isFinal) {
-        const winner = allRankings.rows[0]?.wallet;
+      // ── FINAL: 2 or fewer remain — this round decides 1st & 2nd ──────────
+      if (activeCount <= 2) {
+        const winner = ranked.rows[0]?.wallet;
+        const runnerUp = ranked.rows[1]?.wallet;
         await pool.query(
           "UPDATE tournaments SET status='finished', finished_at=NOW(), winner=$1 WHERE id=$2",
           [winner, req.params.id],
         );
-        for (let i = 0; i < Math.min(3, allRankings.rows.length); i++) {
+        if (winner)
           await pool.query(
-            "UPDATE tournament_players SET prize_position=$1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
-            [i, req.params.id, allRankings.rows[i].wallet],
+            "UPDATE tournament_players SET prize_position=0 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+            [req.params.id, winner],
           );
-        }
+        if (runnerUp)
+          await pool.query(
+            "UPDATE tournament_players SET prize_position=1 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+            [req.params.id, runnerUp],
+          );
+        // 3rd place was assigned when the field dropped from 3→2 (below)
         return res.json({
           ok: true,
           score,
           roundFinished: true,
           tournamentFinished: true,
-          rankings: allRankings.rows,
           winner,
         });
-      } else {
-        const minKeep = 3;
-        const survivors = Math.max(minKeep, Math.ceil(activeCount / 2));
-        const toEliminate = allRankings.rows
-          .slice(survivors)
-          .map((p) => p.wallet);
-        if (toEliminate.length > 0) {
-          await pool.query(
-            "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND wallet=ANY($2)",
-            [req.params.id, toEliminate],
-          );
-        }
-        const nextRound = tournament.current_round + 1;
-        await pool.query(
-          "UPDATE tournaments SET current_round=$1 WHERE id=$2",
-          [nextRound, req.params.id],
-        );
-        await pool.query(
-          "INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at) VALUES ($1,$2,'active',NOW())",
-          [req.params.id, nextRound],
-        );
-        return res.json({
-          ok: true,
-          score,
-          roundFinished: true,
-          tournamentFinished: false,
-          nextRound,
-          eliminated: toEliminate,
-          survivors: allRankings.rows.slice(0, survivors).map((p) => p.wallet),
-        });
       }
+
+      // ── Otherwise eliminate exactly ONE — the lowest active scorer ───────
+      const loser = ranked.rows[ranked.rows.length - 1].wallet;
+      await pool.query(
+        "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+        [req.params.id, loser],
+      );
+
+      // If exactly 3 were active, the eliminated player takes 3rd place
+      if (activeCount === 3) {
+        await pool.query(
+          "UPDATE tournament_players SET prize_position=2 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+          [req.params.id, loser],
+        );
+      }
+
+      const nextRound = tournament.current_round + 1;
+      await pool.query("UPDATE tournaments SET current_round=$1 WHERE id=$2", [
+        nextRound,
+        req.params.id,
+      ]);
+      await pool.query(
+        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
+         VALUES ($1,$2,'active',NOW())
+         ON CONFLICT (tournament_id,round_number) DO NOTHING`,
+        [req.params.id, nextRound],
+      );
+
+      return res.json({
+        ok: true,
+        score,
+        roundFinished: true,
+        tournamentFinished: false,
+        nextRound,
+        eliminated: [loser],
+      });
     }
     res.json({ ok: true, score, roundFinished: false });
   } catch (e) {
@@ -4231,7 +4364,7 @@ app.post("/tournaments/:id/applications/:appId/review", async (req, res) => {
       );
       if (parseInt(newCount.rows[0].count) >= tournament.max_players) {
         await pool.query(
-          "UPDATE tournaments SET status='active',started_at=NOW(),current_round=1 WHERE id=$1",
+          "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1, rounds=GREATEST(2, max_players - 1) WHERE id=$1",
           [req.params.id],
         );
         await pool.query(

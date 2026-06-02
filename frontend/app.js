@@ -5229,18 +5229,34 @@ async function openTournament(id) {
       }
     }
 
-    // ── Creator delete controls ───────────────────────────────────────────
+    // ── Creator controls ──────────────────────────────────────────────────
     const canDelete =
       isMyTournament && ["open", "cancelled", "finished"].includes(t.status);
-    const creatorControlsHtml = canDelete
-      ? `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-          <button onclick="deleteTournament(${t.id})"
-            style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);
-            color:var(--red);padding:10px 20px;border-radius:10px;cursor:pointer;
-            font-size:.8rem;font-weight:700;width:100%">
-            🗑️ Delete Tournament
-          </button></div>`
-      : "";
+    const winnerContactsBtn =
+      isMyTournament && t.status === "finished"
+        ? `<button onclick="showWinnerContacts(${t.id})"
+            style="background:rgba(29,161,242,.1);border:1px solid rgba(29,161,242,.3);
+            color:#1da1f2;padding:10px 20px;border-radius:10px;cursor:pointer;
+            font-size:.8rem;font-weight:700;width:100%;margin-bottom:10px">
+            📇 View Winner Contacts
+          </button>`
+        : "";
+    const creatorControlsHtml =
+      winnerContactsBtn || canDelete
+        ? `<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+            ${winnerContactsBtn}
+            ${
+              canDelete
+                ? `<button onclick="deleteTournament(${t.id})"
+                  style="background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);
+                  color:var(--red);padding:10px 20px;border-radius:10px;cursor:pointer;
+                  font-size:.8rem;font-weight:700;width:100%">
+                  🗑️ Delete Tournament
+                </button>`
+                : ""
+            }
+          </div>`
+        : "";
 
     // ── Whitelist prize display (non-cash) ────────────────────────────────
     const prizeDistHtml = isWL
@@ -5274,6 +5290,75 @@ async function openTournament(id) {
           </div>
           <div style="font-size:.72rem;color:var(--muted);margin-top:8px">Bottom half eliminated each round</div>
         </div>`;
+
+    // ── Winner contact: top-3 submit X handle so the host can reach them ──
+    let winnerContactHtml = "";
+    if (t.status === "finished" && myWallet && isJoined) {
+      const top3 = players.slice(0, 3).map((p) => p.wallet?.toLowerCase());
+      const myRank3 = top3.indexOf(myWallet);
+      const myPlayer = players.find(
+        (p) => p.wallet?.toLowerCase() === myWallet,
+      );
+      const didPlayWin = myPlayer && Number(myPlayer.total_score) > 0;
+
+      if (myRank3 >= 0 && didPlayWin) {
+        let existing = { twitter: null };
+        try {
+          const r = await fetch(
+            `${BACKEND}/tournaments/${id}/winner-contact?wallet=${myWallet}`,
+            { credentials: "include" },
+          );
+          existing = await r.json();
+        } catch (_) {}
+
+        const medals3 = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
+        const myPts = myPlayer ? myPlayer.total_score : 0;
+
+        winnerContactHtml = existing.twitter
+          ? `<div style="background:rgba(29,161,242,.06);border:1px solid rgba(29,161,242,.25);
+              border-radius:12px;padding:16px;margin-top:14px">
+              <div style="font-size:.8rem;font-weight:700;color:#1da1f2;margin-bottom:6px">
+                ✅ Contact Submitted — ${medals3[myRank3]} · ${myPts} pts
+              </div>
+              <p style="font-size:.78rem;color:var(--muted);margin-bottom:10px">
+                The host can reach you at
+                <a href="https://x.com/${sanitizeText(existing.twitter)}" target="_blank"
+                  rel="noopener noreferrer" style="color:#1da1f2;text-decoration:none;font-weight:700">
+                  @${sanitizeText(existing.twitter)}</a>. You can update it below.
+              </p>
+              <div style="display:flex;gap:8px">
+                <input id="winnerTwitterInput" placeholder="@yourhandle"
+                  value="${sanitizeText(existing.twitter)}"
+                  style="flex:1;background:var(--surface);border:1px solid var(--border);
+                  color:var(--text);padding:10px 14px;border-radius:8px;font-size:.85rem;box-sizing:border-box"/>
+                <button id="winnerTwitterBtn" onclick="submitWinnerTwitter(${id})"
+                  style="background:#1da1f2;color:#fff;border:none;padding:10px 18px;
+                  border-radius:8px;font-weight:700;cursor:pointer;white-space:nowrap">
+                  Update
+                </button>
+              </div>
+            </div>`
+          : `<div style="background:rgba(29,161,242,.06);border:1px solid rgba(29,161,242,.25);
+              border-radius:12px;padding:16px;margin-top:14px">
+              <div style="font-size:.85rem;font-weight:700;color:#1da1f2;margin-bottom:4px">
+                🎉 You placed ${medals3[myRank3]} — ${myPts} pts!
+              </div>
+              <p style="font-size:.78rem;color:var(--muted);margin-bottom:10px">
+                Submit your X/Twitter handle so the host can contact you about your prize.
+              </p>
+              <div style="display:flex;gap:8px">
+                <input id="winnerTwitterInput" placeholder="@yourhandle or x.com/yourhandle"
+                  style="flex:1;background:var(--surface);border:1px solid var(--border);
+                  color:var(--text);padding:10px 14px;border-radius:8px;font-size:.85rem;box-sizing:border-box"/>
+                <button id="winnerTwitterBtn" onclick="submitWinnerTwitter(${id})"
+                  style="background:#1da1f2;color:#fff;border:none;padding:10px 18px;
+                  border-radius:8px;font-weight:700;cursor:pointer;white-space:nowrap">
+                  𝕏 Submit Handle
+                </button>
+              </div>
+            </div>`;
+      }
+    }
 
     document.getElementById("joinContent").innerHTML = `
       <div style="margin-bottom:16px">
@@ -5317,6 +5402,7 @@ async function openTournament(id) {
       </div>
 
       <div style="margin-top:14px">${actionHtml}</div>
+      ${winnerContactHtml}
       ${creatorControlsHtml}`;
 
     showScreen("screenJoin");
@@ -5759,6 +5845,123 @@ async function reviewApp(tournamentId, appId, decision, btn) {
       btn.textContent = decision === "approved" ? "✅ Approve" : "❌ Reject";
     }
   }
+}
+
+// ── Winner submits their X/Twitter handle ─────────────────────────────────
+async function submitWinnerTwitter(tournamentId) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const input = document.getElementById("winnerTwitterInput");
+  const val = input?.value?.trim();
+  if (!val) return toast("Enter your X/Twitter handle", "error");
+
+  const btn = document.getElementById("winnerTwitterBtn");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Submitting...";
+  }
+  try {
+    const res = await fetch(
+      `${BACKEND}/tournaments/${tournamentId}/winner-contact`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ wallet: userAddress, twitter: val }),
+      },
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || "Failed", "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "𝕏 Submit Handle";
+      }
+      return;
+    }
+    toast("✅ Contact submitted! The host can now reach you.", "success");
+    setTimeout(() => openTournament(tournamentId), 1200);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "𝕏 Submit Handle";
+    }
+  }
+}
+
+// ── Creator: view all winner contact handles ──────────────────────────────
+async function showWinnerContacts(tournamentId) {
+  let rows = [];
+  try {
+    const r = await fetch(
+      `${BACKEND}/tournaments/${tournamentId}/winner-contacts`,
+      { credentials: "include" },
+    );
+    rows = await r.json();
+    if (!r.ok) return toast(rows.error || "Failed", "error");
+  } catch (_) {
+    return toast("Failed to load winner contacts", "error");
+  }
+
+  const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
+  const existing = document.getElementById("winnerContactsModal");
+  if (existing) existing.remove();
+
+  const body =
+    rows.length === 0
+      ? `<div style="text-align:center;padding:40px;color:var(--muted)">
+          <div style="font-size:2.5rem;margin-bottom:12px">📭</div>
+          <p>No winners have submitted contact info yet.</p>
+          <p style="font-size:.75rem;margin-top:6px">
+            Winners see a submission form on the finished tournament page.
+          </p>
+        </div>`
+      : rows
+          .map(
+            (c) => `
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;
+          border-radius:12px;background:var(--surface);border:1px solid var(--border);margin-bottom:8px">
+          <span style="font-size:1.1rem;flex-shrink:0">${medals[c.position] || "🏅"}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.86rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              ${c.username ? "@" + sanitizeText(c.username) : fmt(c.wallet)}
+            </div>
+            <div style="font-size:.7rem;color:var(--muted);margin-top:2px;word-break:break-all">
+              ${fmt(c.wallet)}
+            </div>
+          </div>
+          <a href="https://x.com/${sanitizeText(c.twitter)}" target="_blank" rel="noopener noreferrer"
+            style="background:#1da1f2;color:#fff;padding:6px 14px;border-radius:8px;
+            text-decoration:none;font-size:.78rem;font-weight:700;white-space:nowrap;flex-shrink:0">
+            𝕏 @${sanitizeText(c.twitter)}
+          </a>
+        </div>`,
+          )
+          .join("");
+
+  const modal = document.createElement("div");
+  modal.id = "winnerContactsModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:520px;width:95%;max-height:85vh;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <div>
+          <h3 style="margin:0;font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:2px;color:var(--gold)">
+            📇 Winner Contacts
+          </h3>
+          <p style="font-size:.72rem;color:var(--muted);margin:4px 0 0">
+            Reach out to your winners to deliver their prizes
+          </p>
+        </div>
+        <button onclick="document.getElementById('winnerContactsModal').remove()"
+          style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.3rem">✕</button>
+      </div>
+      <div style="overflow-y:auto;flex:1">${body}</div>
+    </div>`;
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
 }
 
 // ── Tournament refund (for no-shows) ─────────────────────────────────────
