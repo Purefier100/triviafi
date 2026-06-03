@@ -4864,6 +4864,14 @@ function renderTournaments() {
       🥇 ${(parseFloat(pool2) * 0.6).toFixed(dp)} · 🥈 ${(parseFloat(pool2) * 0.25).toFixed(dp)} · 🥉 ${(parseFloat(pool2) * 0.15).toFixed(dp)} ${t.token_symbol}
     </div>`;
 
+      // ✅ Show the champion's name/wallet on finished tournament cards
+      const winnerLineHtml =
+        t.status === "finished" && t.winner
+          ? `<div style="font-size:.74rem;color:var(--gold);margin-top:6px;font-weight:700">
+          🏆 Winner: ${t.winner_username ? "@" + sanitizeText(t.winner_username) : fmt(t.winner)}
+        </div>`
+          : "";
+
       return `<div class="gcard" onclick="openTournament(${t.id})"
       style="${isLive ? "border-color:rgba(239,71,111,.5);box-shadow:0 0 20px rgba(239,71,111,.1)" : t.status === "finished" ? "opacity:.75" : ""}">
       <div class="gcard-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -4886,7 +4894,7 @@ function renderTournaments() {
       <div class="gmeta">👥 <strong>${t.player_count}/${t.max_players}</strong> joined
         ${t.status === "open" && !isFull ? `<span style="color:var(--green);font-size:.72rem;margin-left:6px">${spotsLeft} spot${spotsLeft > 1 ? "s" : ""} left</span>` : ""}
       </div>
-      ${prizeLineHtml}
+      ${prizeLineHtml} ${winnerLineHtml}
       ${isFull && t.status === "open" ? '<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:600">🔴 FULL — Starting soon</div>' : ""}
       ${timer && t.status === "open" ? `<div style="font-size:.7rem;color:var(--muted);margin-top:4px">⏰ ${timer}</div>` : ""}
       ${isLive ? `<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:700;animation:pulse 2s ease-in-out infinite">⚔️ Round ${t.current_round} in progress</div>` : ""}
@@ -4916,6 +4924,17 @@ async function openTournament(id) {
       ""
     ).toLowerCase();
     const isMyTournament = t.creator?.toLowerCase() === myCreatorId;
+
+    // ✅ Check admin status server-side (delete is admin-only)
+    let viewerIsAdmin = false;
+    if (userAddress) {
+      try {
+        const am = await fetch(`${BACKEND}/admin/me`, {
+          credentials: "include",
+        });
+        viewerIsAdmin = (await am.json()).isAdmin === true;
+      } catch (_) {}
+    }
 
     const prizes = {
       first: (parseFloat(pool2) * 0.6).toFixed(dp),
@@ -4986,11 +5005,20 @@ async function openTournament(id) {
         wlTasks.length === 0 || wlTasks.every((tk) => completedIds.has(tk.id));
 
       if (t.status === "finished") {
+        const champ = players[0];
         actionHtml = `<div class="winner-banner"><h3>🏆 Whitelist Battle Complete!</h3>
-          <p style="color:rgba(255,255,255,.7);margin-top:8px;font-size:.88rem">
-            Winners receive their prizes directly from the sponsor.<br>
-            Check Discord for prize distribution details.
-          </p></div>`;
+            ${
+              champ
+                ? `<p style="margin-top:8px;font-size:1rem">
+                    🥇 <strong>${champ.username ? "@" + sanitizeText(champ.username) : fmt(champ.wallet)}</strong>
+                    <span style="color:var(--gold)"> · ${champ.total_score} pts</span>
+                  </p>`
+                : ""
+            }
+            <p style="color:rgba(255,255,255,.7);margin-top:8px;font-size:.85rem">
+              Winners receive their prizes directly from the sponsor.<br>
+              Check Discord for prize distribution details.
+            </p></div>`;
       } else if (t.status === "active" && isJoined && !isEliminated) {
         let roundStatus = { played: false, score: 0 };
         try {
@@ -5274,20 +5302,21 @@ async function openTournament(id) {
         } else {
           const winner = players[0];
           actionHtml = `<div class="winner-banner">
-            <h3>🏆 Tournament Complete!</h3>
-            <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
-            <p style="color:rgba(255,255,255,.6);margin-top:8px;font-size:.85rem">
-              Winner: <strong>${winner?.username ? "@" + winner.username : fmt(winner?.wallet)}</strong>
-            </p>
-            ${myRank >= 0 ? `<p style="color:var(--muted);font-size:.78rem;margin-top:6px">You finished #${myRank + 1}</p>` : ""}
-          </div>`;
+                  <h3>🏆 Tournament Complete!</h3>
+                  <div class="winner-prize">${prizes.first} ${t.token_symbol}</div>
+                  <p style="color:rgba(255,255,255,.6);margin-top:8px;font-size:.85rem">
+                    Winner: <strong>${winner?.username ? "@" + winner.username : fmt(winner?.wallet)}</strong>
+                    ${winner ? `<span style="color:var(--gold)"> · ${winner.total_score} pts</span>` : ""}
+                  </p>
+                  ${myRank >= 0 ? `<p style="color:var(--muted);font-size:.78rem;margin-top:6px">You finished #${myRank + 1}</p>` : ""}
+                </div>`;
         }
       }
     }
 
     // ── Creator controls ──────────────────────────────────────────────────
     const canDelete =
-      isMyTournament && ["open", "cancelled", "finished"].includes(t.status);
+      viewerIsAdmin && ["open", "cancelled", "finished"].includes(t.status);
     const winnerContactsBtn =
       isWL && isMyTournament && t.status === "finished"
         ? `<button onclick="showWinnerContacts(${t.id})"

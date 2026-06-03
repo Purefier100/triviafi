@@ -3174,7 +3174,10 @@ app.get("/tournaments", async (req, res) => {
         (SELECT COUNT(*)
          FROM tournament_players tp
          WHERE tp.tournament_id = t.id
-        ) AS player_count
+        ) AS player_count,
+        (SELECT u.username FROM users u
+         WHERE LOWER(u.wallet) = LOWER(t.winner) LIMIT 1
+        ) AS winner_username
       FROM tournaments t
       WHERE t.status != 'cancelled'
       ORDER BY
@@ -3580,11 +3583,11 @@ app.delete("/tournaments/:id", async (req, res) => {
     ]);
     if (!t.rows.length) return res.status(404).json({ error: "Not found" });
     const tournament = t.rows[0];
-    const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
-    if (tournament.creator.toLowerCase() !== creatorId)
+    // ✅ Admin-only deletion — creators cannot delete (prevents abuse)
+    if (!isAdmin(req))
       return res
         .status(403)
-        .json({ error: "Only the creator can delete this tournament" });
+        .json({ error: "Only an admin can delete tournaments" });
     if (tournament.status === "active")
       return res
         .status(400)
