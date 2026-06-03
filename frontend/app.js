@@ -99,17 +99,6 @@ function sanitizeText(str) {
   return d.innerHTML;
 }
 
-function goBackFromJoin() {
-  stopTournamentAutoRefresh();
-  if (window._joinScreenOrigin === "tournaments") {
-    showScreen("screenTournaments");
-    loadTournaments();
-  } else {
-    showScreen("screenLobby");
-    loadGames();
-  }
-}
-
 function renderAuthState() {
   const u = currentProfile,
     hasGoogle = !!(u && u.google_id),
@@ -991,12 +980,9 @@ let tournamentRefreshInterval = null;
 function startTournamentAutoRefresh(tournamentId) {
   stopTournamentAutoRefresh();
   tournamentRefreshInterval = setInterval(async () => {
-    // Only refresh if still viewing this tournament on the join screen
     const active = document.querySelector(".screen.active")?.id;
     if (active === "screenJoin" && currentTournamentId === tournamentId) {
-      // Don't refresh while a modal is open (would wipe user input)
-      const modalOpen = document.querySelector(".bet-modal-overlay");
-      if (!modalOpen) {
+      if (!document.querySelector(".bet-modal-overlay")) {
         try {
           await openTournament(tournamentId);
         } catch (_) {}
@@ -1010,6 +996,17 @@ function stopTournamentAutoRefresh() {
   if (tournamentRefreshInterval) {
     clearInterval(tournamentRefreshInterval);
     tournamentRefreshInterval = null;
+  }
+}
+
+function goBackFromJoin() {
+  stopTournamentAutoRefresh();
+  if (window._joinScreenOrigin === "tournaments") {
+    showScreen("screenTournaments");
+    loadTournaments();
+  } else {
+    showScreen("screenLobby");
+    loadGames();
   }
 }
 
@@ -2401,6 +2398,7 @@ function renderGames() {
 }
 
 async function openGameReadOnly(gameId, gameChainId) {
+  window._joinScreenOrigin = "lobby";
   // ✅ Always set currentGameId and currentGameChainId
   currentGameId = gameId;
   currentGameChainId =
@@ -4926,16 +4924,24 @@ async function openTournament(id) {
     };
 
     // ── Player rows ──────────────────────────────────────────────────────
+    const fmtSecs = (s) => {
+      const n = parseInt(s) || 0;
+      if (n <= 0) return "";
+      const m = Math.floor(n / 60),
+        sec = n % 60;
+      return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+    };
     const playerRows = players
-      .map(
-        (p, i) => `
+      .map((p, i) => {
+        const t = fmtSecs(p.total_time);
+        return `
       <div class="lb-row" style="${p.eliminated ? "opacity:.4" : ""}">
         <span class="lb-rank">${["🥇", "🥈", "🥉"][i] || "#" + (i + 1)}</span>
         <span class="lb-addr">${p.username ? "@" + p.username : fmt(p.wallet)}${p.wallet?.toLowerCase() === myWallet ? " (you)" : ""}</span>
-        <span class="lb-score">${p.total_score} pts</span>
+        <span class="lb-score">${p.total_score} pts${t ? `<span style="display:block;font-size:.65rem;color:var(--muted);font-weight:400">⏱ ${t}</span>` : ""}</span>
         <span class="lb-tag ${p.eliminated ? "lb-wait" : "lb-done"}">${p.eliminated ? "Out" : "Active"}</span>
-      </div>`,
-      )
+      </div>`;
+      })
       .join("");
 
     const roundsHtml = rounds
@@ -5429,8 +5435,8 @@ async function openTournament(id) {
           <div style="font-size:.72rem;color:var(--muted)">Entry ${isWL ? "" : "(" + t.token_symbol + ")"}</div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
-          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${isWL ? "—" : pool2}</div>
-          <div style="font-size:.72rem;color:var(--muted)">${isWL ? "Points Based" : "Prize Pool"}</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${isWL ? (players[0]?.total_score ?? 0) + " pts" : pool2}</div>
+          <div style="font-size:.72rem;color:var(--muted)">${isWL ? "Top Score" : "Prize Pool"}</div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center">
           <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${players.length}/${t.max_players}</div>
@@ -6195,6 +6201,7 @@ function showTournamentQuiz(tournamentId, rawQ) {
   let qIdx = 0,
     tScore = 0,
     tAnswers = [];
+  const quizStartTime = Date.now();
   const modal = document.createElement("div");
   modal.id = "tournamentQuizModal";
   modal.className = "bet-modal-overlay";
@@ -6203,7 +6210,8 @@ function showTournamentQuiz(tournamentId, rawQ) {
   function renderQ() {
     if (qIdx >= rawQ.length) {
       modal.remove();
-      submitTournamentScore(tournamentId, tAnswers, tScore);
+      const timeTaken = Math.round((Date.now() - quizStartTime) / 1000);
+      submitTournamentScore(tournamentId, tAnswers, tScore, timeTaken);
       return;
     }
     const q = rawQ[qIdx];
@@ -6256,7 +6264,7 @@ function showTournamentQuiz(tournamentId, rawQ) {
   renderQ();
 }
 
-async function submitTournamentScore(tournamentId, answers, score) {
+async function submitTournamentScore(tournamentId, answers, score, timeTaken) {
   let csrfToken = "";
   try {
     const ct = await fetch(`${BACKEND}/csrf-token`, { credentials: "include" });
@@ -6267,7 +6275,7 @@ async function submitTournamentScore(tournamentId, answers, score) {
       method: "POST",
       headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
       credentials: "include",
-      body: JSON.stringify({ wallet: userAddress, answers }),
+      body: JSON.stringify({ wallet: userAddress, answers, timeTaken }),
     });
     const data = await res.json();
     if (!res.ok) return toast(data.error || "Submit failed", "error");

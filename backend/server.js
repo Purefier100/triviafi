@@ -445,6 +445,12 @@ async function initDB() {
         );
       `);
 
+    await pool
+      .query(
+        `ALTER TABLE tournament_scores ADD COLUMN IF NOT EXISTS time_taken INT DEFAULT 0`,
+      )
+      .catch(() => {});
+
     // =========================================================================
     // BETS
     // =========================================================================
@@ -3419,7 +3425,7 @@ app.post("/tournaments/:id/winner-contact", async (req, res) => {
            SELECT 1 FROM tournament_scores ts
            WHERE ts.tournament_id=$1 AND LOWER(ts.wallet)=LOWER(tp.wallet)
          )
-       ORDER BY tp.total_score DESC
+       ORDER BY tp.total_score DESC, tp.joined_at ASC
        LIMIT 3`,
       [req.params.id],
     );
@@ -3598,11 +3604,16 @@ app.get("/tournaments/:id", async (req, res) => {
     ]);
     if (!t.rows.length) return res.status(404).json({ error: "Not found" });
     const players = await pool.query(
-      `SELECT tp.*, u.username, u.avatar
+      `SELECT tp.*, u.username, u.avatar,
+              COALESCE(SUM(ts.time_taken), 0) AS total_time
        FROM tournament_players tp
        LEFT JOIN users u ON u.id = tp.user_id
+       LEFT JOIN tournament_scores ts
+         ON ts.tournament_id = tp.tournament_id
+        AND LOWER(ts.wallet) = LOWER(tp.wallet)
        WHERE tp.tournament_id=$1
-       ORDER BY tp.total_score DESC`,
+       GROUP BY tp.id, u.username, u.avatar
+       ORDER BY tp.total_score DESC, total_time ASC`,
       [req.params.id],
     );
     const rounds = await pool.query(
@@ -3680,7 +3691,7 @@ app.post("/tournaments/:id/join", async (req, res) => {
 // 12. SUBMIT round score
 app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const { wallet, answers } = req.body;
+  const { wallet, answers, timeTaken } = req.body;
   if (!wallet || !Array.isArray(answers))
     return res.status(400).json({ error: "Invalid input" });
   try {
@@ -3721,9 +3732,11 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
       1000,
     );
 
+    // Clamp time to a sane range (0–600s) to prevent manipulation
+    const cleanTime = Math.max(0, Math.min(600, parseInt(timeTaken) || 0));
     await pool.query(
-      "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score) VALUES ($1,$2,LOWER($3),$4)",
-      [req.params.id, round.id, wallet, score],
+      "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken) VALUES ($1,$2,LOWER($3),$4,$5)",
+      [req.params.id, round.id, wallet, score, cleanTime],
     );
     await pool.query(
       "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
@@ -3748,12 +3761,18 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
         "UPDATE tournament_rounds SET status='finished', finished_at=NOW() WHERE id=$1",
         [round.id],
       );
-
-      // Active players ranked best→worst. Deterministic tiebreak by join order.
+      // Rank: highest score wins; on a tie, fastest cumulative time wins;
+      // join order is the final fallback. Rewards skill over registration timing.
       const ranked = await pool.query(
-        `SELECT wallet, total_score FROM tournament_players
-         WHERE tournament_id=$1 AND NOT eliminated
-         ORDER BY total_score DESC, joined_at ASC`,
+        `SELECT tp.wallet, tp.total_score,
+                COALESCE(SUM(ts.time_taken), 0) AS total_time
+         FROM tournament_players tp
+         LEFT JOIN tournament_scores ts
+           ON ts.tournament_id = tp.tournament_id
+          AND LOWER(ts.wallet) = LOWER(tp.wallet)
+         WHERE tp.tournament_id=$1 AND NOT tp.eliminated
+         GROUP BY tp.wallet, tp.total_score, tp.joined_at
+         ORDER BY tp.total_score DESC, total_time ASC, tp.joined_at ASC`,
         [req.params.id],
       );
       const activeCount = ranked.rows.length;
@@ -3867,7 +3886,7 @@ app.post("/tournaments/:id/claim", async (req, res) => {
            SELECT 1 FROM tournament_scores ts
            WHERE ts.tournament_id=$1 AND LOWER(ts.wallet)=LOWER(tp.wallet)
          )
-       ORDER BY tp.total_score DESC
+       ORDER BY tp.total_score DESC, tp.joined_at ASC
        LIMIT 3`,
       [req.params.id],
     );
