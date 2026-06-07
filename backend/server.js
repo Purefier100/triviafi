@@ -3369,6 +3369,94 @@ app.get("/tournaments/leaderboard", async (req, res) => {
   }
 });
 
+// ── ADMIN: Force refund all players in an expired tournament ─────────────
+app.post("/admin/refund-expired-tournament", async (req, res) => {
+  if (req.headers["x-admin-key"] !== process.env.ADMIN_SECRET)
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { tournamentId } = req.body;
+  if (!tournamentId)
+    return res.status(400).json({ error: "Missing tournamentId" });
+
+  try {
+    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+      tournamentId,
+    ]);
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+    const tournament = t.rows[0];
+
+    if (tournament.tournament_type === "whitelist")
+      return res
+        .status(400)
+        .json({ error: "Whitelist tournaments have no entry fee" });
+
+    const refundAmount = parseFloat(tournament.entry_fee);
+    if (refundAmount <= 0)
+      return res.status(400).json({ error: "No entry fee to refund" });
+
+    // Mark tournament cancelled
+    await pool.query("UPDATE tournaments SET status='cancelled' WHERE id=$1", [
+      tournamentId,
+    ]);
+
+    // Get all unrefunded players
+    const players = await pool.query(
+      "SELECT * FROM tournament_players WHERE tournament_id=$1 AND NOT refunded",
+      [tournamentId],
+    );
+
+    const isLitvm = tournament.token_symbol === "zkLTC";
+    const decimals = isLitvm ? 18 : 6;
+    const amountWei = ethers.parseUnits(
+      refundAmount.toFixed(decimals),
+      decimals,
+    );
+    const results = [];
+
+    for (const p of players.rows) {
+      try {
+        let txHash;
+        if (isLitvm) {
+          const ws = verifierWallet.connect(makeLitvmProvider());
+          const tx = await ws.sendTransaction({
+            to: p.wallet,
+            value: amountWei,
+            gasLimit: 21000,
+          });
+          await tx.wait();
+          txHash = tx.hash;
+        } else {
+          const ARC_USDC = "0x3600000000000000000000000000000000000000";
+          const ws = verifierWallet.connect(makeProvider());
+          const uc = new ethers.Contract(
+            ARC_USDC,
+            ["function transfer(address,uint256) external returns (bool)"],
+            ws,
+          );
+          const tx = await uc.transfer(p.wallet, amountWei);
+          await tx.wait();
+          txHash = tx.hash;
+        }
+        await pool.query(
+          "UPDATE tournament_players SET refunded=TRUE, refunded_at=NOW(), refund_tx=$1 WHERE id=$2",
+          [txHash, p.id],
+        );
+        results.push({ wallet: p.wallet, txHash, status: "ok" });
+        console.log(
+          `✅ Refunded ${refundAmount} ${tournament.token_symbol} → ${p.wallet} | TX: ${txHash}`,
+        );
+      } catch (e) {
+        results.push({ wallet: p.wallet, error: e.message, status: "failed" });
+        console.error(`❌ Refund failed for ${p.wallet}: ${e.message}`);
+      }
+    }
+
+    res.json({ ok: true, refunded: results.length, results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 3. STATS — MUST be before /:id
 app.get("/tournaments/stats", async (req, res) => {
   try {

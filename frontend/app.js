@@ -2775,74 +2775,73 @@ async function claimGameRefund(gameId, chainId) {
 }
 
 async function openGame(gameId, gameChainId) {
-  // ✅ FIX: prevent double-calls and hanging network check
+  // ✅ Prevent double-calls
   if (window._openingGame) return;
   window._openingGame = true;
-  try {
-    await _openGame(gameId, gameChainId);
-  } finally {
-    window._openingGame = false;
-  }
-  const targetChainId =
-    gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
-  currentGameChainId = targetChainId;
 
-  let userChainId = null;
   try {
-    if (provider) {
-      const network = await Promise.race([
-        provider.getNetwork(),
-        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 3000)),
-      ]);
-      userChainId = Number(network.chainId);
-    }
-  } catch (_) {
-    userChainId = null;
-  }
-  if (userAddress && userChainId && userChainId !== targetChainId) {
-    toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
+    const targetChainId =
+      gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+    currentGameChainId = targetChainId;
+
+    // ✅ Timeout-guarded network check — prevents hanging
+    let userChainId = null;
     try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
-      });
-    } catch (e) {
-      if (e.code === 4902) {
-        try {
-          await window.ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: NETWORKS[targetChainId].hexChainId,
-                ...NETWORKS[targetChainId].addParams,
-              },
-            ],
-          });
-        } catch (_) {}
+      if (provider) {
+        const network = await Promise.race([
+          provider.getNetwork(),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 3000),
+          ),
+        ]);
+        userChainId = Number(network.chainId);
       }
+    } catch (_) {
+      userChainId = null;
     }
-    // ✅ Always rebuild after switch — wait for provider to reflect new chain
-    await new Promise((r) => setTimeout(r, 500));
-    activeNet = NETWORKS[targetChainId];
-    CONTRACT_ADDRESS = activeNet.contractAddress;
-    USDC_ADDRESS = activeNet.tokenAddress;
-    provider = new ethers.BrowserProvider(window.ethereum);
-    signer = await provider.getSigner();
-    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    if (!activeNet.isNative) {
-      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-    } else {
-      usdcContract = null;
-    }
-    readProvider = await createProvider(targetChainId);
-    readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
-    updateNetBar();
-    toast(`✅ Switched to ${activeNet.name}`, "success");
-  }
 
-  // ── Rebuild readContract for the target chain (always, even if no switch needed) ──
-  const targetNet = NETWORKS[targetChainId];
-  {
+    if (userAddress && userChainId && userChainId !== targetChainId) {
+      toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
+        });
+      } catch (e) {
+        if (e.code === 4902) {
+          try {
+            await window.ethereum.request({
+              method: "wallet_addEthereumChain",
+              params: [
+                {
+                  chainId: NETWORKS[targetChainId].hexChainId,
+                  ...NETWORKS[targetChainId].addParams,
+                },
+              ],
+            });
+          } catch (_) {}
+        }
+      }
+      await new Promise((r) => setTimeout(r, 500));
+      activeNet = NETWORKS[targetChainId];
+      CONTRACT_ADDRESS = activeNet.contractAddress;
+      USDC_ADDRESS = activeNet.tokenAddress;
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      if (!activeNet.isNative) {
+        usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+      } else {
+        usdcContract = null;
+      }
+      readProvider = await createProvider(targetChainId);
+      readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
+      updateNetBar();
+      toast(`✅ Switched to ${activeNet.name}`, "success");
+    }
+
+    // ── Always rebuild readContract for target chain ──────────────────
+    const targetNet = NETWORKS[targetChainId];
     const rpcs2 =
       targetChainId === 4441
         ? ["https://liteforge.rpc.caldera.xyz/http"]
@@ -2867,387 +2866,268 @@ async function openGame(gameId, gameChainId) {
       ABI,
       tempProvider2,
     );
-  }
 
-  if (!userAddress) {
-    try {
-      await openGameReadOnly(gameId, targetChainId);
-    } catch (_) {
-      toast("Connect wallet first", "error");
-    }
-    return;
-  }
-
-  currentGameId = gameId;
-  const g = await getGame(gameId);
-  if (!g) {
-    toast("Could not load game. Try again.", "error");
-    return;
-  }
-  currentGame = g;
-
-  const [
-    ,
-    ,
-    ,
-    ,
-    ,
-    difficulty,
-    entryFee,
-    maxPlayers,
-    prizePool,
-    playerCount,
-    regEnd,
-    playDeadline,
-    topPlayers,
-    ,
-    status,
-    finishedCount,
-  ] = g;
-
-  const s = Number(status),
-    now = Math.floor(Date.now() / 1000);
-
-  // ── Fetch finishedEarly BEFORE any status branch so all branches can use it ──
-  let finishedEarly = false;
-  if (userAddress) {
-    try {
-      const ps = await readContract.getPlayerStatus(gameId, userAddress);
-      finishedEarly = ps[1]; // true = submitted score onchain
-    } catch (_) {}
-  }
-
-  // ── Also check server-side played status ──
-  let serverPlayed = false;
-  try {
-    const chk = await fetch(
-      `${BACKEND}/game/status/${currentGameId}?chainId=${targetChainId}`,
-      { credentials: "include" },
-    );
-    const chkData = await chk.json();
-    if (chkData.finished || chkData.played) {
-      serverPlayed = true;
-      markSubmitted(currentGameId);
-    }
-  } catch (_) {}
-
-  if (s === 1) {
-    // Game ended
-    if (!finishedEarly && !alreadySubmitted(gameId) && !serverPlayed) {
-      // Registered but never played — show refund option via read-only view
-      await openGameReadOnly(gameId, currentGameChainId);
+    if (!userAddress) {
+      try {
+        await openGameReadOnly(gameId, targetChainId);
+      } catch (_) {
+        toast("Connect wallet first", "error");
+      }
       return;
     }
-    showScreen("screenResults");
-    score = loadSavedScore(gameId);
-    document.getElementById("resScore").textContent = score || "—";
-    document.getElementById("resIcon").textContent =
-      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById("resSub").textContent =
-      `Game finished · ${score} pts`;
-    document.getElementById("submitSection").style.display = "none";
-    await refreshResults();
-    startAutoRefresh(gameId);
-    return;
-  }
 
-  if (s === 2) {
-    openGameReadOnly(gameId, currentGameChainId);
-    return;
-  }
-  if (userAddress) {
-    try {
-      const ps = await readContract.getPlayerStatus(gameId, userAddress);
-      finishedEarly = ps[1];
-    } catch (_) {}
-  }
-
-  if (s === 1) {
-    if (!finishedEarly && !alreadySubmitted(gameId)) {
-      await openGameReadOnly(gameId, currentGameChainId);
+    currentGameId = gameId;
+    const g = await getGame(gameId);
+    if (!g) {
+      toast("Could not load game. Try again.", "error");
       return;
     }
-    showScreen("screenResults");
-    await refreshResults();
-    startAutoRefresh(gameId);
-    return;
-  }
-  if (s === 2) {
-    openGameReadOnly(gameId);
-    return;
-  }
-  if (!g) {
-    toast("Could not load game data", "error");
-    return;
-  }
-  const [joined, finished] = await readContract.getPlayerStatus(
-    gameId,
-    userAddress,
-  );
+    currentGame = g;
 
-  if (finished || alreadySubmitted(gameId)) {
-    showScreen("screenResults");
-    score = loadSavedScore(gameId);
-    document.getElementById("resScore").textContent = score || "—";
-    document.getElementById("resIcon").textContent =
-      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById("resSub").textContent =
-      `You already played this game · ${score} pts`;
-    document.getElementById("submitSection").style.display =
-      score > 0 ? "block" : "none";
-    await refreshResults();
-    startAutoRefresh(gameId);
-    return;
-  }
-  // Server-authoritative check — localStorage can be cleared
-  try {
-    const chk = await fetch(
-      `${BACKEND}/game/status/${currentGameId}?chainId=${parseInt(
-        activeNet.hexChainId,
-        16,
-      )}`,
-      {
-        credentials: "include",
-      },
-    );
-    const chkData = await chk.json();
-    if (chkData.finished) {
-      markSubmitted(gameId); // re-sync localStorage
-    }
-  } catch (_) {}
-
-  if (alreadySubmitted(gameId) && s === 0) {
-    showScreen("screenResults");
-    score = loadSavedScore(gameId);
-    document.getElementById("resScore").textContent = score;
-    document.getElementById("resIcon").textContent =
-      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById("resSub").textContent =
-      `Score locked in · ${score} pts`;
-    document.getElementById("submitSection").style.display = "none";
-    await refreshResults();
-    startAutoRefresh(gameId);
-    return;
-  }
-  const gameNet = NETWORKS[currentGameChainId] || activeNet;
-  const gameDecimals = gameNet.decimals;
-  const gameSymbol = gameNet.symbol;
-  const dp = gameDecimals === 18 ? 4 : 2;
-  const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(
-    dp,
-  );
-  const pool = parseFloat(ethers.formatUnits(prizePool, gameDecimals)).toFixed(
-    dp,
-  );
-  const n = Number(playerCount);
-  const regSecs = Number(regEnd) - now,
-    playSecs = Number(playDeadline) - now;
-  const inRegPhase = regSecs > 0,
-    inPlayPhase = !inRegPhase && playSecs > 0;
-  const dist = parseFloat(pool) * 0.95;
-  let breakdownHtml = "";
-  if (n === 0)
-    breakdownHtml = `<p style="color:var(--muted);font-size:.82rem">No players yet. Entry fee: ${fee} ${gameSymbol}</p>`;
-  else if (n === 1)
-    breakdownHtml = `<div>🥇 <strong style="color:var(--gold)">${dist.toFixed(
-      2,
-    )} ${gameSymbol}</strong> (solo wins all)</div>`;
-  else if (n === 2)
-    breakdownHtml = `<div style="display:flex;gap:14px"><span>🥇 <strong style="color:var(--gold)">${(
-      dist * 0.7
-    ).toFixed(2)}</strong></span><span>🥈 <strong style="color:#ccc">${(
-      dist * 0.3
-    ).toFixed(
-      2,
-    )}</strong></span><span style="color:var(--muted)">${gameSymbol}</span></div>`;
-  else
-    breakdownHtml = `<div style="display:flex;gap:12px;flex-wrap:wrap"><span>🥇 <strong style="color:var(--gold)">${(
-      dist * 0.6
-    ).toFixed(2)}</strong></span><span>🥈 <strong style="color:#ccc">${(
-      dist * 0.25
-    ).toFixed(2)}</strong></span><span>🥉 <strong style="color:#cd7f32">${(
-      dist * 0.15
-    ).toFixed(
-      2,
-    )}</strong></span><span style="color:var(--muted)">${gameSymbol}</span>
-    </div>`;
-  const players = await readContract.getPlayers(gameId);
-  const betsHtml = await showPredictionBets(gameId, players);
-  const playerRows =
-    players.length === 0
-      ? `<p style="color:var(--muted);font-size:.83rem">No players yet!</p>`
-      : players
-          .map(
-            (p, i) =>
-              `<div class="lb-row" style="margin-bottom:5px"><span class="lb-rank">#${
-                i + 1
-              }</span><span class="lb-addr">${fmt(p)}${
-                p.toLowerCase() === userAddress.toLowerCase() ? " (you)" : ""
-              }</span><span style="font-size:.73rem;color:var(--muted)">${
-                p.toLowerCase() === creator.toLowerCase() ? "👑" : ""
-              }</span></div>`,
-          )
-          .join("");
-  let actionHtml = "";
-  if (inRegPhase && !joined && n < Number(maxPlayers))
-    actionHtml = `<button class="btn btn-primary" onclick="doJoin()">💰 Pay ${fee} ${
-      activeNet.symbol
-    } & Reserve Spot</button><p style="text-align:center;color:var(--muted);font-size:.77rem;margin-top:8px">${fmtTime(
-      regSecs,
-    )} left to join</p>`;
-  else if (inRegPhase && joined)
-    actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2)"><p style="color:var(--accent);font-weight:600">✓ You are registered!</p><p style="color:var(--muted);font-size:.82rem;margin-top:4px">Game starts in <span class="countdown" data-deadline="${Number(
+    const [
+      ,
+      name,
+      creator,
+      ,
+      catName,
+      difficulty,
+      entryFee,
+      maxPlayers,
+      prizePool,
+      playerCount,
       regEnd,
-    )}" data-prefix="" data-expiredtext="now!">${fmtTime(
-      regSecs,
-    )}</span></p></div>`;
-  else if (inPlayPhase && joined && !finished) {
-    // ✅ Check server-side if already played
-    let serverPlayed = false;
+      playDeadline,
+      topPlayers,
+      ,
+      status,
+      finishedCount,
+    ] = g;
 
+    const s = Number(status),
+      now = Math.floor(Date.now() / 1000);
+
+    // Fetch onchain + server play status before any branch
+    let finishedEarly = false;
+    if (userAddress) {
+      try {
+        const ps = await readContract.getPlayerStatus(gameId, userAddress);
+        finishedEarly = ps[1];
+      } catch (_) {}
+    }
+
+    let serverPlayed = false;
     try {
       const chk = await fetch(
-        `${BACKEND}/game/status/${currentGameId}?chainId=${currentGameChainId || 5042002}`,
+        `${BACKEND}/game/status/${currentGameId}?chainId=${targetChainId}`,
         { credentials: "include" },
       );
-
       const chkData = await chk.json();
-
       if (chkData.finished || chkData.played) {
         serverPlayed = true;
-
         markSubmitted(currentGameId);
-
-        saveScore(currentGameId, loadSavedScore(currentGameId) || 0);
       }
     } catch (_) {}
 
-    if (alreadySubmitted(currentGameId) || serverPlayed) {
-      actionHtml = `
-      <div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)">
-        <p style="color:var(--green);font-weight:600">
-          ✅ You already played this game!
-        </p>
-
-        <p style="color:var(--muted);font-size:.82rem;margin-top:4px">
-          Score: ${loadSavedScore(currentGameId) || "pending"} pts
-        </p>
-
-        <button
-          class="btn btn-ghost btn-sm"
-          style="margin-top:10px"
-          onclick="doTriggerEnd(${currentGameId})"
-        >
-          Check results
-        </button>
-      </div>
-    `;
-    } else {
-      actionHtml = `
-      <button
-        class="btn btn-primary"
-        onclick="startPlay()"
-        style="background:linear-gradient(135deg,var(--gold),var(--orange))"
-      >
-        🎮 Play Now!
-      </button>
-
-      <p style="text-align:center;color:var(--red);font-size:.77rem;margin-top:8px;font-weight:600">
-        ⚠️ Deadline in ${fmtTime(playSecs)}
-      </p>
-    `;
+    if (s === 1) {
+      if (!finishedEarly && !alreadySubmitted(gameId) && !serverPlayed) {
+        await openGameReadOnly(gameId, currentGameChainId);
+        return;
+      }
+      showScreen("screenResults");
+      score = loadSavedScore(gameId);
+      document.getElementById("resScore").textContent = score || "—";
+      document.getElementById("resIcon").textContent =
+        score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+      document.getElementById("resSub").textContent =
+        `Game finished · ${score} pts`;
+      document.getElementById("submitSection").style.display = "none";
+      await refreshResults();
+      startAutoRefresh(gameId);
+      return;
     }
-  } else if (inPlayPhase && !joined)
-    actionHtml = `<p style="color:var(--muted);text-align:center;padding:10px">Registration closed.</p>`;
-  else if (finished)
-    actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)"><p style="color:var(--green);font-weight:600">✅ Score submitted!</p><button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="doTriggerEnd(${gameId})">Check if game can end</button></div>`;
-  else if (!inRegPhase && !inPlayPhase)
-    actionHtml = `<button class="btn btn-ghost" onclick="doTriggerEnd(${gameId})">🏁 End Game & See Results</button>`;
-  // ── Game ended — player joined but never played ───────────────────────────
-  // This appears after all the phase checks, before the creator controls
-  let gameRefundBannerHtml = "";
-  if (s === 1 && !finished && !alreadySubmitted(gameId)) {
-    try {
-      // Check if they actually played in DB
-      const refundStatusRes = await fetch(
-        `${BACKEND}/games/${gameId}/refund-status?wallet=${userAddress}&chainId=${currentGameChainId || 5042002}`,
-        { credentials: "include" },
-      );
-      const refundData = await refundStatusRes.json();
 
-      if (refundData.status === "paid") {
-        gameRefundBannerHtml = `
-          <div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);
-            border-radius:12px;padding:14px;margin-bottom:14px;text-align:center">
-            <p style="color:var(--green);font-weight:600">✅ Entry Fee Refunded</p>
-            <p style="color:var(--muted);font-size:.78rem;margin-top:4px">
-              ${fee} ${gameSymbol} was returned to your wallet.
-            </p>
-          </div>`;
-      } else if (refundData.status !== "pending") {
-        // Not yet refunded — show option
-        gameRefundBannerHtml = `
-          <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);
-            border-radius:12px;padding:16px;margin-bottom:14px;text-align:center">
-            <div style="font-size:1.5rem;margin-bottom:8px">😴</div>
-            <p style="color:var(--gold);font-weight:700">You didn't play this game</p>
-            <p style="color:var(--muted);font-size:.78rem;margin-top:6px;margin-bottom:12px">
-              You registered but the game ended without your score.
-              Claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> entry fee back.
-            </p>
-            <button id="gameRefundBtn" class="btn btn-primary"
-              style="background:linear-gradient(135deg,var(--gold),var(--orange));
-              width:auto;padding:11px 28px"
-              onclick="claimGameRefund(${gameId},${currentGameChainId || 5042002})">
-              💸 Claim ${fee} ${gameSymbol} Refund
-            </button>
-          </div>`;
+    if (s === 2) {
+      openGameReadOnly(gameId, currentGameChainId);
+      return;
+    }
+
+    // s === 0 (open game)
+    const [joined, finished] = await readContract.getPlayerStatus(
+      gameId,
+      userAddress,
+    );
+
+    if (finished || alreadySubmitted(gameId) || serverPlayed) {
+      showScreen("screenResults");
+      score = loadSavedScore(gameId);
+      document.getElementById("resScore").textContent = score || "—";
+      document.getElementById("resIcon").textContent =
+        score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+      document.getElementById("resSub").textContent =
+        `You already played this game · ${score} pts`;
+      document.getElementById("submitSection").style.display =
+        score > 0 ? "block" : "none";
+      await refreshResults();
+      startAutoRefresh(gameId);
+      return;
+    }
+
+    if (alreadySubmitted(gameId)) {
+      showScreen("screenResults");
+      score = loadSavedScore(gameId);
+      document.getElementById("resScore").textContent = score;
+      document.getElementById("resIcon").textContent =
+        score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+      document.getElementById("resSub").textContent =
+        `Score locked in · ${score} pts`;
+      document.getElementById("submitSection").style.display = "none";
+      await refreshResults();
+      startAutoRefresh(gameId);
+      return;
+    }
+
+    const gameNet = NETWORKS[currentGameChainId] || activeNet;
+    const gameDecimals = gameNet.decimals;
+    const gameSymbol = gameNet.symbol;
+    const dp = gameDecimals === 18 ? 4 : 2;
+    const fee = parseFloat(ethers.formatUnits(entryFee, gameDecimals)).toFixed(
+      dp,
+    );
+    const pool = parseFloat(
+      ethers.formatUnits(prizePool, gameDecimals),
+    ).toFixed(dp);
+    const n = Number(playerCount);
+    const regSecs = Number(regEnd) - now,
+      playSecs = Number(playDeadline) - now;
+    const inRegPhase = regSecs > 0,
+      inPlayPhase = !inRegPhase && playSecs > 0;
+    const dist = parseFloat(pool) * 0.95;
+
+    let breakdownHtml = "";
+    if (n === 0)
+      breakdownHtml = `<p style="color:var(--muted);font-size:.82rem">No players yet. Entry fee: ${fee} ${gameSymbol}</p>`;
+    else if (n === 1)
+      breakdownHtml = `<div>🥇 <strong style="color:var(--gold)">${dist.toFixed(2)} ${gameSymbol}</strong> (solo wins all)</div>`;
+    else if (n === 2)
+      breakdownHtml = `<div style="display:flex;gap:14px"><span>🥇 <strong style="color:var(--gold)">${(dist * 0.7).toFixed(2)}</strong></span><span>🥈 <strong style="color:#ccc">${(dist * 0.3).toFixed(2)}</strong></span><span style="color:var(--muted)">${gameSymbol}</span></div>`;
+    else
+      breakdownHtml = `<div style="display:flex;gap:12px;flex-wrap:wrap"><span>🥇 <strong style="color:var(--gold)">${(dist * 0.6).toFixed(2)}</strong></span><span>🥈 <strong style="color:#ccc">${(dist * 0.25).toFixed(2)}</strong></span><span>🥉 <strong style="color:#cd7f32">${(dist * 0.15).toFixed(2)}</strong></span><span style="color:var(--muted)">${gameSymbol}</span></div>`;
+
+    const players = await readContract.getPlayers(gameId);
+    const betsHtml = await showPredictionBets(gameId, players);
+    const playerRows =
+      players.length === 0
+        ? `<p style="color:var(--muted);font-size:.83rem">No players yet!</p>`
+        : players
+            .map(
+              (p, i) =>
+                `<div class="lb-row" style="margin-bottom:5px"><span class="lb-rank">#${i + 1}</span><span class="lb-addr">${fmt(p)}${p.toLowerCase() === userAddress.toLowerCase() ? " (you)" : ""}</span><span style="font-size:.73rem;color:var(--muted)">${p.toLowerCase() === creator.toLowerCase() ? "👑" : ""}</span></div>`,
+            )
+            .join("");
+
+    let actionHtml = "";
+    if (inRegPhase && !joined && n < Number(maxPlayers))
+      actionHtml = `<button class="btn btn-primary" onclick="doJoin()">💰 Pay ${fee} ${activeNet.symbol} & Reserve Spot</button><p style="text-align:center;color:var(--muted);font-size:.77rem;margin-top:8px">${fmtTime(regSecs)} left to join</p>`;
+    else if (inRegPhase && joined)
+      actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2)"><p style="color:var(--accent);font-weight:600">✓ You are registered!</p><p style="color:var(--muted);font-size:.82rem;margin-top:4px">Game starts in ${fmtTime(regSecs)}</p></div>`;
+    else if (inPlayPhase && joined && !finished) {
+      let svrPlayed2 = false;
+      try {
+        const chk2 = await fetch(
+          `${BACKEND}/game/status/${currentGameId}?chainId=${currentGameChainId || 5042002}`,
+          { credentials: "include" },
+        );
+        const d2 = await chk2.json();
+        if (d2.finished || d2.played) {
+          svrPlayed2 = true;
+          markSubmitted(currentGameId);
+        }
+      } catch (_) {}
+      if (alreadySubmitted(currentGameId) || svrPlayed2) {
+        actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)"><p style="color:var(--green);font-weight:600">✅ You already played this game!</p><p style="color:var(--muted);font-size:.82rem;margin-top:4px">Score: ${loadSavedScore(currentGameId) || "pending"} pts</p><button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="doTriggerEnd(${currentGameId})">Check results</button></div>`;
+      } else {
+        actionHtml = `<button class="btn btn-primary" onclick="startPlay()" style="background:linear-gradient(135deg,var(--gold),var(--orange))">🎮 Play Now!</button><p style="text-align:center;color:var(--red);font-size:.77rem;margin-top:8px;font-weight:600">⚠️ Deadline in ${fmtTime(playSecs)}</p>`;
       }
-    } catch (_) {}
+    } else if (inPlayPhase && !joined)
+      actionHtml = `<p style="color:var(--muted);text-align:center;padding:10px">Registration closed.</p>`;
+    else if (finished)
+      actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25)"><p style="color:var(--green);font-weight:600">✅ Score submitted!</p><button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="doTriggerEnd(${gameId})">Check if game can end</button></div>`;
+    else if (!inRegPhase && !inPlayPhase)
+      actionHtml = `<button class="btn btn-ghost" onclick="doTriggerEnd(${gameId})">🏁 End Game & See Results</button>`;
+
+    let gameRefundBannerHtml = "";
+    if (s === 1 && !finished && !alreadySubmitted(gameId)) {
+      try {
+        const refundStatusRes = await fetch(
+          `${BACKEND}/games/${gameId}/refund-status?wallet=${userAddress}&chainId=${currentGameChainId || 5042002}`,
+          { credentials: "include" },
+        );
+        const refundData = await refundStatusRes.json();
+        if (refundData.status === "paid") {
+          gameRefundBannerHtml = `<div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);border-radius:12px;padding:14px;margin-bottom:14px;text-align:center"><p style="color:var(--green);font-weight:600">✅ Entry Fee Refunded</p><p style="color:var(--muted);font-size:.78rem;margin-top:4px">${fee} ${gameSymbol} was returned to your wallet.</p></div>`;
+        } else if (refundData.status !== "pending") {
+          gameRefundBannerHtml = `<div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.2);border-radius:12px;padding:16px;margin-bottom:14px;text-align:center"><div style="font-size:1.5rem;margin-bottom:8px">😴</div><p style="color:var(--gold);font-weight:700">You didn't play this game</p><p style="color:var(--muted);font-size:.78rem;margin-top:6px;margin-bottom:12px">You registered but the game ended without your score. Claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> entry fee back.</p><button id="gameRefundBtn" class="btn btn-primary" style="background:linear-gradient(135deg,var(--gold),var(--orange));width:auto;padding:11px 28px" onclick="claimGameRefund(${gameId},${currentGameChainId || 5042002})">💸 Claim ${fee} ${gameSymbol} Refund</button></div>`;
+        }
+      } catch (_) {}
+    }
+
+    let creatorHtml = "";
+    if (creator.toLowerCase() === userAddress.toLowerCase())
+      creatorHtml = `<hr/><div style="color:var(--accent);font-size:.82rem;font-weight:600;margin-bottom:10px">👑 Your Room — Creator earns 2.5%</div><div style="display:flex;gap:10px"><button class="btn btn-ghost btn-sm" style="flex:1" onclick="doTriggerEnd(${gameId})">🏁 Force End</button><button class="btn btn-danger btn-sm" style="flex:1" onclick="doCancelRoom(${gameId})">✕ Cancel & Refund All</button></div>`;
+
+    const shareUrl = `${location.origin}${location.pathname}?game=${gameId}`;
+    const discordMsg = `Join "${name}" on TriviaFi\nCategory: ${catName} | Entry: ${fee} ${gameSymbol} | Pool: ${pool} ${gameSymbol}\n${n}/${maxPlayers} players\n${shareUrl}`;
+
+    document.getElementById("joinContent").innerHTML = `
+      <div style="margin-bottom:16px">
+        <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">#${gameId} — ${sanitizeText(name)}</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <span class="badge ${STATUS_BADGE[s]}">${STATUS_LABEL[s]}</span>
+          <span class="cat-pill">📚 ${sanitizeText(catName)}</span>
+          ${Number(difficulty) > 0 ? `<span style="font-size:.75rem;color:var(--${DIFF_CLASSES[Number(difficulty)] || "accent"})">· ${DIFF_LABELS[Number(difficulty)]}</span>` : ""}
+          <span style="font-size:.72rem;padding:2px 8px;border-radius:10px;background:${gameChainId === 4441 ? "rgba(123,97,255,.15)" : "rgba(0,229,255,.1)"};color:${gameChainId === 4441 ? "var(--purple)" : "var(--accent)"}">
+            ${gameChainId === 4441 ? "🔷 LitVM" : "⚡ Arc"}
+          </span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (${gameSymbol})</div></div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
+      </div>
+      <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px">
+        <span style="font-size:1.5rem">🔥</span>
+        <div><div style="font-size:.82rem;font-weight:600;color:var(--gold)">Streak Nanopayments Active</div>
+        <div style="font-size:.75rem;color:var(--muted);margin-top:2px">${STREAK_THRESHOLD}+ correct in a row → <strong style="color:var(--gold)">${STREAK_BONUS_USDC} USDC</strong> onchain</div></div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
+        <div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Breakdown</div>
+        ${breakdownHtml}
+      </div>
+      <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Players (${n}/${maxPlayers})</div>
+      <div style="margin-bottom:14px">${playerRows}</div>
+      ${betsHtml}${gameRefundBannerHtml}
+      <div style="margin-top:14px">${actionHtml}</div>
+      <div id="gameActions" style="margin-top:10px"></div>
+      <div class="share-box" style="margin-top:14px">
+        <span style="font-size:1.3rem">🔗</span>
+        <div style="flex:1"><div style="font-size:.75rem;color:var(--muted);margin-bottom:3px">Share</div>
+        <div class="share-link" style="font-size:.72rem">${shareUrl}</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="copyShare(\`${discordMsg}\`)">Copy</button>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="tweetGame()">𝕏 Tweet</button>
+    ${creatorHtml}`;
+
+    window._joinScreenOrigin = "lobby";
+    showScreen("screenJoin");
+    loadGameStatus(currentGameId);
+    startAutoRefresh(gameId);
+  } catch (e) {
+    console.error("openGame error:", e);
+    toast("Error loading game: " + e.message, "error");
+  } finally {
+    window._openingGame = false;
   }
-  let creatorHtml = "";
-  if (creator.toLowerCase() === userAddress.toLowerCase())
-    creatorHtml = `<hr/><div style="color:var(--accent);font-size:.82rem;font-weight:600;margin-bottom:10px">👑 Your Room — Creator earns 2.5%</div><div style="display:flex;gap:10px"><button class="btn btn-ghost btn-sm" style="flex:1" onclick="doTriggerEnd(${gameId})">🏁 Force End</button><button class="btn btn-danger btn-sm" style="flex:1" onclick="doCancelRoom(${gameId})">✕ Cancel & Refund All</button></div>`;
-  const shareUrl = `${location.origin}${location.pathname}?game=${gameId}`;
-  const discordMsg = `Join "${name}" activeNet.name\nCategory: ${catName} | Entry: ${fee} USDC | Pool: ${pool} USDC\n${n}/${maxPlayers} players\n${shareUrl}`;
-  document.getElementById("joinContent").innerHTML = `
-    <div style="margin-bottom:16px"><h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">#${gameId} — ${sanitizeText(
-      name,
-    )}</h2><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><span class="badge ${
-      STATUS_BADGE[s]
-    }">${STATUS_LABEL[s]}</span><span class="cat-pill">📚 ${sanitizeText(
-      catName,
-    )}</span>${
-      Number(difficulty) > 0
-        ? `<span style="font-size:.75rem;color:var(--${
-            DIFF_CLASSES[Number(difficulty)] || "accent"
-          })">· ${DIFF_LABELS[Number(difficulty)]}</span>`
-        : ""
-    }</div></div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--gold)">${fee}</div><div style="font-size:.72rem;color:var(--muted)">Entry (${gameSymbol})</div>
-</div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--green)">${pool}</div><div style="font-size:.72rem;color:var(--muted)">Prize Pool</div></div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:var(--accent)">${n}/${maxPlayers}</div><div style="font-size:.72rem;color:var(--muted)">Players</div></div>
-    </div>
-    <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px"><span style="font-size:1.5rem">🔥</span><div><div style="font-size:.82rem;font-weight:600;color:var(--gold)">Streak Nanopayments Active</div><div style="font-size:.75rem;color:var(--muted);margin-top:2px">${STREAK_THRESHOLD}+ correct in a row → <strong style="color:var(--gold)">${STREAK_BONUS_USDC} USDC</strong> onchain via Circle · ${
-      activeNet.name
-    }</div></div></div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px"><div style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Prize Breakdown</div>${breakdownHtml}</div>
-    <div style="font-size:.78rem;color:var(--muted);text-transform:uppercase;margin-bottom:8px">Players (${n}/${maxPlayers})</div>
-    <div style="margin-bottom:14px">${playerRows}</div>
-    ${betsHtml}${gameRefundBannerHtml}
-    <div style="margin-top:14px">${actionHtml}</div>
-     <div id="gameActions" style="margin-top:10px"></div>
-    <div class="share-box" style="margin-top:14px"><span style="font-size:1.3rem">🔗</span><div style="flex:1"><div style="font-size:.75rem;color:var(--muted);margin-bottom:3px">Share</div><div class="share-link" style="font-size:.72rem">${shareUrl}</div></div><button class="btn btn-ghost btn-sm" onclick="copyShare(\`${discordMsg}\`)">Copy</button></div>
-    <button class="btn btn-ghost btn-sm" onclick="tweetGame()">
-      𝕏 Tweet
-    </button>
-  </div>${creatorHtml}`;
-  window._joinScreenOrigin = "lobby";
-  showScreen("screenJoin");
-  loadGameStatus(currentGameId);
-  startAutoRefresh(gameId);
 }
 
 // Add this new tab function
