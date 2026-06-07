@@ -2858,6 +2858,97 @@ app.get("/admin/reconcile-volume", async (req, res) => {
   }
 });
 
+// ── ADMIN: Manual refund to a wallet ─────────────────────────────────────
+app.post("/admin/manual-refund", async (req, res) => {
+  // Only callable with your admin secret key — never exposed to frontend
+  if (req.headers["x-admin-key"] !== process.env.ADMIN_SECRET) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const { wallet, amount, tokenSymbol, reason } = req.body;
+
+  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+    return res.status(400).json({ error: "Invalid wallet" });
+  if (!amount || parseFloat(amount) <= 0)
+    return res.status(400).json({ error: "Invalid amount" });
+  if (!["USDC", "zkLTC"].includes(tokenSymbol))
+    return res.status(400).json({ error: "Invalid token" });
+
+  console.log(
+    `🔧 ADMIN MANUAL REFUND:\n` +
+      `  Wallet: ${wallet}\n` +
+      `  Amount: ${amount} ${tokenSymbol}\n` +
+      `  Reason: ${reason || "manual refund"}\n` +
+      `  Time: ${new Date().toISOString()}`,
+  );
+
+  try {
+    const isLitvm = tokenSymbol === "zkLTC";
+    const decimals = isLitvm ? 18 : 6;
+    const amountWei = ethers.parseUnits(
+      parseFloat(amount).toFixed(decimals),
+      decimals,
+    );
+
+    let txHash;
+
+    if (isLitvm) {
+      const ws = verifierWallet.connect(makeLitvmProvider());
+      const tx = await ws.sendTransaction({
+        to: wallet,
+        value: amountWei,
+        gasLimit: 21000,
+      });
+      await tx.wait();
+      txHash = tx.hash;
+    } else {
+      // Arc USDC
+      const ARC_USDC = "0x3600000000000000000000000000000000000000";
+      const ws = verifierWallet.connect(makeProvider());
+      const uc = new ethers.Contract(
+        ARC_USDC,
+        ["function transfer(address,uint256) external returns (bool)"],
+        ws,
+      );
+      const tx = await uc.transfer(wallet, amountWei);
+      await tx.wait();
+      txHash = tx.hash;
+    }
+
+    // Log it to game_refunds for record keeping
+    await pool
+      .query(
+        `INSERT INTO game_refunds
+       (game_id, chain_id, wallet, amount, token_symbol, tx_hash, status, notes)
+       VALUES (0, $1, LOWER($2), $3, $4, $5, 'paid', $6)`,
+        [
+          isLitvm ? 4441 : 5042002,
+          wallet,
+          parseFloat(amount),
+          tokenSymbol,
+          txHash,
+          reason || "manual admin refund",
+        ],
+      )
+      .catch(() => {});
+
+    console.log(
+      `✅ Manual refund sent: ${amount} ${tokenSymbol} → ${wallet} | TX: ${txHash}`,
+    );
+
+    res.json({
+      ok: true,
+      txHash,
+      amount,
+      tokenSymbol,
+      wallet,
+    });
+  } catch (e) {
+    console.error("Manual refund failed:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GAME REFUND — for players who joined but never played ─────────────────
 // Conditions: game finished, player joined onchain, player never submitted score
 app.post("/games/:gameId/refund", async (req, res) => {
