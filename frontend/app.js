@@ -937,27 +937,14 @@ async function resolveUsernames(wallets) {
 
 function startAutoRefresh() {
   stopAutoRefresh();
-
   autoRefreshInterval = setInterval(async () => {
     try {
-      // refresh games
-      if (typeof loadGames === "function") {
-        await loadGames();
-      }
-
-      // refresh lobby stats
-      if (typeof loadGlobalStats === "function") {
-        await loadGlobalStats();
-      }
-
-      // refresh prizes
-      if (userAddress && typeof loadUnclaimedPrizes === "function") {
+      if (typeof loadGames === "function") await loadGames();
+      if (typeof loadGlobalStats === "function") await loadGlobalStats();
+      if (userAddress && typeof loadUnclaimedPrizes === "function")
         await loadUnclaimedPrizes();
-      }
 
-      // refresh history
       const historyScreen = document.getElementById("screenHistory");
-
       if (
         historyScreen &&
         historyScreen.classList.contains("active") &&
@@ -966,9 +953,31 @@ function startAutoRefresh() {
         await loadHistoryScreen();
       }
 
-      // refresh results if inside game
       if (currentGameId && typeof refreshResults === "function") {
         await refreshResults();
+      }
+
+      // ✅ NEW: Check if we're on the join screen and the game just ended
+      const joinScreen = document.getElementById("screenJoin");
+      const isOnJoinScreen =
+        joinScreen && joinScreen.classList.contains("active");
+      if (
+        isOnJoinScreen &&
+        currentGameId &&
+        window._joinScreenOrigin === "lobby"
+      ) {
+        try {
+          const g = await getGame(currentGameId);
+          if (g) {
+            const s = Number(g[14]);
+            if (s === 1 || s === 2) {
+              // Game ended — reload the view so user sees results without refresh
+              toast("🏁 Game ended! Loading final results...", "info");
+              stopAutoRefresh();
+              await openGameReadOnly(currentGameId, currentGameChainId);
+            }
+          }
+        } catch (_) {}
       }
     } catch (e) {
       console.log("Auto refresh error:", e.message);
@@ -2515,7 +2524,9 @@ async function openGameReadOnly(gameId, gameChainId) {
         <span class="lb-addr">${fmt(r.a)}${
           r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
         }</span>
-        <span class="lb-score">${r.sc > 0 ? r.sc + " pts" : "—"}</span>
+        <span class="lb-score" style="${r.sc === 0 ? "color:rgba(255,255,255,.2)" : ""}">
+        ${r.sc > 0 ? r.sc + " pts" : "didn't play"}
+        </span>
         ${
           i < 3 && prizes[i] > 0
             ? `<span style="color:var(--gold);font-size:.73rem">${prizes[
@@ -2598,21 +2609,68 @@ async function openGameReadOnly(gameId, gameChainId) {
 
     let claimBannerHtml = "";
     if (myWinnerPos >= 0 && myPrize > 0) {
+      // ✅ Check if this "winner" actually submitted a score
+      // If score is 0/dashes on leaderboard, they didn't play — show refund instead
+      let actuallyPlayed = false;
+      try {
+        const ps = await readContract.getPlayerStatus(gameId, userAddress);
+        actuallyPlayed = ps[1]; // true = submitted score onchain
+      } catch (_) {}
+
+      // Also check server
+      if (!actuallyPlayed) {
+        try {
+          const chk = await fetch(
+            `${BACKEND}/game/status/${gameId}?chainId=${currentGameChainId || 5042002}`,
+            { credentials: "include" },
+          );
+          const d = await chk.json();
+          if (d.finished || d.played) actuallyPlayed = true;
+        } catch (_) {}
+      }
+
       const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
-      claimBannerHtml = `<div class="winner-banner" style="margin-bottom:16px">
+
+      if (!actuallyPlayed) {
+        // They're in topPlayers array but never submitted a score — show refund
+        claimBannerHtml = `
+      <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.25);
+        border-radius:12px;padding:20px;margin-bottom:16px;text-align:center">
+        <div style="font-size:1.8rem;margin-bottom:8px">😴</div>
+        <p style="color:var(--gold);font-weight:700;font-size:.95rem">
+          You registered but didn't play
+        </p>
+        <p style="color:var(--muted);font-size:.8rem;margin-top:6px;margin-bottom:14px">
+          You paid the entry fee but never submitted a score.<br>
+          Claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> back.
+        </p>
+        <button id="gameRefundBtn" class="btn btn-primary"
+          style="background:linear-gradient(135deg,var(--gold),var(--orange));
+          width:auto;padding:12px 32px"
+          onclick="claimGameRefund(${gameId}, ${currentGameChainId || 5042002})">
+          💸 Claim ${fee} ${gameSymbol} Refund
+        </button>
+      </div>`;
+      } else if (!alreadyClaimed) {
+        claimBannerHtml = `
+      <div class="winner-banner" style="margin-bottom:16px">
         <h3>${medals[myWinnerPos]} — YOU WON!</h3>
         <div class="winner-prize">${myPrize.toFixed(dp)} ${gameSymbol}</div>
-        ${
-          !alreadyClaimed
-            ? `<button class="btn btn-gold" onclick="doClaimPrize()"
-              style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">
-              💰 Claim Your Prize
-            </button>`
-            : `<p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">
-              ✅ Prize Already Claimed!
-            </p>`
-        }
+        <button class="btn btn-gold" onclick="doClaimPrize()"
+          style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">
+          💰 Claim Your Prize
+        </button>
       </div>`;
+      } else {
+        claimBannerHtml = `
+      <div class="winner-banner" style="margin-bottom:16px">
+        <h3>${medals[myWinnerPos]} — YOU WON!</h3>
+        <div class="winner-prize">${myPrize.toFixed(dp)} ${gameSymbol}</div>
+        <p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">
+          ✅ Prize Already Claimed!
+        </p>
+      </div>`;
+      }
     }
 
     // ── Refund banner for cancelled games ──
@@ -2652,15 +2710,14 @@ async function openGameReadOnly(gameId, gameChainId) {
         )
         .map(
           (i) =>
-            `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span>${
-              ["🥇", "🥈", "🥉"][i]
-            } ${fmt(topPlayers[i])}${
-              topPlayers[i]?.toLowerCase() === userAddress?.toLowerCase()
-                ? " 👈 You"
-                : ""
-            }</span><span style="color:var(--gold);font-weight:600">${prizes[
-              i
-            ].toFixed(2)} USDC</span></div>`,
+            `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+              <span>${["🥇", "🥈", "🥉"][i]} ${fmt(topPlayers[i])}${
+                topPlayers[i]?.toLowerCase() === userAddress?.toLowerCase()
+                  ? " 👈 You"
+                  : ""
+              }</span>
+              <span style="color:var(--gold);font-weight:600">${prizes[i].toFixed(dp)} ${gameSymbol}</span>
+            </div>`,
         )
         .join("")}</div>`;
     }
@@ -3422,9 +3479,37 @@ async function startPlay() {
   }
 
   // ── Guard: if a play session is already in progress, don't restart ──
+  // ── Guard: check if session is in progress BUT verify with server first ──
   if (sessionStorage.getItem(`playing_${currentGameId}`)) {
-    toast("Game session already in progress!", "error");
-    return;
+    // Don't blindly block — verify with server if they actually played
+    try {
+      const chainId =
+        currentGameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
+      const chk = await fetch(
+        `${BACKEND}/game/status/${currentGameId}?chainId=${chainId}`,
+        { credentials: "include" },
+      );
+      const chkData = await chk.json();
+      if (chkData.finished || chkData.played) {
+        // Actually finished — show results
+        markSubmitted(currentGameId);
+        showScreen("screenResults");
+        score = loadSavedScore(currentGameId);
+        document.getElementById("resScore").textContent = score || "...";
+        document.getElementById("resSub").textContent =
+          `Already played · ${score || "pending"} pts`;
+        document.getElementById("submitSection").style.display =
+          score > 0 ? "block" : "none";
+        await refreshResults();
+        return;
+      } else {
+        // Server says NOT finished — stale flag, clear it and allow play
+        sessionStorage.removeItem(`playing_${currentGameId}`);
+      }
+    } catch (_) {
+      // Network error checking — clear stale flag and allow play
+      sessionStorage.removeItem(`playing_${currentGameId}`);
+    }
   }
 
   const chainId =
@@ -4014,6 +4099,9 @@ async function refreshResults() {
       g;
     const s = Number(status),
       n = Number(playerCount);
+    if (prevStatus !== undefined && prevStatus === 0 && s === 1) {
+      toast("🏁 Game has ended! Showing final results.", "success");
+    }
     const myPos = userAddress
       ? Array.from(topPlayers).findIndex(
           (p) => p?.toLowerCase() === userAddress?.toLowerCase(),
