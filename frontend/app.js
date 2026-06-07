@@ -4913,20 +4913,40 @@ function renderTournaments() {
         : "";
 
       // Replace the prize breakdown line for whitelist:
-      const prizeLineHtml = isWhitelist
-        ? `<div style="font-size:.72rem;color:var(--purple);margin-top:6px;font-weight:600">
-      🥇 ${t.prize_1_text || "1st Prize"} · 🥈 ${t.prize_2_text || "2nd"} · 🥉 ${t.prize_3_text || "3rd"}
-    </div>`
-        : `<div style="font-size:.72rem;color:var(--muted);margin-top:6px">
-      🥇 ${(parseFloat(pool2) * 0.6).toFixed(dp)} · 🥈 ${(parseFloat(pool2) * 0.25).toFixed(dp)} · 🥉 ${(parseFloat(pool2) * 0.15).toFixed(dp)} ${t.token_symbol}
+      // Finished → show actual 1st/2nd/3rd winners. Otherwise → prize descriptions.
+      const hasWinners =
+        t.status === "finished" && Array.isArray(t.winners) && t.winners.length;
+
+      const winnersBlock = `<div style="font-size:.72rem;margin-top:6px;line-height:1.7">
+      ${["🥇", "🥈", "🥉"]
+        .map((medal, i) => {
+          const w = t.winners.find((x) => x.prize_position === i);
+          if (!w) return "";
+          const who = w.username
+            ? "@" + sanitizeText(w.username)
+            : fmt(w.wallet);
+          return `${medal} <strong style="color:var(--gold)">${who}</strong>`;
+        })
+        .filter(Boolean)
+        .join("<br>")}
     </div>`;
 
-      // ✅ Show the champion's name/wallet on finished tournament cards
+      const prizeDescBlock = `<div style="font-size:.72rem;color:var(--purple);margin-top:6px;font-weight:600">
+      🥇 ${t.prize_1_text || "1st Prize"} · 🥈 ${t.prize_2_text || "2nd"} · 🥉 ${t.prize_3_text || "3rd"}
+    </div>`;
+
+      const prizeLineHtml = hasWinners
+        ? winnersBlock
+        : isWhitelist
+          ? prizeDescBlock
+          : "";
+
+      // Fallback champion line — only for finished cards with no prize_position data
       const winnerLineHtml =
-        t.status === "finished" && t.winner
+        t.status === "finished" && t.winner && !hasWinners
           ? `<div style="font-size:.74rem;color:var(--gold);margin-top:6px;font-weight:700">
-          🏆 Winner: ${t.winner_username ? "@" + sanitizeText(t.winner_username) : fmt(t.winner)}
-        </div>`
+           🏆 Winner: ${t.winner_username ? "@" + sanitizeText(t.winner_username) : fmt(t.winner)}
+         </div>`
           : "";
 
       return `<div class="gcard" onclick="openTournament(${t.id})"
