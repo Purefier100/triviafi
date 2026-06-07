@@ -2408,38 +2408,38 @@ function renderGames() {
 
 async function openGameReadOnly(gameId, gameChainId) {
   window._joinScreenOrigin = "lobby";
-  // ✅ Always set currentGameId and currentGameChainId
   currentGameId = gameId;
   currentGameChainId =
     gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
 
-  // Switch readContract to correct chain
-  if (gameChainId && NETWORKS[gameChainId]) {
-    const net = NETWORKS[gameChainId];
-    // Use fallback RPCs for LitVM
+  // ✅ Always rebuild readContract for the target chain — never trust stale state
+  const targetChainId = currentGameChainId;
+  const targetNet = NETWORKS[targetChainId];
+  if (targetNet) {
     const rpcs =
-      gameChainId === 4441
+      targetChainId === 4441
         ? ["https://liteforge.rpc.caldera.xyz/http"]
         : [
             "https://rpc.testnet.arc.network",
             "https://rpc.drpc.testnet.arc.network",
           ];
-    let tempProvider = null;
+    let bestProvider = new ethers.JsonRpcProvider(rpcs[0]);
     for (const rpc of rpcs) {
       try {
         const p = new ethers.JsonRpcProvider(rpc);
         await Promise.race([
           p.getBlockNumber(),
-          new Promise((_, r) =>
-            setTimeout(() => r(new Error("timeout")), 3000),
-          ),
+          new Promise((_, r) => setTimeout(() => r(new Error("t")), 2500)),
         ]);
-        tempProvider = p;
+        bestProvider = p;
         break;
       } catch (_) {}
     }
-    if (!tempProvider) tempProvider = new ethers.JsonRpcProvider(rpcs[0]);
-    readContract = new ethers.Contract(net.contractAddress, ABI, tempProvider);
+    readContract = new ethers.Contract(
+      targetNet.contractAddress,
+      ABI,
+      bestProvider,
+    );
   }
   try {
     const g = await getGame(gameId);
@@ -2486,7 +2486,8 @@ async function openGameReadOnly(gameId, gameChainId) {
           : [dist * 0.6, dist * 0.25, dist * 0.15];
     let myWinnerPos = -1,
       myPrize = 0,
-      alreadyClaimed = false;
+      alreadyClaimed = false,
+      actuallyPlayed = false;
     if (userAddress && s === 1) {
       myWinnerPos = Array.from(topPlayers).findIndex(
         (p) => p && p.toLowerCase() === userAddress.toLowerCase(),
@@ -2498,8 +2499,27 @@ async function openGameReadOnly(gameId, gameChainId) {
             gameId,
             userAddress,
           );
+          actuallyPlayed = statusRes[1]; // ✅ index 1 = submitted score onchain
           alreadyClaimed = statusRes[2];
         } catch (_) {}
+
+        // Also check server-side as fallback
+        if (!actuallyPlayed) {
+          try {
+            const chk = await fetch(
+              `${BACKEND}/game/status/${gameId}?chainId=${currentGameChainId || 5042002}`,
+              { credentials: "include" },
+            );
+            const d = await chk.json();
+            if (d.finished || d.played) actuallyPlayed = true;
+          } catch (_) {}
+        }
+
+        // If they didn't actually play — reset winner position so no prize shown
+        if (!actuallyPlayed) {
+          myWinnerPos = -1;
+          myPrize = 0;
+        }
       }
     }
     let lbHtml = "";
@@ -2608,69 +2628,22 @@ async function openGameReadOnly(gameId, gameChainId) {
     }
 
     let claimBannerHtml = "";
-    if (myWinnerPos >= 0 && myPrize > 0) {
-      // ✅ Check if this "winner" actually submitted a score
-      // If score is 0/dashes on leaderboard, they didn't play — show refund instead
-      let actuallyPlayed = false;
-      try {
-        const ps = await readContract.getPlayerStatus(gameId, userAddress);
-        actuallyPlayed = ps[1]; // true = submitted score onchain
-      } catch (_) {}
-
-      // Also check server
-      if (!actuallyPlayed) {
-        try {
-          const chk = await fetch(
-            `${BACKEND}/game/status/${gameId}?chainId=${currentGameChainId || 5042002}`,
-            { credentials: "include" },
-          );
-          const d = await chk.json();
-          if (d.finished || d.played) actuallyPlayed = true;
-        } catch (_) {}
-      }
-
+    if (myWinnerPos >= 0 && myPrize > 0 && actuallyPlayed) {
       const medals = ["🥇 1st Place", "🥈 2nd Place", "🥉 3rd Place"];
-
-      if (!actuallyPlayed) {
-        // They're in topPlayers array but never submitted a score — show refund
-        claimBannerHtml = `
-      <div style="background:rgba(255,209,102,.05);border:1px solid rgba(255,209,102,.25);
-        border-radius:12px;padding:20px;margin-bottom:16px;text-align:center">
-        <div style="font-size:1.8rem;margin-bottom:8px">😴</div>
-        <p style="color:var(--gold);font-weight:700;font-size:.95rem">
-          You registered but didn't play
-        </p>
-        <p style="color:var(--muted);font-size:.8rem;margin-top:6px;margin-bottom:14px">
-          You paid the entry fee but never submitted a score.<br>
-          Claim your <strong style="color:var(--gold)">${fee} ${gameSymbol}</strong> back.
-        </p>
-        <button id="gameRefundBtn" class="btn btn-primary"
-          style="background:linear-gradient(135deg,var(--gold),var(--orange));
-          width:auto;padding:12px 32px"
-          onclick="claimGameRefund(${gameId}, ${currentGameChainId || 5042002})">
-          💸 Claim ${fee} ${gameSymbol} Refund
-        </button>
-      </div>`;
-      } else if (!alreadyClaimed) {
-        claimBannerHtml = `
-      <div class="winner-banner" style="margin-bottom:16px">
-        <h3>${medals[myWinnerPos]} — YOU WON!</h3>
-        <div class="winner-prize">${myPrize.toFixed(dp)} ${gameSymbol}</div>
-        <button class="btn btn-gold" onclick="doClaimPrize()"
-          style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">
-          💰 Claim Your Prize
-        </button>
-      </div>`;
-      } else {
-        claimBannerHtml = `
-      <div class="winner-banner" style="margin-bottom:16px">
-        <h3>${medals[myWinnerPos]} — YOU WON!</h3>
-        <div class="winner-prize">${myPrize.toFixed(dp)} ${gameSymbol}</div>
-        <p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">
-          ✅ Prize Already Claimed!
-        </p>
-      </div>`;
-      }
+      claimBannerHtml = `<div class="winner-banner" style="margin-bottom:16px">
+    <h3>${medals[myWinnerPos]} — YOU WON!</h3>
+    <div class="winner-prize">${myPrize.toFixed(dp)} ${gameSymbol}</div>
+    ${
+      !alreadyClaimed
+        ? `<button class="btn btn-gold" onclick="doClaimPrize()"
+            style="margin-top:14px;width:auto;padding:14px 40px;font-size:1rem">
+            💰 Claim Your Prize
+          </button>`
+        : `<p style="color:var(--green);margin-top:10px;font-weight:600;font-size:1rem">
+            ✅ Prize Already Claimed!
+          </p>`
+    }
+  </div>`;
     }
 
     // ── Refund banner for cancelled games ──
