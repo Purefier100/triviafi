@@ -3454,7 +3454,6 @@ async function startPlay() {
   } catch (_) {}
 
   // Mark session as in-progress immediately to prevent double-start
-  sessionStorage.setItem(`playing_${currentGameId}`, "1");
 
   const g = currentGame || (await getGame(currentGameId));
   const catId = Number(g[3]),
@@ -3523,13 +3522,16 @@ async function startPlay() {
       });
       if (!startRes.ok) {
         const err = await startRes.json().catch(() => ({}));
-        // "Already finished" is fine — questions already stored
         if (err.error && !err.error.includes("finished")) {
           toast("Failed to register session: " + err.error, "error");
+          sessionStorage.removeItem(`playing_${currentGameId}`); // ✅ clear on failure
           return;
         }
       }
+      // ✅ Only mark as playing AFTER successful registration
+      sessionStorage.setItem(`playing_${currentGameId}`, "1");
     } catch (e) {
+      sessionStorage.removeItem(`playing_${currentGameId}`); // ✅ clear on network error
       toast("Could not register game session. Check connection.", "error");
       return;
     }

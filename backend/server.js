@@ -1973,6 +1973,7 @@ app.post("/game/start", async (req, res) => {
     categoryId,
     difficulty,
     chainId: reqChainId,
+    correctAnswers,
   } = req.body;
   const chainId = parseInt(reqChainId || "5042002");
   const isLitvm = chainId === 4441;
