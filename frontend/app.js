@@ -2779,6 +2779,35 @@ async function openGame(gameId, gameChainId) {
     gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   currentGameChainId = targetChainId;
 
+  // ✅ ALWAYS point readContract at the target chain first — before any getGame() call
+  const targetNet = NETWORKS[targetChainId];
+  if (targetNet) {
+    const rpcs2 =
+      targetChainId === 4441
+        ? ["https://liteforge.rpc.caldera.xyz/http"]
+        : [
+            "https://rpc.testnet.arc.network",
+            "https://rpc.drpc.testnet.arc.network",
+          ];
+    let tempProvider2 = new ethers.JsonRpcProvider(rpcs2[0]);
+    for (const rpc of rpcs2) {
+      try {
+        const p = new ethers.JsonRpcProvider(rpc);
+        await Promise.race([
+          p.getBlockNumber(),
+          new Promise((_, r) => setTimeout(() => r(new Error("t")), 2000)),
+        ]);
+        tempProvider2 = p;
+        break;
+      } catch (_) {}
+    }
+    readContract = new ethers.Contract(
+      targetNet.contractAddress,
+      ABI,
+      tempProvider2,
+    );
+  }
+
   const userChainId = provider
     ? Number((await provider.getNetwork()).chainId)
     : null;
@@ -2821,34 +2850,6 @@ async function openGame(gameId, gameChainId) {
     readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
     updateNetBar();
     toast(`✅ Switched to ${activeNet.name}`, "success");
-  }
-
-  const targetNet = NETWORKS[targetChainId];
-  if (targetNet) {
-    const rpcs2 =
-      targetChainId === 4441
-        ? ["https://liteforge.rpc.caldera.xyz/http"]
-        : [
-            "https://rpc.testnet.arc.network",
-            "https://rpc.drpc.testnet.arc.network",
-          ];
-    let tempProvider2 = new ethers.JsonRpcProvider(rpcs2[0]);
-    for (const rpc of rpcs2) {
-      try {
-        const p = new ethers.JsonRpcProvider(rpc);
-        await Promise.race([
-          p.getBlockNumber(),
-          new Promise((_, r) => setTimeout(() => r(new Error("t")), 2000)),
-        ]);
-        tempProvider2 = p;
-        break;
-      } catch (_) {}
-    }
-    readContract = new ethers.Contract(
-      targetNet.contractAddress,
-      ABI,
-      tempProvider2,
-    );
   }
 
   if (!userAddress) {
@@ -2922,18 +2923,56 @@ async function openGame(gameId, gameChainId) {
   );
 
   if (finished || alreadySubmitted(gameId)) {
-    showScreen("screenResults");
     score = loadSavedScore(gameId);
-    document.getElementById("resScore").textContent = score || "—";
-    document.getElementById("resIcon").textContent =
-      score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
-    document.getElementById("resSub").textContent =
-      `You already played this game · ${score} pts`;
-    document.getElementById("submitSection").style.display =
-      score > 0 ? "block" : "none";
-    await refreshResults();
-    startAutoRefresh(gameId);
-    return;
+    // ✅ If localStorage score=0, check server for the real score
+    if (score === 0) {
+      try {
+        const chk = await fetch(
+          `${BACKEND}/game/status/${gameId}?chainId=${targetChainId}`,
+          { credentials: "include" },
+        );
+        const chkData = await chk.json();
+        // If server says not finished either, clear bad state and let them play
+        if (!chkData.finished && !chkData.onchain) {
+          localStorage.removeItem(submittedKey(gameId));
+          sessionStorage.removeItem(`playing_${gameId}`);
+          // Fall through to normal open flow
+        } else {
+          // Server confirms finished — show results
+          showScreen("screenResults");
+          document.getElementById("resScore").textContent = "—";
+          document.getElementById("resIcon").textContent = "💪";
+          document.getElementById("resSub").textContent =
+            `Game submitted · waiting for results`;
+          document.getElementById("submitSection").style.display = "none";
+          await refreshResults();
+          startAutoRefresh(gameId);
+          return;
+        }
+      } catch (_) {
+        // Network error — show results anyway
+        showScreen("screenResults");
+        document.getElementById("resScore").textContent = score || "—";
+        document.getElementById("resSub").textContent =
+          `You already played this game · ${score} pts`;
+        document.getElementById("submitSection").style.display = "none";
+        await refreshResults();
+        startAutoRefresh(gameId);
+        return;
+      }
+    } else {
+      showScreen("screenResults");
+      document.getElementById("resScore").textContent = score;
+      document.getElementById("resIcon").textContent =
+        score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
+      document.getElementById("resSub").textContent =
+        `You already played this game · ${score} pts`;
+      document.getElementById("submitSection").style.display =
+        score > 0 ? "block" : "none";
+      await refreshResults();
+      startAutoRefresh(gameId);
+      return;
+    }
   }
   // Server-authoritative check — localStorage can be cleared
   try {

@@ -2557,15 +2557,17 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       ethers.getBytes(message),
     );
 
+    // ✅ Only mark finished if score > 0 — score=0 means all answers wrong/timed out
+    // Still allow the signature so they can submit onchain, but keep session open for retry
     await client.query(
       `UPDATE game_sessions
-      SET finished=true,
-      score=$1,
-      finished_at=NOW()
-      WHERE user_id=$2
-      AND game_id=$3
-      AND chain_id=$4`,
-      [score, req.user.id, gameId, chainId],
+      SET finished=$1,
+      score=$2,
+      finished_at=CASE WHEN $2 > 0 THEN NOW() ELSE NULL END
+      WHERE user_id=$3
+      AND game_id=$4
+      AND chain_id=$5`,
+      [score > 0, score, req.user.id, gameId, chainId],
     );
 
     // ── Volume tracking — always update platform_stats ────────────────────────
