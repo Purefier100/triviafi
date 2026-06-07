@@ -5316,6 +5316,26 @@ async function openTournament(id) {
           background:rgba(239,71,111,.08);border:1px solid rgba(239,71,111,.25)">
           <p style="color:var(--red);font-weight:600">❌ Eliminated in Round ${t.current_round - 1}</p>
         </div>`;
+      } else if (t.status === "cancelled" && isJoined) {
+        const refundCheck = me?.refunded;
+
+        actionHtml = refundCheck
+          ? `<div style="background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.2);border-radius:12px;padding:16px;text-align:center">
+              <div style="font-size:1.5rem;margin-bottom:8px">✅</div>
+              <p style="color:var(--green);font-weight:700">Entry Fee Refunded</p>
+              <p style="color:var(--muted);font-size:.78rem;margin-top:4px">${fee} ${t.token_symbol} was returned to your wallet.</p>
+              ${me?.refund_tx ? `<div style="font-size:.68rem;color:var(--muted);margin-top:8px;word-break:break-all">TX: ${me.refund_tx}</div>` : ""}
+            </div>`
+          : `<div style="background:rgba(255,157,58,.05);border:1px solid rgba(255,157,58,.25);border-radius:12px;padding:20px;text-align:center">
+              <div style="font-size:2rem;margin-bottom:10px">⏰</div>
+              <p style="color:var(--gold);font-weight:700;font-size:1rem">Tournament Expired</p>
+              <p style="color:var(--muted);font-size:.82rem;margin-top:8px;margin-bottom:16px">
+                This tournament didn't fill up in time. Your <strong style="color:var(--gold)">${fee} ${t.token_symbol}</strong> entry fee will be refunded automatically within 10 minutes.
+              </p>
+              <div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px;font-size:.75rem;color:var(--muted)">
+                If not received in 10 minutes, contact support with tournament ID: ${t.id}
+              </div>
+            </div>`;
       } else if (t.status === "finished") {
         const myRank = players.findIndex(
           (p) => p.wallet?.toLowerCase() === myWallet,
