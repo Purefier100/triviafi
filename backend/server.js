@@ -3143,14 +3143,18 @@ app.get("/tournaments", async (req, res) => {
         (SELECT u.username FROM users u
          WHERE LOWER(u.wallet) = LOWER(t.winner) LIMIT 1
         ) AS winner_username,
-        (SELECT json_agg(w ORDER BY w.prize_position)
-         FROM (
-           SELECT tp.wallet, tp.prize_position, u2.username
-           FROM tournament_players tp
-           LEFT JOIN users u2 ON LOWER(u2.wallet) = LOWER(tp.wallet)
-           WHERE tp.tournament_id = t.id
-             AND tp.prize_position BETWEEN 0 AND 2
-         ) w
+        COALESCE(
+          (SELECT json_agg(w ORDER BY w.prize_position)
+           FROM (
+             SELECT tp.wallet, tp.prize_position, u2.username
+             FROM tournament_players tp
+             LEFT JOIN users u2 ON LOWER(u2.wallet) = LOWER(tp.wallet)
+             WHERE tp.tournament_id = t.id
+               AND tp.prize_position IS NOT NULL
+               AND tp.prize_position BETWEEN 0 AND 2
+           ) w
+          ),
+          '[]'::json
         ) AS winners
       FROM tournaments t
       WHERE t.status != 'cancelled'
@@ -3161,6 +3165,7 @@ app.get("/tournaments", async (req, res) => {
     `);
     res.json(result.rows);
   } catch (e) {
+    console.error("GET /tournaments error:", e.message, e.stack?.slice(0, 300));
     res.status(500).json({ error: e.message });
   }
 });
