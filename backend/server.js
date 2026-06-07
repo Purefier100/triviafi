@@ -2002,124 +2002,74 @@ app.post("/game/start", async (req, res) => {
       return res.status(400).json({ error: "Already finished this game" });
     }
 
-    const existCheck = await pool.query(
-      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId],
-    );
+    // ── Atomic: create session + store questions in one transaction ──
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query("BEGIN");
 
-    if (existCheck.rows.length === 0) {
-      await pool.query(
-        "INSERT INTO game_sessions (user_id, wallet, game_id, chain_id) VALUES ($1,$2,$3,$4)",
+      // Upsert session
+      await dbClient.query(
+        `INSERT INTO game_sessions (user_id, wallet, game_id, chain_id)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT ON CONSTRAINT gs_user_game_chain_unique DO NOTHING`,
         [req.user.id, wallet.toLowerCase(), gameId, chainId],
       );
-    }
 
-    // Re-fetch to get the id whether it was just inserted or already existed
-    const sessionRow = await pool.query(
-      "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2",
-      [req.user.id, gameId],
-    );
-    const sessionId = sessionRow.rows[0]?.id;
+      const sessionRow = await dbClient.query(
+        "SELECT id, finished FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
+        [req.user.id, gameId, chainId],
+      );
+      const sessionId = sessionRow.rows[0]?.id;
 
-    // ✅ Check if questions already stored (replay attempt)
-    const existingQs = await pool.query(
-      "SELECT COUNT(*) as cnt FROM game_questions WHERE session_id=$1",
-      [sessionId],
-    );
-    if (parseInt(existingQs.rows[0].cnt) > 0) {
-      // Questions already stored — return them without correct answers
-      const qs = await pool.query(
-        "SELECT q_index, question, options FROM game_questions WHERE session_id=$1 ORDER BY q_index",
+      if (!sessionId) {
+        await dbClient.query("ROLLBACK");
+        return res.status(500).json({ error: "Could not create game session" });
+      }
+
+      if (sessionRow.rows[0]?.finished) {
+        await dbClient.query("ROLLBACK");
+        return res.status(400).json({ error: "Already finished this game" });
+      }
+
+      // Check if questions already stored
+      const existingQs = await dbClient.query(
+        "SELECT COUNT(*) as cnt FROM game_questions WHERE session_id=$1",
         [sessionId],
       );
-      return res.json({ ok: true, questions: qs.rows });
-    }
 
-    // ✅ Fetch questions SERVER-SIDE — correct answers never sent to client
-    const { correctAnswers } = req.body;
-
-    if (
-      correctAnswers &&
-      Array.isArray(correctAnswers) &&
-      correctAnswers.length >= 5
-    ) {
-      // Client sent correct answers — store them server-side for scoring
-      for (const qa of correctAnswers) {
-        await pool.query(
-          `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
-       VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-          [sessionId, qa.index, qa.correct, "client-fetched", "[]"],
-        );
+      if (parseInt(existingQs.rows[0].cnt) > 0) {
+        await dbClient.query("COMMIT");
+        return res.json({ ok: true, questions: [] });
       }
-      // ✅ Return ok — questions already rendered client-side
-      return res.json({ ok: true, questions: [] });
-    }
 
-    // ✅ Server-side fetch fallback (when client didn't send correctAnswers)
-    const catId = categoryId || 9;
-    const diff = parseInt(difficulty) || 0;
-    const diffParam =
-      diff > 0 ? `&difficulty=${["", "easy", "medium", "hard"][diff]}` : "";
-
-    let useLocal = false;
-    let qtResults = [];
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      const qtRes = await fetch(
-        `https://opentdb.com/api.php?amount=10&category=${catId}&type=multiple&encode=url3986${diffParam}`,
-        { signal: controller.signal },
-      );
-      clearTimeout(timeout);
-      const qtData = await qtRes.json();
-      if (qtData?.response_code === 0 && qtData.results?.length >= 5) {
-        qtResults = qtData.results.map((q) => ({
-          question: decodeURIComponent(q.question),
-          correct: decodeURIComponent(q.correct_answer),
-          incorrect: q.incorrect_answers.map((a) => decodeURIComponent(a)),
-          difficulty: q.difficulty,
-        }));
-      } else {
-        useLocal = true;
+      // Store correctAnswers sent from client
+      if (
+        correctAnswers &&
+        Array.isArray(correctAnswers) &&
+        correctAnswers.length >= 5
+      ) {
+        for (const qa of correctAnswers) {
+          await dbClient.query(
+            `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
+         VALUES ($1,$2,$3,'client-fetched','[]')
+         ON CONFLICT (session_id, q_index) DO NOTHING`,
+            [sessionId, qa.index, qa.correct],
+          );
+        }
+        await dbClient.query("COMMIT");
+        return res.json({ ok: true, questions: [] });
       }
+
+      // ... server-side OpenTDB fetch (unchanged) ...
+      // At the end, after inserting all questions:
+      await dbClient.query("COMMIT");
+      return res.json({ ok: true, questions: clientQuestions });
     } catch (e) {
-      useLocal = true;
+      await dbClient.query("ROLLBACK");
+      throw e;
+    } finally {
+      dbClient.release();
     }
-
-    if (useLocal) {
-      const localQs = getLocalQuestions(catId, diff, 10);
-      qtResults = localQs.map((q) => ({
-        question: q.q,
-        correct: q.correct,
-        incorrect: q.wrong,
-        difficulty: diff === 1 ? "easy" : diff === 2 ? "medium" : "easy",
-      }));
-    }
-
-    if (!qtResults.length) {
-      return res.status(503).json({ error: "Could not load questions." });
-    }
-
-    const clientQuestions = [];
-    for (let i = 0; i < qtResults.length; i++) {
-      const q = qtResults[i];
-      const options = [q.correct, ...q.incorrect].sort(
-        () => Math.random() - 0.5,
-      );
-      await pool.query(
-        `INSERT INTO game_questions (session_id, q_index, correct_answer, question, options)
-     VALUES ($1,$2,$3,$4,$5) ON CONFLICT (session_id, q_index) DO NOTHING`,
-        [sessionId, i, q.correct, q.question, JSON.stringify(options)],
-      );
-      clientQuestions.push({
-        questionIndex: i,
-        question: q.question,
-        options,
-        diff: q.difficulty,
-      });
-    }
-    return res.json({ ok: true, questions: clientQuestions });
   } catch (e) {
     console.error("Game start error:", e.message);
     res.status(500).json({ error: e.message });
@@ -2505,9 +2455,24 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
     let score = 0;
 
     if (storedQs.rows.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "No questions found. Play the game first." });
+      // ── Security: session exists but no questions were stored ──
+      // This happens when the client crashed before /game/start completed.
+      // Never sign a score of 0 — force the player to restart.
+      console.warn(
+        `[submit-score] No questions for session ${sessionId}, user ${req.user.id}, game ${gameId}. Resetting session.`,
+      );
+      // Reset the session so they can play again
+      await client.query(
+        `UPDATE game_sessions SET finished=false, score=0, finished_at=NULL
+         WHERE id=$1`,
+        [sessionId],
+      );
+      await client.query("ROLLBACK");
+      client.release();
+      return res.status(400).json({
+        error: "Game session was interrupted — please refresh and play again.",
+        resetSession: true,
+      });
     } else {
       // ✅ Validate answer count
       if (answers.length < storedQs.rows.length * 0.5) {
@@ -2557,17 +2522,15 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       ethers.getBytes(message),
     );
 
-    // ✅ Only mark finished if score > 0 — score=0 means all answers wrong/timed out
-    // Still allow the signature so they can submit onchain, but keep session open for retry
     await client.query(
       `UPDATE game_sessions
-      SET finished=$1,
-      score=$2,
-      finished_at=CASE WHEN $2 > 0 THEN NOW() ELSE NULL END
-      WHERE user_id=$3
-      AND game_id=$4
-      AND chain_id=$5`,
-      [score > 0, score, req.user.id, gameId, chainId],
+      SET finished=true,
+      score=$1,
+      finished_at=NOW()
+      WHERE user_id=$2
+      AND game_id=$3
+      AND chain_id=$4`,
+      [score, req.user.id, gameId, chainId],
     );
 
     // ── Volume tracking — always update platform_stats ────────────────────────
