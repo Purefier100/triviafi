@@ -642,6 +642,13 @@ async function initDB() {
       )
       .catch(() => {});
 
+    // Track tournament payment tx hashes for verification
+    await pool
+      .query(
+        `ALTER TABLE tournament_players ADD COLUMN IF NOT EXISTS payment_tx TEXT`,
+      )
+      .catch(() => {});
+
     // Make google_id nullable
     await pool
       .query(
@@ -2789,20 +2796,91 @@ if (process.env.NODE_ENV === "production") {
         console.log("🏓 Self-ping OK");
       } catch (_) {}
 
-      // Auto-cancel expired tournaments
+      // ── Auto-cancel AND refund expired open tournaments ───────────────
       try {
-        await pool.query(`
-          UPDATE tournaments
-          SET status = 'cancelled'
-          WHERE status = 'open'
-            AND deadline_at < NOW()
-            AND (
-              SELECT COUNT(*)
-              FROM tournament_players
-              WHERE tournament_id = tournaments.id
-            ) = 0
+        // Find expired open tournaments with fewer players than max
+        const expired = await pool.query(`
+          SELECT t.*, 
+            (SELECT COUNT(*) FROM tournament_players WHERE tournament_id = t.id) AS player_count
+          FROM tournaments t
+          WHERE t.status = 'open'
+            AND t.tournament_type = 'paid'
+            AND t.deadline_at < NOW()
         `);
-      } catch (_) {}
+
+        for (const t of expired.rows) {
+          console.log(`⏰ Auto-expiring tournament ${t.id}: ${t.name}`);
+
+          // Mark as cancelled
+          await pool.query(
+            "UPDATE tournaments SET status='cancelled' WHERE id=$1",
+            [t.id],
+          );
+
+          // Get all players who paid
+          const players = await pool.query(
+            `SELECT * FROM tournament_players WHERE tournament_id=$1 AND NOT refunded`,
+            [t.id],
+          );
+
+          const isLitvm = t.token_symbol === "zkLTC";
+          const decimals = isLitvm ? 18 : 6;
+          const refundAmount = parseFloat(t.entry_fee);
+
+          if (refundAmount <= 0) continue;
+
+          const amountWei = ethers.parseUnits(
+            refundAmount.toFixed(decimals),
+            decimals,
+          );
+
+          for (const p of players.rows) {
+            try {
+              let txHash;
+              if (isLitvm) {
+                const ws = verifierWallet.connect(makeLitvmProvider());
+                const tx = await ws.sendTransaction({
+                  to: p.wallet,
+                  value: amountWei,
+                  gasLimit: 21000,
+                });
+                await tx.wait();
+                txHash = tx.hash;
+              } else {
+                const ARC_USDC = "0x3600000000000000000000000000000000000000";
+                const ws = verifierWallet.connect(makeProvider());
+                const uc = new ethers.Contract(
+                  ARC_USDC,
+                  [
+                    "function transfer(address,uint256) external returns (bool)",
+                  ],
+                  ws,
+                );
+                const tx = await uc.transfer(p.wallet, amountWei);
+                await tx.wait();
+                txHash = tx.hash;
+              }
+
+              await pool.query(
+                `UPDATE tournament_players
+                 SET refunded=TRUE, refunded_at=NOW(), refund_tx=$1
+                 WHERE id=$2`,
+                [txHash, p.id],
+              );
+
+              console.log(
+                `✅ Auto-refunded: ${refundAmount} ${t.token_symbol} → ${p.wallet} | TX: ${txHash}`,
+              );
+            } catch (refundErr) {
+              console.error(
+                `❌ Auto-refund failed for ${p.wallet}: ${refundErr.message}`,
+              );
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Auto-expire error:", e.message);
+      }
     },
     8 * 60 * 1000,
   );

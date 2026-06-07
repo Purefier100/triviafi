@@ -2775,13 +2775,30 @@ async function claimGameRefund(gameId, chainId) {
 }
 
 async function openGame(gameId, gameChainId) {
+  // ✅ FIX: prevent double-calls and hanging network check
+  if (window._openingGame) return;
+  window._openingGame = true;
+  try {
+    await _openGame(gameId, gameChainId);
+  } finally {
+    window._openingGame = false;
+  }
   const targetChainId =
     gameChainId || (activeNet.decimals === 18 ? 4441 : 5042002);
   currentGameChainId = targetChainId;
 
-  const userChainId = provider
-    ? Number((await provider.getNetwork()).chainId)
-    : null;
+  let userChainId = null;
+  try {
+    if (provider) {
+      const network = await Promise.race([
+        provider.getNetwork(),
+        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 3000)),
+      ]);
+      userChainId = Number(network.chainId);
+    }
+  } catch (_) {
+    userChainId = null;
+  }
   if (userAddress && userChainId && userChainId !== targetChainId) {
     toast(`Switching to ${NETWORKS[targetChainId].name}...`, "info");
     try {
@@ -4889,39 +4906,81 @@ function renderTournaments() {
 
   el.innerHTML = allTournaments
     .map((t) => {
-      const statusColors = {
-        open: "var(--green)",
-        active: "var(--red)",
-        finished: "var(--muted)",
-        cancelled: "var(--red)",
-      };
-      const statusColor = statusColors[t.status] || "var(--muted)";
-      const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
-      const dp = t.token_symbol === "zkLTC" ? 4 : 2;
-      const fee = parseFloat(t.entry_fee).toFixed(dp);
-      const pool2 = parseFloat(t.prize_pool).toFixed(dp);
-      const isFull = parseInt(t.player_count) >= t.max_players;
+      const isWL = t.tournament_type === "whitelist";
       const isLive = t.status === "active";
-      const timer = fmtTournamentTime(t);
+      const isFinished = t.status === "finished";
+      const isCancelled = t.status === "cancelled";
+      const isFull = parseInt(t.player_count) >= t.max_players;
       const spotsLeft = t.max_players - parseInt(t.player_count);
+      const dp = t.token_symbol === "zkLTC" ? 4 : 2;
+      const fee = parseFloat(t.entry_fee || 0).toFixed(dp);
+      const pool2 = parseFloat(t.prize_pool || 0).toFixed(dp);
+      const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
+      const timer = fmtTournamentTime(t);
 
-      const isWhitelist = t.tournament_type === "whitelist";
-      const wlBadge = isWhitelist
-        ? `<span style="font-size:.63rem;font-weight:800;padding:2px 8px;border-radius:10px;
-      background:rgba(88,101,242,.15);color:#7289da;border:1px solid rgba(88,101,242,.35);
-      margin-left:4px">💬 WL BATTLE</span>`
-        : "";
-
-      // Replace the prize breakdown line for whitelist:
-      // Finished → show actual 1st/2nd/3rd winners. Otherwise → prize descriptions.
-      // winners arrives as JSON from pg — may be null, [], or an array
       const winnersArr = Array.isArray(t.winners) ? t.winners : [];
       const hasWinners =
-        t.status === "finished" &&
+        isFinished &&
         winnersArr.length > 0 &&
         winnersArr.some((w) => w && w.prize_position >= 0);
 
-      const winnersBlock = `<div style="font-size:.72rem;margin-top:6px;line-height:1.7">
+      // ── Type-specific styling ─────────────────────────────────────────
+      const typeConfig = isWL
+        ? {
+            gradient:
+              "linear-gradient(135deg,rgba(88,101,242,.18),rgba(123,97,255,.08))",
+            border: isLive ? "rgba(239,71,111,.6)" : "rgba(88,101,242,.45)",
+            accentColor: "#7289da",
+            badge: `<div style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,rgba(88,101,242,.25),rgba(123,97,255,.2));border:1px solid rgba(88,101,242,.5);border-radius:20px;padding:3px 10px;font-size:.65rem;font-weight:800;color:#7289da;letter-spacing:.5px">
+        💬 WHITELIST BATTLE
+      </div>`,
+            headerIcon: "💬",
+            entryLabel: "FREE ENTRY",
+            entryValue: null,
+          }
+        : {
+            gradient:
+              "linear-gradient(135deg,rgba(0,229,255,.08),rgba(123,97,255,.05))",
+            border: isLive
+              ? "rgba(239,71,111,.6)"
+              : isCancelled
+                ? "rgba(255,157,58,.3)"
+                : "rgba(0,229,255,.2)",
+            accentColor: "var(--accent)",
+            badge: `<div style="display:inline-flex;align-items:center;gap:5px;background:linear-gradient(135deg,rgba(0,229,255,.15),rgba(0,229,255,.05));border:1px solid rgba(0,229,255,.3);border-radius:20px;padding:3px 10px;font-size:.65rem;font-weight:800;color:var(--accent);letter-spacing:.5px">
+        💰 PAID TOURNAMENT
+      </div>`,
+            headerIcon: "🏟️",
+            entryLabel: `${fee} ${t.token_symbol}`,
+            entryValue: pool2,
+          };
+
+      // ── Status pill ───────────────────────────────────────────────────
+      const statusPill = isLive
+        ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.4);border-radius:20px;padding:3px 10px">
+          <span style="width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block;animation:pulse 1s ease-in-out infinite"></span>
+          <span style="font-size:.65rem;font-weight:800;color:var(--red)">LIVE</span>
+        </div>`
+        : isFinished
+          ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--green)">✅ FINISHED</span>
+        </div>`
+          : isCancelled
+            ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,157,58,.1);border:1px solid rgba(255,157,58,.3);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--gold)">⏰ EXPIRED</span>
+        </div>`
+            : isFull
+              ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--red)">🔴 FULL</span>
+        </div>`
+              : `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.3);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--green)">OPEN</span>
+        </div>`;
+
+      // ── Winners block ─────────────────────────────────────────────────
+      const winnersBlock = hasWinners
+        ? `
+      <div style="margin-top:10px;padding:10px 12px;background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.2);border-radius:10px">
         ${["🥇", "🥈", "🥉"]
           .map((medal, i) => {
             const w = winnersArr.find((x) => x && x.prize_position === i);
@@ -4929,65 +4988,132 @@ function renderTournaments() {
             const who = w.username
               ? "@" + sanitizeText(w.username)
               : fmt(w.wallet);
-            return `${medal} <strong style="color:var(--gold)">${who}</strong>`;
+            return `<div style="font-size:.75rem;font-weight:700;color:var(--gold);line-height:1.8">${medal} ${who}</div>`;
           })
           .filter(Boolean)
-          .join("<br>")}
+          .join("")}
+      </div>`
+        : "";
+
+      // ── Prize/Reward section ──────────────────────────────────────────
+      const prizeSection = isWL
+        ? `
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:4px">
+        ${t.prize_1_text ? `<div style="font-size:.75rem;color:var(--gold);font-weight:600">🥇 ${sanitizeText(t.prize_1_text)}</div>` : ""}
+        ${t.prize_2_text ? `<div style="font-size:.75rem;color:#ccc">🥈 ${sanitizeText(t.prize_2_text)}</div>` : ""}
+        ${t.prize_3_text ? `<div style="font-size:.75rem;color:#cd7f32">🥉 ${sanitizeText(t.prize_3_text)}</div>` : ""}
+      </div>`
+        : `
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:80px;background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.15);border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Entry</div>
+          <div style="font-size:.88rem;font-weight:700;color:var(--gold);margin-top:2px">${fee} ${t.token_symbol}</div>
+        </div>
+        <div style="flex:1;min-width:80px;background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.15);border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Prize Pool</div>
+          <div style="font-size:.88rem;font-weight:700;color:var(--green);margin-top:2px">${pool2} ${t.token_symbol}</div>
+        </div>
       </div>`;
 
-      const prizeDescBlock = `<div style="font-size:.72rem;color:var(--purple);margin-top:6px;font-weight:600">
-      🥇 ${t.prize_1_text || "1st Prize"} · 🥈 ${t.prize_2_text || "2nd"} · 🥉 ${t.prize_3_text || "3rd"}
-    </div>`;
+      // ── Player progress bar ───────────────────────────────────────────
+      const fillPct = Math.min(
+        100,
+        Math.round((parseInt(t.player_count) / t.max_players) * 100),
+      );
+      const progressBar = `
+      <div style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:.72rem;color:var(--muted)">👥 ${t.player_count}/${t.max_players} players</span>
+          ${
+            !isFinished && !isCancelled && spotsLeft > 0 && !isFull
+              ? `<span style="font-size:.68rem;color:var(--green);font-weight:700">${spotsLeft} spot${spotsLeft > 1 ? "s" : ""} left</span>`
+              : isFull
+                ? `<span style="font-size:.68rem;color:var(--red);font-weight:700">Full</span>`
+                : ""
+          }
+        </div>
+        <div style="height:4px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${fillPct}%;background:${
+            fillPct >= 100
+              ? "var(--red)"
+              : fillPct > 60
+                ? "var(--gold)"
+                : "var(--green)"
+          };border-radius:2px;transition:width .5s"></div>
+        </div>
+      </div>`;
 
-      const prizeLineHtml = hasWinners
-        ? winnersBlock
-        : isWhitelist
-          ? prizeDescBlock
-          : "";
+      return `
+      <div onclick="openTournament(${t.id})" style="
+        background:${typeConfig.gradient};
+        border:1.5px solid ${typeConfig.border};
+        border-radius:16px;
+        padding:16px;
+        cursor:pointer;
+        transition:all .2s;
+        position:relative;
+        overflow:hidden;
+        ${isLive ? "box-shadow:0 0 24px rgba(239,71,111,.2);" : ""}
+        ${isCancelled ? "opacity:.7;" : ""}
+      "
+      onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,.3)'"
+      onmouseout="this.style.transform='';this.style.boxShadow='${isLive ? "0 0 24px rgba(239,71,111,.2)" : ""}'">
 
-      // Fallback champion line — only for finished cards with no prize_position data
-      const winnerLineHtml =
-        t.status === "finished" && t.winner && !winnersArr.length
-          ? `<div style="font-size:.74rem;color:var(--gold);margin-top:6px;font-weight:700">
-       🏆 Winner: ${t.winner_username ? "@" + sanitizeText(t.winner_username) : fmt(t.winner)}
-     </div>`
-          : "";
+        ${isLive ? `<div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--red),var(--purple),var(--red));animation:shimmer 2s linear infinite;background-size:200% 100%"></div>` : ""}
 
-      return `<div class="gcard" onclick="openTournament(${t.id})"
-      style="${isLive ? "border-color:rgba(239,71,111,.5);box-shadow:0 0 20px rgba(239,71,111,.1)" : t.status === "finished" ? "opacity:.75" : ""}">
-      <div class="gcard-title" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <!-- Header row -->
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.95rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px">
+              ${sanitizeText(t.name)}
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              ${typeConfig.badge}
+              ${statusPill}
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:.68rem;color:var(--muted)">${chainIcon} ${t.rounds} Rounds</div>
+            ${isLive ? `<div style="font-size:.68rem;color:var(--red);font-weight:700;margin-top:2px;animation:pulse 2s ease-in-out infinite">⚔️ Round ${t.current_round}</div>` : ""}
+          </div>
+        </div>
+
+        <!-- Prize section -->
+        ${isFinished && hasWinners ? winnersBlock : prizeSection}
+
+        <!-- Cancelled refund notice -->
         ${
-          isLive
-            ? `<span style="width:7px;height:7px;border-radius:50%;background:var(--red);
-          display:inline-block;box-shadow:0 0 6px var(--red);animation:pulse 1s ease-in-out infinite;flex-shrink:0"></span>`
-            : "🏟️"
+          isCancelled && parseInt(t.player_count) > 0
+            ? `<div style="margin-top:10px;padding:8px 10px;background:rgba(255,157,58,.08);border:1px solid rgba(255,157,58,.2);border-radius:8px;font-size:.72rem;color:var(--gold)">
+              💸 All entry fees auto-refunded
+            </div>`
+            : ""
         }
-        <span style="flex:1">${sanitizeText(t.name)}${wlBadge}</span>
-        <span class="badge" style="color:${statusColor};border-color:${statusColor};background:rgba(0,0,0,.3);font-size:.63rem">
-          ${isLive ? "🔴 LIVE" : t.status.toUpperCase()}
-        </span>
-        <span style="font-size:.72rem">${chainIcon}</span>
-      </div>
-      <div style="font-size:.75rem;color:var(--gold);margin-bottom:8px;font-weight:600">
-        ${t.rounds} Rounds · ${t.max_players} Players Max
-      </div>
-      ${
-        t.tournament_type === "whitelist"
-          ? `<div class="gmeta" style="line-height:1.7">
-               ${t.prize_1_text ? `🥇 ${sanitizeText(t.prize_1_text)}<br>` : ""}
-               ${t.prize_2_text ? `🥈 ${sanitizeText(t.prize_2_text)}<br>` : ""}
-               ${t.prize_3_text ? `🥉 ${sanitizeText(t.prize_3_text)}` : ""}
-             </div>`
-          : `<div class="gmeta">💰 Entry: <strong>${fee} ${t.token_symbol}</strong> | 🏆 Pool: <strong>${pool2} ${t.token_symbol}</strong></div>`
-      }
-      <div class="gmeta">👥 <strong>${t.player_count}/${t.max_players}</strong> joined
-        ${t.status === "open" && !isFull ? `<span style="color:var(--green);font-size:.72rem;margin-left:6px">${spotsLeft} spot${spotsLeft > 1 ? "s" : ""} left</span>` : ""}
-      </div>
-      ${prizeLineHtml} ${winnerLineHtml}
-      ${isFull && t.status === "open" ? '<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:600">🔴 FULL — Starting soon</div>' : ""}
-      ${timer && t.status === "open" ? `<div style="font-size:.7rem;color:var(--muted);margin-top:4px">⏰ ${timer}</div>` : ""}
-      ${isLive ? `<div style="font-size:.72rem;color:var(--red);margin-top:4px;font-weight:700;animation:pulse 2s ease-in-out infinite">⚔️ Round ${t.current_round} in progress</div>` : ""}
-    </div>`;
+
+        <!-- Progress bar -->
+        ${progressBar}
+
+        <!-- Timer / Discord link -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
+          ${
+            timer && t.status === "open"
+              ? `<div style="font-size:.68rem;color:var(--muted)">⏰ ${timer}</div>`
+              : t.sponsor_name
+                ? `<div style="font-size:.68rem;color:#7289da">🏢 ${sanitizeText(t.sponsor_name)}</div>`
+                : `<div></div>`
+          }
+          ${
+            t.discord_invite
+              ? `<a href="${sanitizeUrl(t.discord_invite)}" target="_blank" rel="noopener noreferrer"
+                onclick="event.stopPropagation()"
+                style="font-size:.65rem;color:#7289da;text-decoration:none;background:rgba(88,101,242,.1);
+                border:1px solid rgba(88,101,242,.25);padding:2px 8px;border-radius:10px">
+                💬 Discord
+              </a>`
+              : `<div style="font-size:.68rem;color:var(--muted)">🏆 ${t.max_players} max</div>`
+          }
+        </div>
+      </div>`;
     })
     .join("");
 }
