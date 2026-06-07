@@ -563,6 +563,10 @@ async function initDB() {
       )
       .catch(() => {});
 
+    await pool
+      .query(`ALTER TABLE game_refunds ADD COLUMN IF NOT EXISTS notes TEXT`)
+      .catch(() => {});
+
     // =========================================================================
     // GAME QUESTIONS
     // =========================================================================
@@ -3612,26 +3616,115 @@ app.get("/tournaments/:id", async (req, res) => {
   }
 });
 
+// ── ORPHANED PAYMENT RECOVERY — called when payment succeeds but session expired ──
+app.post("/tournaments/:id/recover-payment", async (req, res) => {
+  const { wallet, txHash, amount, tokenSymbol } = req.body;
+  if (!wallet || !txHash)
+    return res.status(400).json({ error: "Missing fields" });
+
+  // Log for manual admin review
+  console.error(
+    `🚨 ORPHANED PAYMENT REPORT:\n` +
+      `  Tournament: ${req.params.id}\n` +
+      `  Wallet: ${wallet}\n` +
+      `  TX Hash: ${txHash}\n` +
+      `  Amount: ${amount} ${tokenSymbol}\n` +
+      `  Time: ${new Date().toISOString()}\n` +
+      `  Action required: Manually verify tx and register player or refund.`,
+  );
+
+  // Store for admin review
+  try {
+    await pool.query(
+      `INSERT INTO game_refunds
+       (game_id, chain_id, wallet, amount, token_symbol, tx_hash, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'orphaned_payment')
+       ON CONFLICT DO NOTHING`,
+      [
+        parseInt(req.params.id),
+        tokenSymbol === "zkLTC" ? 4441 : 5042002,
+        wallet.toLowerCase(),
+        parseFloat(amount) || 0,
+        tokenSymbol || "USDC",
+        txHash,
+      ],
+    );
+  } catch (_) {}
+
+  res.json({ ok: true, message: "Payment recorded for admin review" });
+});
+
 // 11. JOIN paid tournament
 app.post("/tournaments/:id/join", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const { wallet } = req.body;
+  const { wallet, txHash } = req.body;
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
     return res.status(400).json({ error: "Invalid wallet" });
+
   try {
     const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
       req.params.id,
     ]);
     if (!t.rows.length) return res.status(404).json({ error: "Not found" });
     const tournament = t.rows[0];
+
     if (tournament.status !== "open")
       return res.status(400).json({ error: "Tournament not open" });
+
+    // ── Idempotency: already registered? ─────────────────────────────────
+    const existingPlayer = await pool.query(
+      "SELECT id FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+      [req.params.id, wallet],
+    );
+    if (existingPlayer.rows.length > 0) {
+      // Already registered — return success (idempotent)
+      return res.json({ ok: true, alreadyRegistered: true });
+    }
+
     const count = await pool.query(
       "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
       [req.params.id],
     );
     if (parseInt(count.rows[0].count) >= tournament.max_players)
       return res.status(400).json({ error: "Tournament full" });
+
+    // ── Verify payment tx onchain (if txHash provided) ────────────────────
+    if (txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+      try {
+        const isLitvmT = tournament.token_symbol === "zkLTC";
+        const verifyProvider = isLitvmT ? makeLitvmProvider() : makeProvider();
+        const receipt = await Promise.race([
+          verifyProvider.getTransactionReceipt(txHash),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 8000),
+          ),
+        ]);
+
+        if (!receipt || receipt.status !== 1) {
+          console.error(
+            `JOIN rejected: tx ${txHash} not confirmed. ` +
+              `tournament=${req.params.id} wallet=${wallet}`,
+          );
+          return res.status(400).json({
+            error:
+              "Payment transaction not confirmed onchain. Please wait and try again.",
+          });
+        }
+
+        // Log verified payment
+        console.log(
+          `✅ Payment verified: tournament=${req.params.id} ` +
+            `wallet=${wallet} tx=${txHash} amount=${tournament.entry_fee} ` +
+            `${tournament.token_symbol}`,
+        );
+      } catch (verifyErr) {
+        // If verification times out, log but continue — don't block registration
+        console.warn(
+          `TX verification timeout for ${txHash}: ${verifyErr.message}. ` +
+            `Proceeding with registration.`,
+        );
+      }
+    }
 
     await pool.query(
       `INSERT INTO tournament_players (tournament_id, wallet, user_id)
@@ -3643,7 +3736,6 @@ app.post("/tournaments/:id/join", async (req, res) => {
       [tournament.entry_fee, req.params.id],
     );
 
-    // Track volume in platform_stats
     const isLitvmT = tournament.token_symbol === "zkLTC";
     await pool
       .query(
@@ -3666,6 +3758,7 @@ app.post("/tournaments/:id/join", async (req, res) => {
     }
     res.json({ ok: true });
   } catch (e) {
+    console.error("Tournament join error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });

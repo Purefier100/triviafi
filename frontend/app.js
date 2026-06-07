@@ -6149,9 +6149,62 @@ async function claimTournamentRefund(tournamentId, tokenSymbol) {
 
 async function joinTournament(id) {
   if (!contract || !userAddress) return toast("Connect wallet first", "error");
+
+  // ── GUARD 1: Prevent double-click / double-execution ──────────────────
+  if (window._joiningTournament === id) {
+    return toast("Already processing your registration...", "error");
+  }
+  window._joiningTournament = id;
+
+  const joinBtn = document.querySelector(`[onclick="joinTournament(${id})"]`);
+  if (joinBtn) {
+    joinBtn.disabled = true;
+    joinBtn.textContent = "⏳ Processing...";
+  }
+
   try {
-    const res = await fetch(`${BACKEND}/tournaments/${id}`);
-    const { tournament: t } = await res.json();
+    // ── GUARD 2: Verify auth session is alive BEFORE touching wallet ──────
+    const authCheck = await fetch(`${BACKEND}/auth/me`, {
+      credentials: "include",
+    });
+    const authData = await authCheck.json();
+    if (!authData.user) {
+      toast(
+        "⚠️ Your session expired. Please reconnect your wallet and try again.",
+        "error",
+      );
+      // Force re-auth
+      provider = signer = contract = usdcContract = null;
+      userAddress = null;
+      renderAuthState();
+      return;
+    }
+
+    // ── GUARD 3: Check already registered (idempotent) ────────────────────
+    const tourneyRes = await fetch(`${BACKEND}/tournaments/${id}`);
+    const { tournament: t, players } = await tourneyRes.json();
+
+    const alreadyJoined = players.some(
+      (p) => p.wallet?.toLowerCase() === userAddress.toLowerCase(),
+    );
+    if (alreadyJoined) {
+      toast("You are already registered in this tournament!", "error");
+      await openTournament(id);
+      return;
+    }
+
+    if (t.status !== "open") {
+      toast("Tournament is no longer open.", "error");
+      await openTournament(id);
+      return;
+    }
+
+    if (players.length >= t.max_players) {
+      toast("Tournament is full.", "error");
+      await openTournament(id);
+      return;
+    }
+
     const isZkLTC = t.token_symbol === "zkLTC";
     const decimals = isZkLTC ? 18 : 6;
     const entryFee = ethers.parseUnits(
@@ -6159,7 +6212,6 @@ async function joinTournament(id) {
       decimals,
     );
 
-    // ✅ Always use TREASURY_ADDRESS — never trust contract.platform() alone
     const PLATFORM = TREASURY_ADDRESS;
     if (!PLATFORM || !/^0x[a-fA-F0-9]{40}$/i.test(PLATFORM)) {
       return toast("Treasury address not loaded. Try again.", "error");
@@ -6167,6 +6219,9 @@ async function joinTournament(id) {
 
     const tasksPassed = await checkTasksGate("join");
     if (!tasksPassed) return;
+
+    // ── PAYMENT — only happens after all checks pass ──────────────────────
+    let paymentTxHash = null;
 
     if (isZkLTC) {
       toast("Paying entry in zkLTC...", "info");
@@ -6176,7 +6231,11 @@ async function joinTournament(id) {
         gasLimit: 21000,
       });
       toast("⛓️ Confirming zkLTC payment...", "info");
-      await tx.wait();
+      const receipt = await tx.wait();
+      if (!receipt || receipt.status !== 1) {
+        throw new Error("Payment transaction failed onchain");
+      }
+      paymentTxHash = tx.hash;
       toast("✅ zkLTC payment confirmed!", "success");
     } else {
       // Arc USDC path
@@ -6207,8 +6266,6 @@ async function joinTournament(id) {
       }
 
       const freshUsdc = new ethers.Contract(arcUsdcAddress, USDC_ABI, signer);
-
-      // Check allowance
       const allowance = await freshUsdc.allowance(userAddress, PLATFORM);
       if (allowance < entryFee) {
         toast("Step 1/2: Approving USDC transfer...", "info");
@@ -6226,11 +6283,47 @@ async function joinTournament(id) {
       );
       const transferTx = await usdcW.transfer(PLATFORM, entryFee);
       toast("⛓️ Confirming payment...", "info");
-      await transferTx.wait();
+      const transferReceipt = await transferTx.wait();
+      if (!transferReceipt || transferReceipt.status !== 1) {
+        throw new Error("Payment transaction failed onchain");
+      }
+      paymentTxHash = transferTx.hash;
       toast("✅ Entry fee sent!", "success");
     }
 
-    // ✅ Register join in backend
+    // ── BACKEND REGISTRATION — with payment tx proof ──────────────────────
+    // Re-verify auth one more time before registering (session could expire
+    // during the signing flow which can take 30-60 seconds)
+    const authCheck2 = await fetch(`${BACKEND}/auth/me`, {
+      credentials: "include",
+    });
+    const authData2 = await authCheck2.json();
+    if (!authData2.user) {
+      // Payment went through but session expired mid-flow.
+      // Record the orphaned payment so admin can refund manually.
+      console.error(
+        `ORPHANED PAYMENT: tournament=${id} wallet=${userAddress} ` +
+          `txHash=${paymentTxHash} amount=${t.entry_fee} ${t.token_symbol}`,
+      );
+      toast(
+        `⚠️ Payment sent (TX: ${paymentTxHash?.slice(0, 12)}...) but session expired. ` +
+          `Please reconnect wallet — your registration will be recovered.`,
+        "error",
+      );
+      // Attempt backend recovery with tx hash proof
+      await fetch(`${BACKEND}/tournaments/${id}/recover-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wallet: userAddress,
+          txHash: paymentTxHash,
+          amount: t.entry_fee,
+          tokenSymbol: t.token_symbol,
+        }),
+      }).catch(() => {});
+      return;
+    }
+
     let csrfToken = "";
     try {
       const ct = await fetch(`${BACKEND}/csrf-token`, {
@@ -6246,15 +6339,48 @@ async function joinTournament(id) {
         "CSRF-Token": csrfToken,
       },
       credentials: "include",
-      body: JSON.stringify({ wallet: userAddress }),
+      body: JSON.stringify({
+        wallet: userAddress,
+        txHash: paymentTxHash,
+      }),
     });
     const data = await joinRes.json();
-    if (!joinRes.ok) return toast(data.error || "Join failed", "error");
+
+    if (!joinRes.ok) {
+      // Payment went through but registration failed
+      if (data.error?.includes("already")) {
+        toast("You are already registered!", "info");
+      } else {
+        console.error(
+          `REGISTRATION FAILED AFTER PAYMENT: tournament=${id} ` +
+            `wallet=${userAddress} txHash=${paymentTxHash} error=${data.error}`,
+        );
+        toast(
+          `⚠️ Payment confirmed (TX: ${paymentTxHash?.slice(0, 12)}...) but registration failed: ${data.error}. ` +
+            `Contact support with your TX hash.`,
+          "error",
+        );
+      }
+      await openTournament(id);
+      return;
+    }
 
     toast("🏆 Successfully entered tournament!", "success");
-    openTournament(id);
+    await openTournament(id);
   } catch (e) {
-    toast("Failed: " + (e.reason || e.message), "error");
+    // User rejected wallet prompt — no funds lost
+    if (e.code === 4001 || e.message?.includes("user rejected")) {
+      toast("Transaction cancelled.", "info");
+    } else {
+      toast("Failed: " + (e.reason || e.message), "error");
+    }
+  } finally {
+    // Always release the lock
+    window._joiningTournament = null;
+    if (joinBtn) {
+      joinBtn.disabled = false;
+      joinBtn.textContent = `💰 Pay ${""} & Enter Tournament`;
+    }
   }
 }
 
