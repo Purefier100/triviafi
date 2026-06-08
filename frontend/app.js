@@ -2530,7 +2530,6 @@ async function openGameReadOnly(gameId, gameChainId) {
       if (myWinnerPos >= 0) {
         myPrize = prizes[myWinnerPos] || 0;
 
-        // Get claimed status (this one is always reliable)
         try {
           const statusRes = await readContract.getPlayerStatus(
             gameId,
@@ -2539,34 +2538,39 @@ async function openGameReadOnly(gameId, gameChainId) {
           alreadyClaimed = statusRes[2];
         } catch (_) {}
 
-        // ✅ PRIMARY: leaderboard score — only trust this, NOT getPlayerStatus[1]
-        // because the contract sets finished=true for auto-assigned topPlayers slots
+        // PRIMARY: leaderboard score
         try {
           const [lbAddrs, lbScores] = await Promise.race([
             readContract.getLeaderboard(gameId),
             new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
           ]);
+
           const myLbIdx = lbAddrs.findIndex(
             (a) => a?.toLowerCase() === userAddress.toLowerCase(),
           );
+
           if (myLbIdx >= 0 && Number(lbScores[myLbIdx]) > 0) {
             actuallyPlayed = true;
           }
         } catch (_) {}
 
-        // ✅ FALLBACK: DB session finished flag — covers genuine 0-score players
+        // FALLBACK: DB finished flag
         if (!actuallyPlayed) {
           try {
             const chk = await fetch(
               `${BACKEND}/game/status/${gameId}?chainId=${currentGameChainId || 5042002}`,
               { credentials: "include" },
             );
+
             const d = await chk.json();
-            if (d.finished) actuallyPlayed = true;
+
+            if (d.finished) {
+              actuallyPlayed = true;
+            }
           } catch (_) {}
         }
 
-        // In topPlayers but never actually played — clear winner slot
+        // In topPlayers but never actually played
         if (!actuallyPlayed) {
           myWinnerPos = -1;
           myPrize = 0;
@@ -2580,36 +2584,47 @@ async function openGameReadOnly(gameId, gameChainId) {
       const rows = addrs
         .map((a, i) => ({ a, sc: Number(scoreList[i]), fin: finished[i] }))
         .sort((a, b) => b.sc - a.sc);
+
+      // Assign medal ranks only to players who actually scored
+      let medalIndex = 0;
       lbHtml = rows
-        .map(
-          (r, i) => `<div class="lb-row ${
+        .map((r, i) => {
+          const hasScore = r.sc > 0 && r.fin;
+          const rankDisplay = hasScore
+            ? medalIndex === 0
+              ? "🥇"
+              : medalIndex === 1
+                ? "🥈"
+                : medalIndex === 2
+                  ? "🥉"
+                  : `#${medalIndex + 1}`
+            : `#${i + 1}`;
+          if (hasScore) medalIndex++;
+
+          return `<div class="lb-row ${
             Array.from(topPlayers).some(
               (p) => p?.toLowerCase() === r.a.toLowerCase(),
             )
               ? "lb-winner"
               : ""
           }">
-        <span class="lb-rank">${
-          i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)
-        }</span>
-        <span class="lb-addr">${fmt(r.a)}${
-          r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
-        }</span>
-        <span class="lb-score" style="${r.sc === 0 ? "color:rgba(255,255,255,.2)" : ""}">
-        ${r.sc > 0 ? r.sc + " pts" : "didn't play"}
-        </span>
-        ${
-          i < 3 && prizes[i] > 0 && r.sc > 0
-            ? `<span style="color:var(--gold);font-size:.73rem">${prizes[i].toFixed(dp)} ${gameSymbol}</span>`
-            : i < 3 && r.sc === 0
-              ? `<span style="font-size:.68rem;color:var(--muted)">no score</span>`
-              : ""
-        }
-        <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
-          r.fin ? "Done" : "—"
-        }</span>
-      </div>`,
-        )
+            <span class="lb-rank">${rankDisplay}</span>
+            <span class="lb-addr">${fmt(r.a)}${
+              r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
+            }</span>
+            <span class="lb-score" style="${r.sc === 0 ? "color:rgba(255,255,255,.2)" : ""}">
+              ${r.sc > 0 ? r.sc + " pts" : "didn't play"}
+            </span>
+            ${
+              hasScore && i < 3 && prizes[i] > 0
+                ? `<span style="color:var(--gold);font-size:.73rem">${prizes[medalIndex - 1]?.toFixed(dp) || ""} ${gameSymbol}</span>`
+                : `<span style="font-size:.68rem;color:var(--muted)">no score</span>`
+            }
+            <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
+              r.fin ? "Done" : "—"
+            }</span>
+          </div>`;
+        })
         .join("");
     } catch (_) {
       lbHtml = `<p style="color:var(--muted)">No scores yet.</p>`;
