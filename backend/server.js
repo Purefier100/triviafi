@@ -1417,6 +1417,7 @@ app.get("/game/status/:gameId", async (req, res) => {
       status,
       played: r.rows.length > 0,
       finished: r.rows[0]?.finished || false,
+      score: r.rows[0]?.score || 0,
       onchain,
     });
   } catch (e) {

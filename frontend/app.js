@@ -2532,11 +2532,12 @@ async function openGameReadOnly(gameId, gameChainId) {
             gameId,
             userAddress,
           );
-          actuallyPlayed = statusRes[1]; // ✅ index 1 = submitted score onchain
+          actuallyPlayed = statusRes[1]; // true = submitScore was called onchain
           alreadyClaimed = statusRes[2];
         } catch (_) {}
 
-        // Also check server-side as fallback
+        // ✅ If onchain says finished=false, also check DB as fallback
+        // (covers case where TX confirmed but frontend missed it)
         if (!actuallyPlayed) {
           try {
             const chk = await fetch(
@@ -2544,11 +2545,11 @@ async function openGameReadOnly(gameId, gameChainId) {
               { credentials: "include" },
             );
             const d = await chk.json();
-            if (d.finished || d.played) actuallyPlayed = true;
+            // Server finished=true means they actually submitted — trust it
+            if (d.finished) actuallyPlayed = true;
           } catch (_) {}
         }
 
-        // If they didn't actually play — reset winner position so no prize shown
         if (!actuallyPlayed) {
           myWinnerPos = -1;
           myPrize = 0;
