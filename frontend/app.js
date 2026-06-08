@@ -1216,34 +1216,6 @@ async function getGame(id) {
   return null;
 }
 
-// Convert a DB game row to the same indexed array format as onchain gameToArray()
-function dbRowToGameArray(row) {
-  const net = NETWORKS[row.chain_id] || NETWORKS[5042002];
-  const decimals = net.decimals;
-  return [
-    row.contract_game_id, // [0] id
-    row.name, // [1] name
-    row.creator, // [2] creator
-    0, // [3] categoryId
-    row.category || "", // [4] categoryName
-    row.difficulty || 0, // [5] difficulty
-    BigInt(Math.round(parseFloat(row.entry_fee || 0) * 10 ** decimals)), // [6] entryFee
-    row.max_players || 0, // [7] maxPlayers
-    BigInt(Math.round(parseFloat(row.prize_pool || 0) * 10 ** decimals)), // [8] prizePool
-    0, // [9] playerCount
-    0, // [10] registrationEnd
-    0, // [11] playDeadline
-    [
-      "0x0000000000000000000000000000000000000000",
-      "0x0000000000000000000000000000000000000000",
-      "0x0000000000000000000000000000000000000000",
-    ], // [12] topPlayers
-    false, // [13] prizeClaimed
-    row.status || 0, // [14] status
-    0, // [15] finishedCount
-  ];
-}
-
 async function createProvider(chainId) {
   const numericChainId =
     typeof chainId === "string"
@@ -1760,38 +1732,56 @@ async function loadGames() {
   lastGamesRender = renderId;
   const grid = document.getElementById("gamesList");
 
-  // ── PHASE 1: Show DB games instantly (no RPC) ──────────────────────────
-  try {
-    const dbRes = await fetch(`${BACKEND}/games`);
-    const dbGames = await dbRes.json();
-
-    if (Array.isArray(dbGames) && dbGames.length > 0) {
-      // Convert DB rows to the same shape as onchain games
-      allGames = dbGames.map((row) => ({
-        i: row.contract_game_id,
-        chainId: row.chain_id,
-        net: NETWORKS[row.chain_id] || NETWORKS[5042002],
-        g: dbRowToGameArray(row),
-        _fromDb: true,
-      }));
-      allGames.sort((a, b) => b.i - a.i);
-      renderGames(); // instant render — no RPC waited
-      updateTicker();
-    } else {
-      if (grid) grid.innerHTML = skeletonCards(6);
-    }
-  } catch (_) {
-    if (grid && allGames.length === 0) grid.innerHTML = skeletonCards(6);
+  // Show skeleton only on first load
+  if (grid && allGames.length === 0) {
+    grid.innerHTML = skeletonCards(6);
+    // Retry button after 10s
+    setTimeout(() => {
+      if (grid.querySelector(".skeleton-card")) {
+        grid.innerHTML = `
+          <div style="grid-column:1/-1;text-align:center;padding:40px">
+            <div style="font-size:2rem;margin-bottom:12px">⚡</div>
+            <p style="color:var(--muted);margin-bottom:16px">Connecting to blockchain...</p>
+            <button class="btn btn-ghost btn-sm" style="width:auto;padding:10px 28px"
+              onclick="loadGames()">🔄 Retry</button>
+          </div>`;
+      }
+    }, 10000);
+  } else if (allGames.length > 0) {
+    renderGames(); // instant re-render from cache
   }
 
-  // ── PHASE 2: Hydrate with fresh onchain data in background ─────────────
   try {
-    const arcProvider = new ethers.JsonRpcProvider(
+    // ── Parallel fetch both chains ──────────────────────────────────────
+    const arcRpcs = [
       "https://rpc.testnet.arc.network",
-    );
-    const litvmProvider = new ethers.JsonRpcProvider(
+      "https://rpc.drpc.testnet.arc.network",
+    ];
+    const litvmRpcs = [
       "https://liteforge-testnet.rpc.caldera.xyz/http",
-    );
+      "https://liteforge.rpc.caldera.xyz/http",
+    ];
+
+    // Pick fastest responding RPC for each chain
+    async function getFastProvider(rpcs, chainId, name) {
+      for (const rpc of rpcs) {
+        try {
+          const p = new ethers.JsonRpcProvider(rpc, { chainId, name });
+          await Promise.race([
+            p.getBlockNumber(),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
+          ]);
+          return p;
+        } catch (_) {}
+      }
+      return new ethers.JsonRpcProvider(rpcs[0], { chainId, name });
+    }
+
+    const [arcProvider, litvmProvider] = await Promise.all([
+      getFastProvider(arcRpcs, 5042002, "arc-testnet"),
+      getFastProvider(litvmRpcs, 4441, "litvm"),
+    ]);
+
     const arcRC = new ethers.Contract(
       NETWORKS[5042002].contractAddress,
       ABI,
@@ -1803,14 +1793,15 @@ async function loadGames() {
       litvmProvider,
     );
 
+    // Get game counts
     const [arcCount, litvmCount] = await Promise.all([
       Promise.race([
         arcRC.gameCounter().then(Number),
-        new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
+        new Promise((_, r) => setTimeout(() => r(0), 4000)),
       ]).catch(() => 0),
       Promise.race([
         litvmRC.gameCounter().then(Number),
-        new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
+        new Promise((_, r) => setTimeout(() => r(0), 4000)),
       ]).catch(() => 0),
     ]);
 
@@ -1819,75 +1810,59 @@ async function loadGames() {
       return;
     }
 
-    const totalCount = arcCount + litvmCount;
-    document.getElementById("gTotal").textContent = totalCount;
+    document.getElementById("gTotal").textContent = arcCount + litvmCount;
 
-    const LIMIT = 50,
-      BATCH = 5;
+    // ── Fetch only last 30 games per chain in large parallel batches ────
+    const LIMIT = 30,
+      BATCH = 10; // bigger batches = fewer round trips
     const freshGames = [];
-    let arcPool = 0n,
-      litvmPool = 0n,
-      activeCount = 0;
-    const nowSec = Math.floor(Date.now() / 1000);
 
-    // Fetch Arc
-    const arcIds = [];
-    for (let i = arcCount; i >= Math.max(1, arcCount - LIMIT + 1); i--)
-      arcIds.push(i);
-    for (let b = 0; b < arcIds.length; b += BATCH) {
-      const batch = arcIds.slice(b, b + BATCH);
-      const results = await Promise.allSettled(
-        batch.map((i) =>
-          Promise.race([
-            arcRC.getGame(i).then((g) => ({
-              i,
-              g: gameToArray(g),
-              chainId: 5042002,
-              net: NETWORKS[5042002],
-            })),
-            new Promise((_, r) => setTimeout(() => r(new Error("t")), 6000)),
-          ]),
-        ),
-      );
-      for (const r of results)
-        if (r.status === "fulfilled") freshGames.push(r.value);
+    async function fetchChainGames(rc, count, chainId) {
+      const net = NETWORKS[chainId];
+      const ids = [];
+      for (let i = count; i >= Math.max(1, count - LIMIT + 1); i--) ids.push(i);
+
+      const results = [];
+      for (let b = 0; b < ids.length; b += BATCH) {
+        const batch = ids.slice(b, b + BATCH);
+        const settled = await Promise.allSettled(
+          batch.map((i) =>
+            Promise.race([
+              rc
+                .getGame(i)
+                .then((g) => ({ i, g: gameToArray(g), chainId, net })),
+              new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
+            ]),
+          ),
+        );
+        for (const r of settled)
+          if (r.status === "fulfilled") results.push(r.value);
+      }
+      return results;
     }
 
-    // Fetch LitVM
-    const litvmIds = [];
-    for (let i = litvmCount; i >= Math.max(1, litvmCount - LIMIT + 1); i--)
-      litvmIds.push(i);
-    for (let b = 0; b < litvmIds.length; b += BATCH) {
-      const batch = litvmIds.slice(b, b + BATCH);
-      const results = await Promise.allSettled(
-        batch.map((i) =>
-          Promise.race([
-            litvmRC.getGame(i).then((g) => ({
-              i,
-              g: gameToArray(g),
-              chainId: 4441,
-              net: NETWORKS[4441],
-            })),
-            new Promise((_, r) => setTimeout(() => r(new Error("t")), 6000)),
-          ]),
-        ),
-      );
-      for (const r of results)
-        if (r.status === "fulfilled") freshGames.push(r.value);
-    }
+    // Fetch both chains simultaneously
+    const [arcGames, litvmGames] = await Promise.all([
+      arcCount > 0 ? fetchChainGames(arcRC, arcCount, 5042002) : [],
+      litvmCount > 0 ? fetchChainGames(litvmRC, litvmCount, 4441) : [],
+    ]);
 
     if (renderId !== lastGamesRender) {
       gamesLoading = false;
       return;
     }
 
-    // Replace DB games with fresh onchain data silently
-    allGames = freshGames;
+    allGames = [...arcGames, ...litvmGames];
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
 
+    // ── Stats ───────────────────────────────────────────────────────────
+    let arcPool = 0n,
+      litvmPool = 0n,
+      activeCount = 0;
+    const nowSec = Math.floor(Date.now() / 1000);
+
     for (const { g, net } of allGames) {
-      const isOpen = Number(g[14]) === 0;
-      if (isOpen) {
+      if (Number(g[14]) === 0) {
         if (net.decimals === 6) arcPool += BigInt(g[8]);
         else litvmPool += BigInt(g[8]);
         if (Number(g[11]) > nowSec) activeCount++;
@@ -1896,15 +1871,13 @@ async function loadGames() {
 
     document.getElementById("gActive").textContent = activeCount;
 
-    // Volume display
+    // Volume
     let dbArcVol = 0,
       dbLitvmVol = 0;
     try {
-      const statsData = await fetch(`${BACKEND}/stats/global`).then((r) =>
-        r.json(),
-      );
-      dbArcVol = parseFloat(statsData.arcVolume || 0);
-      dbLitvmVol = parseFloat(statsData.litvmVolume || 0);
+      const s = await fetch(`${BACKEND}/stats/global`).then((r) => r.json());
+      dbArcVol = parseFloat(s.arcVolume || 0);
+      dbLitvmVol = parseFloat(s.litvmVolume || 0);
     } catch (_) {}
 
     const finalArc = Math.max(
@@ -1918,62 +1891,29 @@ async function loadGames() {
 
     document.getElementById("gPool").innerHTML = `
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center">
-        <span style="color:var(--accent);font-weight:700;font-size:1rem">${finalArc > 0 ? `$${finalArc.toFixed(2)}` : "$0.00"} USDC</span>
+        <span style="color:var(--accent);font-weight:700;font-size:1rem">
+          ${finalArc > 0 ? `$${finalArc.toFixed(2)}` : "$0.00"} USDC
+        </span>
         <span style="color:var(--muted);font-size:.75rem">+</span>
-        <span style="color:var(--purple);font-weight:700;font-size:1rem">${finalLitvm > 0 ? finalLitvm.toFixed(4) : "0.0000"} zkLTC</span>
+        <span style="color:var(--purple);font-weight:700;font-size:1rem">
+          ${finalLitvm > 0 ? finalLitvm.toFixed(4) : "0.0000"} zkLTC
+        </span>
       </div>
-      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-top:5px">Total Volume</div>`;
+      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;
+        letter-spacing:.6px;margin-top:5px">Total Volume</div>`;
 
-    renderGames(); // re-render with fresh onchain data
+    renderGames();
     updateTicker();
-
-    // ✅ Sync fresh onchain data back to DB so next page load is accurate
-    try {
-      let csrfToken = "";
-      try {
-        const ct = await fetch(`${BACKEND}/csrf-token`, {
-          credentials: "include",
-        });
-        csrfToken = (await ct.json()).csrfToken || "";
-      } catch (_) {}
-
-      // Only sync games that changed (status or prize_pool differs)
-      const toSync = freshGames
-        .filter(({ g }) => {
-          const s = Number(g[14]);
-          const pool = parseFloat(ethers.formatUnits(g[8], 6));
-          return s !== 0 || pool > 0; // sync ended games and games with prize pools
-        })
-        .slice(0, 20); // limit to 20 to avoid hammering backend
-
-      for (const { i, g, chainId: cid, net } of toSync) {
-        const decimals = net.decimals;
-        fetch(`${BACKEND}/games/save`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "CSRF-Token": csrfToken,
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            chainId: cid,
-            contractGameId: i,
-            creator: g[2],
-            name: g[1],
-            category: g[4],
-            difficulty: Number(g[5]),
-            entryFee: parseFloat(ethers.formatUnits(g[6], decimals)),
-            tokenSymbol: net.symbol,
-            maxPlayers: Number(g[7]),
-            txHash: "",
-            prizePool: parseFloat(ethers.formatUnits(g[8], decimals)),
-            status: Number(g[14]),
-          }),
-        }).catch(() => {});
-      }
-    } catch (_) {}
   } catch (e) {
-    console.warn("RPC hydration failed (DB data still shown):", e.message);
+    console.warn("loadGames error:", e.message);
+    if (grid && allGames.length === 0) {
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;text-align:center;padding:40px">
+          <p style="color:var(--muted);margin-bottom:16px">Could not load games.</p>
+          <button class="btn btn-ghost btn-sm" style="width:auto"
+            onclick="loadGames()">🔄 Retry</button>
+        </div>`;
+    }
   }
 
   gamesLoading = false;
@@ -2375,20 +2315,20 @@ function renderGames() {
 
     let phase = "",
       phaseColor = "var(--muted)";
+    const hasDeadlines = Number(g[10]) > 0 || Number(g[11]) > 0;
     if (s === 0) {
-      if (regSecs > 0) {
-        phase = "📋 Joining Open";
+      if (!hasDeadlines) {
+        // Data still loading — show nothing, not "Ended (pending)"
+        phase = "";
+      } else if (regSecs > 0) {
+        phase = "📋 Open — Joining Now";
         phaseColor = "var(--green)";
       } else if (playSecs > 0) {
-        phase = "🎮 Playing Now";
+        phase = "🎮 Live — Play Now!";
         phaseColor = "var(--gold)";
-      } else if (Number(g[10]) === 0 && Number(g[11]) === 0) {
-        // ✅ DB game — deadlines not loaded yet, show as loading
-        phase = "⏳ Loading...";
-        phaseColor = "var(--muted)";
       } else {
-        phase = "⏰ Ended (pending)";
-        phaseColor = "var(--red)";
+        phase = "⏰ Ended (pending close)";
+        phaseColor = "var(--muted)";
       }
     } else if (s === 1) {
       phase = "✅ Finished";
@@ -2471,7 +2411,7 @@ function renderGames() {
       <div class="gcard-title">#${i} ${sanitizeText(name)} <span class="badge ${
         STATUS_BADGE[s]
       }">${STATUS_LABEL[s]}</span>${agentBadge}${chainBadge}</div>
-      <div style="font-size:.75rem;color:${phaseColor};margin-bottom:8px;font-weight:600">${phase}</div>
+      ${phase ? `<div style="font-size:.75rem;color:${phaseColor};margin-bottom:8px;font-weight:600">${phase}</div>` : ""}
       <div class="gmeta">💰 Entry: <strong>${feeFormatted} ${tokenSymbol}</strong> | 🏆 Pool: <strong>${poolFormatted} ${tokenSymbol}</strong></div>
       <div class="gmeta">👥 <strong>${n}/${maxPlayers}</strong> joined | ✅ <strong>${finishedCount}</strong> done</div>
       <div class="gmeta">By: <span style="color:var(--purple)">${fmt(
