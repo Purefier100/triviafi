@@ -1254,7 +1254,21 @@ async function createProvider(chainId) {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
-  readProvider = await createProvider();
+  // ✅ Show dashes temporarily, then load — prevents hanging UI
+  document.getElementById("gTotal").textContent = "...";
+  document.getElementById("gActive").textContent = "...";
+  // ✅ Don't let provider creation block the whole page
+  try {
+    readProvider = await Promise.race([
+      createProvider(),
+      new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 4000)),
+    ]);
+  } catch (_) {
+    // Fallback to default RPC without waiting
+    readProvider = new ethers.JsonRpcProvider(
+      "https://rpc.testnet.arc.network",
+    );
+  }
   readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
   await loadTreasuryAddress();
   buildCatGrid();
@@ -1720,6 +1734,15 @@ async function loadGames() {
   // Only show skeleton on first load, not background refreshes
   if (grid && allGames.length === 0) {
     grid.innerHTML = skeletonCards(6);
+    // ✅ Show "Loading games..." text so user knows it's working
+    setTimeout(() => {
+      if (grid.querySelector(".skeleton-card")) {
+        grid.innerHTML = `<p style="color:var(--muted);text-align:center;padding:24px">
+          Loading games... <span style="font-size:.8rem">(RPC may be slow)</span>
+          <br><button class="btn btn-ghost btn-sm" style="margin-top:12px;width:auto" onclick="loadGames()">🔄 Retry</button>
+        </p>`;
+      }
+    }, 8000); // Show retry button after 8s if still loading
   }
 
   if (allGames.length > 0) {
@@ -1746,14 +1769,14 @@ async function loadGames() {
     );
 
     const [arcCount, litvmCount] = await Promise.all([
-      arcRC
-        .gameCounter()
-        .then(Number)
-        .catch(() => 0),
-      litvmRC
-        .gameCounter()
-        .then(Number)
-        .catch(() => 0),
+      Promise.race([
+        arcRC.gameCounter().then(Number),
+        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 5000)),
+      ]).catch(() => 0),
+      Promise.race([
+        litvmRC.gameCounter().then(Number),
+        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 5000)),
+      ]).catch(() => 0),
     ]);
 
     const totalCount = arcCount + litvmCount;
@@ -1785,12 +1808,17 @@ async function loadGames() {
       const batch = arcIds.slice(b, b + BATCH);
       const results = await Promise.allSettled(
         batch.map((i) =>
-          arcRC.getGame(i).then((g) => ({
-            i,
-            g: gameToArray(g),
-            chainId: 5042002,
-            net: NETWORKS[5042002],
-          })),
+          Promise.race([
+            arcRC.getGame(i).then((g) => ({
+              i,
+              g: gameToArray(g),
+              chainId: 5042002,
+              net: NETWORKS[5042002],
+            })),
+            new Promise((_, r) =>
+              setTimeout(() => r(new Error("timeout")), 6000),
+            ),
+          ]),
         ),
       );
       for (const r of results)
@@ -1805,12 +1833,17 @@ async function loadGames() {
       const batch = litvmIds.slice(b, b + BATCH);
       const results = await Promise.allSettled(
         batch.map((i) =>
-          litvmRC.getGame(i).then((g) => ({
-            i,
-            g: gameToArray(g),
-            chainId: 4441,
-            net: NETWORKS[4441],
-          })),
+          Promise.race([
+            litvmRC.getGame(i).then((g) => ({
+              i,
+              g: gameToArray(g),
+              chainId: 4441,
+              net: NETWORKS[4441],
+            })),
+            new Promise((_, r) =>
+              setTimeout(() => r(new Error("timeout")), 6000),
+            ),
+          ]),
         ),
       );
       for (const r of results)
