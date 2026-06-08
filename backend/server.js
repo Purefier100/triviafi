@@ -71,8 +71,10 @@ const LITVM_RPC_URL =
 
 const LITVM_RPCS_LIST = [
   process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http",
-  "https://liteforge-testnet.rpc.caldera.xyz/http",
-];
+  "https://liteforge.rpc.caldera.xyz/http",
+  "https://rpc.conduit.xyz/public/litforge-testnet/main",
+  "https://litforge-testnet.rpc.caldera.xyz/http",
+].filter(Boolean);
 
 const LITVM_RPCS = [LITVM_RPC_URL];
 const ARC_RPCS = [
@@ -148,6 +150,30 @@ const writeContract = new ethers.Contract(
   verifierSigner,
 );
 
+async function makeLitvmProviderFast() {
+  for (const rpc of LITVM_RPCS_LIST) {
+    try {
+      const p = new ethers.JsonRpcProvider(rpc, {
+        chainId: 4441,
+        name: "litvm",
+      });
+      await Promise.race([
+        p.getBlockNumber(),
+        new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
+      ]);
+      console.log(`✅ LitVM RPC: ${rpc}`);
+      return p;
+    } catch (_) {
+      console.warn(`❌ LitVM RPC failed: ${rpc}`);
+    }
+  }
+  // All failed — return default anyway
+  return new ethers.JsonRpcProvider(LITVM_RPCS_LIST[0], {
+    chainId: 4441,
+    name: "litvm",
+  });
+}
+
 // ✅ UNIVERSAL RETRY — handles txpool full, timeouts, and stale connections
 async function withRetry(fn, label = "rpc", retries = 6) {
   for (let i = 1; i <= retries; i++) {
@@ -191,10 +217,10 @@ async function withRetry(fn, label = "rpc", retries = 6) {
   }
 }
 
-async function withLitvmRetry(fn, label = "litvm", retries = 4) {
+async function withLitvmRetry(fn, label = "litvm", retries = 6) {
   for (let i = 1; i <= retries; i++) {
     try {
-      const provider = makeLitvmProvider(i - 1); // rotates RPCs
+      const provider = makeLitvmProvider(i - 1);
       const contract = new ethers.Contract(
         LITVM_CONTRACT_ADDRESS,
         CONTRACT_ABI,
@@ -203,7 +229,7 @@ async function withLitvmRetry(fn, label = "litvm", retries = 4) {
       const result = await Promise.race([
         fn(contract, provider),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("LitVM timeout")), 12000),
+          setTimeout(() => reject(new Error("LitVM timeout")), 15000),
         ),
       ]);
       return result;
@@ -2853,9 +2879,10 @@ if (process.env.NODE_ENV === "production") {
             try {
               let txHash;
               if (isLitvm) {
-                const ws = verifierWallet.connect(makeLitvmProvider());
+                const fastProvider = await makeLitvmProviderFast();
+                const ws = verifierWallet.connect(fastProvider);
                 const tx = await ws.sendTransaction({
-                  to: p.wallet,
+                  to: wallet,
                   value: amountWei,
                   gasLimit: 21000,
                 });
@@ -2986,7 +3013,8 @@ app.post("/admin/manual-refund", async (req, res) => {
     let txHash;
 
     if (isLitvm) {
-      const ws = verifierWallet.connect(makeLitvmProvider());
+      const fastProvider = await makeLitvmProviderFast();
+      const ws = verifierWallet.connect(fastProvider);
       const tx = await ws.sendTransaction({
         to: wallet,
         value: amountWei,
@@ -3242,7 +3270,8 @@ app.post("/games/:gameId/refund", async (req, res) => {
     try {
       let txHash;
       if (isLitvm) {
-        const ws = verifierWallet.connect(makeLitvmProvider());
+        const fastProvider = await makeLitvmProviderFast();
+        const ws = verifierWallet.connect(fastProvider);
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
@@ -3451,9 +3480,10 @@ app.post("/admin/refund-expired-tournament", async (req, res) => {
       try {
         let txHash;
         if (isLitvm) {
-          const ws = verifierWallet.connect(makeLitvmProvider());
+          const fastProvider = await makeLitvmProviderFast();
+          const ws = verifierWallet.connect(fastProvider);
           const tx = await ws.sendTransaction({
-            to: p.wallet,
+            to: wallet,
             value: amountWei,
             gasLimit: 21000,
           });
@@ -4315,7 +4345,8 @@ app.post("/tournaments/:id/claim", async (req, res) => {
     try {
       let txHash;
       if (isLitvm) {
-        const ws = verifierWallet.connect(makeLitvmProvider());
+        const fastProvider = await makeLitvmProviderFast();
+        const ws = verifierWallet.connect(fastProvider);
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
@@ -4436,7 +4467,8 @@ app.post("/tournaments/:id/refund", async (req, res) => {
     try {
       let txHash;
       if (isLitvm) {
-        const ws = verifierWallet.connect(makeLitvmProvider());
+        const fastProvider = await makeLitvmProviderFast();
+        const ws = verifierWallet.connect(fastProvider);
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
