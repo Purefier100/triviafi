@@ -2573,9 +2573,15 @@ async function openGameReadOnly(gameId, gameChainId) {
 
             console.log("DB DEBUG", d);
 
+            console.log("DB DEBUG", d);
+            console.log("BEFORE FALLBACK", actuallyPlayed);
+
             if (d.finished) {
+              console.log("SETTING actuallyPlayed FROM DB");
               actuallyPlayed = true;
             }
+
+            console.log("AFTER FALLBACK", actuallyPlayed);
           } catch (_) {}
         }
 
@@ -2584,6 +2590,11 @@ async function openGameReadOnly(gameId, gameChainId) {
           myWinnerPos = -1;
           myPrize = 0;
         }
+        console.log("PRE CLEANUP", {
+          actuallyPlayed,
+          myWinnerPos,
+          myPrize,
+        });
         console.log("WINNER CHECK", {
           userAddress,
           actuallyPlayed,
