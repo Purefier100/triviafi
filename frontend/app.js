@@ -2552,6 +2552,13 @@ async function openGameReadOnly(gameId, gameChainId) {
           if (myLbIdx >= 0 && Number(lbScores[myLbIdx]) > 0) {
             actuallyPlayed = true;
           }
+          console.log("LB DEBUG", {
+            myLbIdx,
+            addr: lbAddrs[myLbIdx],
+            score: lbScores[myLbIdx]?.toString?.() || lbScores[myLbIdx],
+            allAddrs: lbAddrs,
+            allScores: lbScores.map((s) => s.toString?.() || s),
+          });
         } catch (_) {}
 
         // FALLBACK: DB finished flag
