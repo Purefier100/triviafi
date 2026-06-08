@@ -69,6 +69,11 @@ const LITVM_CONTRACT_ADDRESS =
 const LITVM_RPC_URL =
   process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http";
 
+const LITVM_RPCS_LIST = [
+  "https://liteforge.rpc.caldera.xyz/http",
+  "https://rpc.conduit.xyz/public/alturanft/litforge-testnet/main",
+].filter(Boolean);
+
 const LITVM_RPCS = [LITVM_RPC_URL];
 const ARC_RPCS = [
   "https://rpc.testnet.arc.network",
@@ -122,8 +127,10 @@ const arcContract = new ethers.Contract(
 );
 
 // ── LitVM provider ────────────────────────────────────────────────────────────
-function makeLitvmProvider() {
-  return new ethers.JsonRpcProvider(LITVM_RPC_URL, {
+function makeLitvmProvider(attempt = 0) {
+  const rpc =
+    LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length] || LITVM_RPC_URL;
+  return new ethers.JsonRpcProvider(rpc, {
     chainId: 4441,
     name: "litvm",
   });
@@ -188,7 +195,7 @@ async function withRetry(fn, label = "rpc", retries = 6) {
 async function withLitvmRetry(fn, label = "litvm", retries = 4) {
   for (let i = 1; i <= retries; i++) {
     try {
-      const provider = makeLitvmProvider();
+      const provider = makeLitvmProvider(i - 1); // rotates RPCs
       const contract = new ethers.Contract(
         LITVM_CONTRACT_ADDRESS,
         CONTRACT_ABI,
@@ -204,7 +211,7 @@ async function withLitvmRetry(fn, label = "litvm", retries = 4) {
     } catch (e) {
       console.warn(`[${label}] attempt ${i}/${retries}: ${e.message}`);
       if (i === retries) throw e;
-      await new Promise((r) => setTimeout(r, 1500 * i));
+      await new Promise((r) => setTimeout(r, 2000 * i));
     }
   }
 }
@@ -3270,10 +3277,29 @@ app.post("/games/:gameId/refund", async (req, res) => {
         txHash,
       });
     } catch (payErr) {
-      console.error("Game refund tx failed:", payErr.message);
+      console.error("Game refund tx failed:", payErr.message, payErr.code);
+
+      // Specific error messages based on failure type
+      let userMsg =
+        "Refund transaction failed. Please try again or contact support.";
+      if (
+        payErr.message?.includes("insufficient funds") ||
+        payErr.code === "INSUFFICIENT_FUNDS"
+      ) {
+        userMsg =
+          "Treasury temporarily low on funds. Your refund is queued — contact support with game ID: " +
+          gameId;
+      } else if (payErr.message?.includes("timeout")) {
+        userMsg = "Network timeout. Please try again in a few minutes.";
+      }
+
+      // Log for manual processing
+      console.error(
+        `REFUND NEEDED: game=${gameId} chain=${chainId} wallet=${wallet} amount=${entryFee} ${tokenSymbol}`,
+      );
+
       return res.status(500).json({
-        error:
-          "Refund transaction failed. Please try again or contact support.",
+        error: userMsg,
         gameId,
       });
     }
