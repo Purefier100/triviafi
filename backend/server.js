@@ -70,9 +70,9 @@ const LITVM_RPC_URL =
   process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http";
 
 const LITVM_RPCS_LIST = [
+  process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http",
   "https://liteforge.rpc.caldera.xyz/http",
-  "https://rpc.conduit.xyz/public/alturanft/litforge-testnet/main",
-].filter(Boolean);
+];
 
 const LITVM_RPCS = [LITVM_RPC_URL];
 const ARC_RPCS = [
@@ -128,8 +128,7 @@ const arcContract = new ethers.Contract(
 
 // ── LitVM provider ────────────────────────────────────────────────────────────
 function makeLitvmProvider(attempt = 0) {
-  const rpc =
-    LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length] || LITVM_RPC_URL;
+  const rpc = LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length];
   return new ethers.JsonRpcProvider(rpc, {
     chainId: 4441,
     name: "litvm",

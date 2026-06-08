@@ -2530,7 +2530,7 @@ async function openGameReadOnly(gameId, gameChainId) {
       if (myWinnerPos >= 0) {
         myPrize = prizes[myWinnerPos] || 0;
 
-        // ✅ Check onchain status
+        // ✅ Check claimed status onchain
         try {
           const statusRes = await readContract.getPlayerStatus(
             gameId,
@@ -2539,18 +2539,60 @@ async function openGameReadOnly(gameId, gameChainId) {
           alreadyClaimed = statusRes[2];
         } catch (_) {}
 
-        // ✅ Check leaderboard score — must have score > 0 to be a real winner
+        // ✅ PRIMARY CHECK: leaderboard score > 0 means they actually submitted
+        // Build a fresh contract for the correct chain to avoid stale readContract
         try {
-          const [lbAddrs, lbScores] = await readContract.getLeaderboard(gameId);
+          const checkChainId = currentGameChainId || 5042002;
+          const checkNet = NETWORKS[checkChainId];
+          const checkRpcs =
+            checkChainId === 4441
+              ? [
+                  "https://liteforge-testnet.rpc.caldera.xyz/http",
+                  "https://liteforge.rpc.caldera.xyz/http",
+                ]
+              : [
+                  "https://rpc.testnet.arc.network",
+                  "https://rpc.drpc.testnet.arc.network",
+                ];
+
+          let checkProvider = new ethers.JsonRpcProvider(checkRpcs[0]);
+          for (const rpc of checkRpcs) {
+            try {
+              const p = new ethers.JsonRpcProvider(rpc);
+              await Promise.race([
+                p.getBlockNumber(),
+                new Promise((_, r) =>
+                  setTimeout(() => r(new Error("t")), 2000),
+                ),
+              ]);
+              checkProvider = p;
+              break;
+            } catch (_) {}
+          }
+          const checkContract = new ethers.Contract(
+            checkNet.contractAddress,
+            ABI,
+            checkProvider,
+          );
+
+          const [lbAddrs, lbScores] = await Promise.race([
+            checkContract.getLeaderboard(gameId),
+            new Promise((_, r) =>
+              setTimeout(() => r(new Error("timeout")), 5000),
+            ),
+          ]);
+
           const myLbIdx = lbAddrs.findIndex(
             (a) => a?.toLowerCase() === userAddress.toLowerCase(),
           );
+
           if (myLbIdx >= 0 && Number(lbScores[myLbIdx]) > 0) {
             actuallyPlayed = true;
           }
+          // If address not in leaderboard or score is 0 — didn't play
         } catch (_) {}
 
-        // ✅ Fallback: check DB session
+        // ✅ FALLBACK: DB session finished flag (handles edge cases)
         if (!actuallyPlayed) {
           try {
             const chk = await fetch(
@@ -2558,12 +2600,11 @@ async function openGameReadOnly(gameId, gameChainId) {
               { credentials: "include" },
             );
             const d = await chk.json();
-            // Only trust DB if score > 0 (rules out zero-score edge cases)
             if (d.finished) actuallyPlayed = true;
           } catch (_) {}
         }
 
-        // ✅ If in topPlayers but never actually played — treat as non-winner
+        // ✅ In topPlayers but never played — show refund instead
         if (!actuallyPlayed) {
           myWinnerPos = -1;
           myPrize = 0;
