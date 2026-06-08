@@ -1757,7 +1757,7 @@ async function loadGames() {
       "https://rpc.testnet.arc.network",
       "https://rpc.drpc.testnet.arc.network",
     ];
-    const litvmRpcs = ["https://liteforge-testnet.rpc.caldera.xyz/http"];
+    const litvmRpcs = ["https://liteforge.rpc.caldera.xyz/http"];
 
     // Pick fastest responding RPC for each chain
     async function getFastProvider(rpcs, chainId, name) {

@@ -70,10 +70,8 @@ const LITVM_RPC_URL =
   process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http";
 
 const LITVM_RPCS_LIST = [
-  process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http",
+  process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http",
   "https://liteforge.rpc.caldera.xyz/http",
-  "https://rpc.conduit.xyz/public/litforge-testnet/main",
-  "https://litforge-testnet.rpc.caldera.xyz/http",
 ].filter(Boolean);
 
 const LITVM_RPCS = [LITVM_RPC_URL];
