@@ -2578,10 +2578,9 @@ async function openGameReadOnly(gameId, gameChainId) {
             console.log("DB DEBUG", d);
             console.log("BEFORE FALLBACK", actuallyPlayed);
 
-            //if (d.finished) {
-            //  console.log("SETTING actuallyPlayed FROM DB");
-            //  actuallyPlayed = true;
-            //}
+            if (d.onchain === true) {
+              actuallyPlayed = true;
+            }
 
             console.log("AFTER FALLBACK", actuallyPlayed);
           } catch (_) {}
