@@ -548,7 +548,6 @@ async function initDB() {
   );
 `);
 
-    // In
     await pool
       .query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS status INT DEFAULT 0`)
       .catch(() => {});
@@ -906,25 +905,13 @@ app.post("/games/save", csrfProtection, async (req, res) => {
     });
 
     await pool.query(
-      `INSERT INTO games (
-      chain_id,
-      contract_game_id,
-      creator,
-      name,
-      category,
-      difficulty,
-      entry_fee,
-      token_symbol,
-      max_players,
-      tx_hash,
-      prize_pool,
-      status
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `INSERT INTO games (chain_id,contract_game_id,creator,name,category,
+      difficulty,entry_fee,token_symbol,max_players,tx_hash,prize_pool,status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12,0))
       ON CONFLICT (chain_id,contract_game_id)
       DO UPDATE SET
       prize_pool = EXCLUDED.prize_pool,
-      status = EXCLUDED.status`,
+      status     = COALESCE(EXCLUDED.status, games.status)`,
       [
         chainId,
         contractGameId,
@@ -937,7 +924,7 @@ app.post("/games/save", csrfProtection, async (req, res) => {
         maxPlayers,
         txHash,
         prizePool || 0,
-        status ?? 0,
+        req.body.status ?? null,
       ],
     );
 

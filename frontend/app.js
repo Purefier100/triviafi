@@ -1926,6 +1926,52 @@ async function loadGames() {
 
     renderGames(); // re-render with fresh onchain data
     updateTicker();
+
+    // ✅ Sync fresh onchain data back to DB so next page load is accurate
+    try {
+      let csrfToken = "";
+      try {
+        const ct = await fetch(`${BACKEND}/csrf-token`, {
+          credentials: "include",
+        });
+        csrfToken = (await ct.json()).csrfToken || "";
+      } catch (_) {}
+
+      // Only sync games that changed (status or prize_pool differs)
+      const toSync = freshGames
+        .filter(({ g }) => {
+          const s = Number(g[14]);
+          const pool = parseFloat(ethers.formatUnits(g[8], 6));
+          return s !== 0 || pool > 0; // sync ended games and games with prize pools
+        })
+        .slice(0, 20); // limit to 20 to avoid hammering backend
+
+      for (const { i, g, chainId: cid, net } of toSync) {
+        const decimals = net.decimals;
+        fetch(`${BACKEND}/games/save`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "CSRF-Token": csrfToken,
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            chainId: cid,
+            contractGameId: i,
+            creator: g[2],
+            name: g[1],
+            category: g[4],
+            difficulty: Number(g[5]),
+            entryFee: parseFloat(ethers.formatUnits(g[6], decimals)),
+            tokenSymbol: net.symbol,
+            maxPlayers: Number(g[7]),
+            txHash: "",
+            prizePool: parseFloat(ethers.formatUnits(g[8], decimals)),
+            status: Number(g[14]),
+          }),
+        }).catch(() => {});
+      }
+    } catch (_) {}
   } catch (e) {
     console.warn("RPC hydration failed (DB data still shown):", e.message);
   }
@@ -2336,6 +2382,10 @@ function renderGames() {
       } else if (playSecs > 0) {
         phase = "🎮 Playing Now";
         phaseColor = "var(--gold)";
+      } else if (Number(g[10]) === 0 && Number(g[11]) === 0) {
+        // ✅ DB game — deadlines not loaded yet, show as loading
+        phase = "⏳ Loading...";
+        phaseColor = "var(--muted)";
       } else {
         phase = "⏰ Ended (pending)";
         phaseColor = "var(--red)";
