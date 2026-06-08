@@ -2575,6 +2575,12 @@ async function openGameReadOnly(gameId, gameChainId) {
           myWinnerPos = -1;
           myPrize = 0;
         }
+        console.log("WINNER CHECK", {
+          userAddress,
+          actuallyPlayed,
+          myWinnerPos,
+          myPrize,
+        });
       }
     }
     let lbHtml = "";
