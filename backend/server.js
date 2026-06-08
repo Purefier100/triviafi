@@ -67,7 +67,7 @@ const LITVM_CONTRACT_ADDRESS =
   process.env.LITVM_CONTRACT_ADDRESS ||
   "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765";
 const LITVM_RPC_URL =
-  process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http";
+  process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http";
 
 const LITVM_RPCS_LIST = [
   "https://liteforge.rpc.caldera.xyz/http",

@@ -1062,12 +1062,12 @@ const NETWORKS = {
     isNative: true, // zkLTC is native gas token — no ERC20 approve needed
     contractAddress: "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765",
     tokenAddress: null,
-    rpc: "https://liteforge.rpc.caldera.xyz/http",
+    rpc: "https://liteforge-testnet.rpc.caldera.xyz/http",
     hexChainId: "0x" + (4441).toString(16),
     explorer: "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz",
     addParams: {
       chainName: "LitVM LiteForge Testnet",
-      rpcUrls: ["https://liteforge.rpc.caldera.xyz/http"],
+      rpcUrls: ["https://liteforge-testnet.rpc.caldera.xyz/http"],
       nativeCurrency: { name: "zkLTC", symbol: "zkLTC", decimals: 18 },
       blockExplorerUrls: [
         "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz",
@@ -2521,23 +2521,36 @@ async function openGameReadOnly(gameId, gameChainId) {
       myPrize = 0,
       alreadyClaimed = false,
       actuallyPlayed = false;
+
     if (userAddress && s === 1) {
       myWinnerPos = Array.from(topPlayers).findIndex(
         (p) => p && p.toLowerCase() === userAddress.toLowerCase(),
       );
+
       if (myWinnerPos >= 0) {
         myPrize = prizes[myWinnerPos] || 0;
+
+        // ✅ Check onchain status
         try {
           const statusRes = await readContract.getPlayerStatus(
             gameId,
             userAddress,
           );
-          actuallyPlayed = statusRes[1]; // true = submitScore was called onchain
           alreadyClaimed = statusRes[2];
         } catch (_) {}
 
-        // ✅ If onchain says finished=false, also check DB as fallback
-        // (covers case where TX confirmed but frontend missed it)
+        // ✅ Check leaderboard score — must have score > 0 to be a real winner
+        try {
+          const [lbAddrs, lbScores] = await readContract.getLeaderboard(gameId);
+          const myLbIdx = lbAddrs.findIndex(
+            (a) => a?.toLowerCase() === userAddress.toLowerCase(),
+          );
+          if (myLbIdx >= 0 && Number(lbScores[myLbIdx]) > 0) {
+            actuallyPlayed = true;
+          }
+        } catch (_) {}
+
+        // ✅ Fallback: check DB session
         if (!actuallyPlayed) {
           try {
             const chk = await fetch(
@@ -2545,11 +2558,12 @@ async function openGameReadOnly(gameId, gameChainId) {
               { credentials: "include" },
             );
             const d = await chk.json();
-            // Server finished=true means they actually submitted — trust it
+            // Only trust DB if score > 0 (rules out zero-score edge cases)
             if (d.finished) actuallyPlayed = true;
           } catch (_) {}
         }
 
+        // ✅ If in topPlayers but never actually played — treat as non-winner
         if (!actuallyPlayed) {
           myWinnerPos = -1;
           myPrize = 0;
