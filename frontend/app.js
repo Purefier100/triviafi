@@ -2572,14 +2572,16 @@ async function openGameReadOnly(gameId, gameChainId) {
             const d = await chk.json();
 
             console.log("DB DEBUG", d);
+            console.log("TOP PLAYERS", topPlayers);
+            console.log("PRIZES", prizes);
 
             console.log("DB DEBUG", d);
             console.log("BEFORE FALLBACK", actuallyPlayed);
 
-            if (d.finished) {
-              console.log("SETTING actuallyPlayed FROM DB");
-              actuallyPlayed = true;
-            }
+            //if (d.finished) {
+            //  console.log("SETTING actuallyPlayed FROM DB");
+            //  actuallyPlayed = true;
+            //}
 
             console.log("AFTER FALLBACK", actuallyPlayed);
           } catch (_) {}
@@ -2595,6 +2597,8 @@ async function openGameReadOnly(gameId, gameChainId) {
           myWinnerPos,
           myPrize,
         });
+        console.log("TOP PLAYERS", topPlayers);
+        console.log("PRIZES", prizes);
         console.log("WINNER CHECK", {
           userAddress,
           actuallyPlayed,
