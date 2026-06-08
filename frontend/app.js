@@ -2571,6 +2571,8 @@ async function openGameReadOnly(gameId, gameChainId) {
 
             const d = await chk.json();
 
+            console.log("DB DEBUG", d);
+
             if (d.finished) {
               actuallyPlayed = true;
             }
