@@ -548,6 +548,11 @@ async function initDB() {
   );
 `);
 
+    // In
+    await pool
+      .query(`ALTER TABLE games ADD COLUMN IF NOT EXISTS status INT DEFAULT 0`)
+      .catch(() => {});
+
     // Tournament volume column
     await pool
       .query(
@@ -892,6 +897,7 @@ app.post("/games/save", csrfProtection, async (req, res) => {
       maxPlayers,
       txHash,
       prizePool,
+      status,
     } = req.body;
 
     const cleanName = sanitizeHtml(name, {
@@ -900,12 +906,25 @@ app.post("/games/save", csrfProtection, async (req, res) => {
     });
 
     await pool.query(
-      `INSERT INTO games (chain_id,contract_game_id,creator,name,category,
-      difficulty,entry_fee,token_symbol,max_players,tx_hash,prize_pool)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,0)
+      `INSERT INTO games (
+      chain_id,
+      contract_game_id,
+      creator,
+      name,
+      category,
+      difficulty,
+      entry_fee,
+      token_symbol,
+      max_players,
+      tx_hash,
+      prize_pool,
+      status
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT (chain_id,contract_game_id)
       DO UPDATE SET
-      prize_pool = EXCLUDED.prize_pool`,
+      prize_pool = EXCLUDED.prize_pool,
+      status = EXCLUDED.status`,
       [
         chainId,
         contractGameId,
@@ -918,6 +937,7 @@ app.post("/games/save", csrfProtection, async (req, res) => {
         maxPlayers,
         txHash,
         prizePool || 0,
+        status ?? 0,
       ],
     );
 
@@ -4201,6 +4221,27 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
       });
     }
     res.json({ ok: true, score, roundFinished: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── FAST: serve game display data from DB (no RPC needed) ────────────────
+app.get("/games/display/:chainId/:gameId", async (req, res) => {
+  try {
+    const { chainId, gameId } = req.params;
+    const game = await pool.query(
+      `SELECT g.*,
+        (SELECT COUNT(*) FROM game_sessions 
+         WHERE game_id=$1 AND chain_id=$2 AND finished=true) AS finished_count,
+        (SELECT COUNT(*) FROM game_sessions 
+         WHERE game_id=$1 AND chain_id=$2) AS session_count
+       FROM games g
+       WHERE g.contract_game_id=$1 AND g.chain_id=$2`,
+      [gameId, chainId],
+    );
+    if (!game.rows.length) return res.status(404).json({ error: "Not found" });
+    res.json(game.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

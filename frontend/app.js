@@ -1216,6 +1216,34 @@ async function getGame(id) {
   return null;
 }
 
+// Convert a DB game row to the same indexed array format as onchain gameToArray()
+function dbRowToGameArray(row) {
+  const net = NETWORKS[row.chain_id] || NETWORKS[5042002];
+  const decimals = net.decimals;
+  return [
+    row.contract_game_id, // [0] id
+    row.name, // [1] name
+    row.creator, // [2] creator
+    0, // [3] categoryId
+    row.category || "", // [4] categoryName
+    row.difficulty || 0, // [5] difficulty
+    BigInt(Math.round(parseFloat(row.entry_fee || 0) * 10 ** decimals)), // [6] entryFee
+    row.max_players || 0, // [7] maxPlayers
+    BigInt(Math.round(parseFloat(row.prize_pool || 0) * 10 ** decimals)), // [8] prizePool
+    0, // [9] playerCount
+    0, // [10] registrationEnd
+    0, // [11] playDeadline
+    [
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000",
+    ], // [12] topPlayers
+    false, // [13] prizeClaimed
+    row.status || 0, // [14] status
+    0, // [15] finishedCount
+  ];
+}
+
 async function createProvider(chainId) {
   const numericChainId =
     typeof chainId === "string"
@@ -1731,31 +1759,38 @@ async function loadGames() {
   const renderId = Date.now();
   lastGamesRender = renderId;
   const grid = document.getElementById("gamesList");
-  // Only show skeleton on first load, not background refreshes
-  if (grid && allGames.length === 0) {
-    grid.innerHTML = skeletonCards(6);
-    // ✅ Show "Loading games..." text so user knows it's working
-    setTimeout(() => {
-      if (grid.querySelector(".skeleton-card")) {
-        grid.innerHTML = `<p style="color:var(--muted);text-align:center;padding:24px">
-          Loading games... <span style="font-size:.8rem">(RPC may be slow)</span>
-          <br><button class="btn btn-ghost btn-sm" style="margin-top:12px;width:auto" onclick="loadGames()">🔄 Retry</button>
-        </p>`;
-      }
-    }, 8000); // Show retry button after 8s if still loading
-  }
 
-  if (allGames.length > 0) {
-    renderGames();
-  }
-
+  // ── PHASE 1: Show DB games instantly (no RPC) ──────────────────────────
   try {
-    // ── Fetch from BOTH chains in parallel ───────────────────────────────────
+    const dbRes = await fetch(`${BACKEND}/games`);
+    const dbGames = await dbRes.json();
+
+    if (Array.isArray(dbGames) && dbGames.length > 0) {
+      // Convert DB rows to the same shape as onchain games
+      allGames = dbGames.map((row) => ({
+        i: row.contract_game_id,
+        chainId: row.chain_id,
+        net: NETWORKS[row.chain_id] || NETWORKS[5042002],
+        g: dbRowToGameArray(row),
+        _fromDb: true,
+      }));
+      allGames.sort((a, b) => b.i - a.i);
+      renderGames(); // instant render — no RPC waited
+      updateTicker();
+    } else {
+      if (grid) grid.innerHTML = skeletonCards(6);
+    }
+  } catch (_) {
+    if (grid && allGames.length === 0) grid.innerHTML = skeletonCards(6);
+  }
+
+  // ── PHASE 2: Hydrate with fresh onchain data in background ─────────────
+  try {
     const arcProvider = new ethers.JsonRpcProvider(
       "https://rpc.testnet.arc.network",
     );
     const litvmProvider = new ethers.JsonRpcProvider(
-      "https://liteforge.rpc.caldera.xyz/http",
+      "https://liteforge-testnet.rpc.caldera.xyz/http",
     );
     const arcRC = new ethers.Contract(
       NETWORKS[5042002].contractAddress,
@@ -1771,36 +1806,31 @@ async function loadGames() {
     const [arcCount, litvmCount] = await Promise.all([
       Promise.race([
         arcRC.gameCounter().then(Number),
-        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 5000)),
+        new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
       ]).catch(() => 0),
       Promise.race([
         litvmRC.gameCounter().then(Number),
-        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 5000)),
+        new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
       ]).catch(() => 0),
     ]);
 
-    const totalCount = arcCount + litvmCount;
-    document.getElementById("gTotal").textContent = totalCount;
-
-    if (totalCount === 0) {
-      grid.innerHTML = `<p style="color:var(--muted);text-align:center;padding:30px">No games yet! Create the first one.</p>`;
-      document.getElementById("gPool").innerHTML =
-        `<span style="color:var(--accent)">$0.00 USDC</span> <span style="color:var(--muted);font-size:.7rem;margin:0 4px">+</span> <span style="color:var(--purple)">0.0000 zkLTC</span>`;
-      document.getElementById("gActive").textContent = "0";
+    if (renderId !== lastGamesRender) {
       gamesLoading = false;
       return;
     }
 
-    const LIMIT = 100;
-    const BATCH = 5;
-    allGames = [];
-    let totalVolume = 0n,
-      arcPool = 0n,
+    const totalCount = arcCount + litvmCount;
+    document.getElementById("gTotal").textContent = totalCount;
+
+    const LIMIT = 50,
+      BATCH = 5;
+    const freshGames = [];
+    let arcPool = 0n,
       litvmPool = 0n,
       activeCount = 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    // Fetch Arc games
+    // Fetch Arc
     const arcIds = [];
     for (let i = arcCount; i >= Math.max(1, arcCount - LIMIT + 1); i--)
       arcIds.push(i);
@@ -1815,17 +1845,15 @@ async function loadGames() {
               chainId: 5042002,
               net: NETWORKS[5042002],
             })),
-            new Promise((_, r) =>
-              setTimeout(() => r(new Error("timeout")), 6000),
-            ),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 6000)),
           ]),
         ),
       );
       for (const r of results)
-        if (r.status === "fulfilled") allGames.push(r.value);
+        if (r.status === "fulfilled") freshGames.push(r.value);
     }
 
-    // Fetch LitVM games
+    // Fetch LitVM
     const litvmIds = [];
     for (let i = litvmCount; i >= Math.max(1, litvmCount - LIMIT + 1); i--)
       litvmIds.push(i);
@@ -1840,92 +1868,69 @@ async function loadGames() {
               chainId: 4441,
               net: NETWORKS[4441],
             })),
-            new Promise((_, r) =>
-              setTimeout(() => r(new Error("timeout")), 6000),
-            ),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 6000)),
           ]),
         ),
       );
       for (const r of results)
-        if (r.status === "fulfilled") allGames.push(r.value);
+        if (r.status === "fulfilled") freshGames.push(r.value);
     }
 
-    // prevent stale refresh overwrite
     if (renderId !== lastGamesRender) {
       gamesLoading = false;
       return;
     }
 
+    // Replace DB games with fresh onchain data silently
+    allGames = freshGames;
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
 
-    // Stats — only count ACTIVE games (status=0, not expired) for "in play"
     for (const { g, net } of allGames) {
-      const gamePool = BigInt(g[8]);
-      totalVolume += gamePool;
-      // ✅ Count status=0 games regardless of deadline — prize is still locked in
       const isOpen = Number(g[14]) === 0;
-      const isActiveLobby = isOpen && Number(g[11]) > nowSec;
       if (isOpen) {
-        if (net.decimals === 6) {
-          arcPool += gamePool;
-        } else {
-          litvmPool += gamePool;
-        }
-        if (isActiveLobby) activeCount++;
+        if (net.decimals === 6) arcPool += BigInt(g[8]);
+        else litvmPool += BigInt(g[8]);
+        if (Number(g[11]) > nowSec) activeCount++;
       }
     }
 
-    // ── Volume display — always show both USDC and zkLTC ─────────────────
+    document.getElementById("gActive").textContent = activeCount;
+
+    // Volume display
     let dbArcVol = 0,
       dbLitvmVol = 0;
     try {
-      const statsRes = await fetch(`${BACKEND}/stats/global`);
-      const statsData = await statsRes.json();
+      const statsData = await fetch(`${BACKEND}/stats/global`).then((r) =>
+        r.json(),
+      );
       dbArcVol = parseFloat(statsData.arcVolume || 0);
       dbLitvmVol = parseFloat(statsData.litvmVolume || 0);
     } catch (_) {}
 
-    // On-chain active pool values
-    const onchainArc = parseFloat(ethers.formatUnits(arcPool, 6));
-    const onchainLitvm = parseFloat(ethers.formatUnits(litvmPool, 18));
-
-    // Use the higher of on-chain (active games) vs DB (historical total)
-    const finalArc = Math.max(onchainArc, dbArcVol);
-    const finalLitvm = Math.max(onchainLitvm, dbLitvmVol);
-
-    // ✅ ALWAYS render both tokens — show 0 if none yet
-    const arcDisplay = finalArc > 0 ? `$${finalArc.toFixed(2)}` : "$0.00";
-    const litvmDisplay = finalLitvm > 0 ? finalLitvm.toFixed(4) : "0.0000";
+    const finalArc = Math.max(
+      parseFloat(ethers.formatUnits(arcPool, 6)),
+      dbArcVol,
+    );
+    const finalLitvm = Math.max(
+      parseFloat(ethers.formatUnits(litvmPool, 18)),
+      dbLitvmVol,
+    );
 
     document.getElementById("gPool").innerHTML = `
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;
-        justify-content:center">
-        <span style="color:var(--accent);font-weight:700;font-size:1rem">
-          ${arcDisplay} USDC
-        </span>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:center">
+        <span style="color:var(--accent);font-weight:700;font-size:1rem">${finalArc > 0 ? `$${finalArc.toFixed(2)}` : "$0.00"} USDC</span>
         <span style="color:var(--muted);font-size:.75rem">+</span>
-        <span style="color:var(--purple);font-weight:700;font-size:1rem">
-          ${litvmDisplay} zkLTC
-        </span>
+        <span style="color:var(--purple);font-weight:700;font-size:1rem">${finalLitvm > 0 ? finalLitvm.toFixed(4) : "0.0000"} zkLTC</span>
       </div>
-      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;
-        letter-spacing:.6px;margin-top:5px">Total Volume</div>
-    `;
+      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-top:5px">Total Volume</div>`;
 
-    document.getElementById("gActive").textContent = activeCount;
-
-    renderGames();
+    renderGames(); // re-render with fresh onchain data
     updateTicker();
-    gamesLoading = false;
   } catch (e) {
-    gamesLoading = false;
-
-    grid.innerHTML = `
-      <p style="color:var(--red);text-align:center;padding:20px">
-        Error: ${e.message}
-      </p>
-    `;
+    console.warn("RPC hydration failed (DB data still shown):", e.message);
   }
+
+  gamesLoading = false;
 }
 
 // Loads older games on demand
