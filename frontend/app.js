@@ -2548,11 +2548,11 @@ async function openGameReadOnly(gameId, gameChainId) {
         ${r.sc > 0 ? r.sc + " pts" : "didn't play"}
         </span>
         ${
-          i < 3 && prizes[i] > 0
-            ? `<span style="color:var(--gold);font-size:.73rem">${prizes[
-                i
-              ].toFixed(dp)} ${gameSymbol}</span>`
-            : ""
+          i < 3 && prizes[i] > 0 && r.sc > 0
+            ? `<span style="color:var(--gold);font-size:.73rem">${prizes[i].toFixed(dp)} ${gameSymbol}</span>`
+            : i < 3 && r.sc === 0
+              ? `<span style="font-size:.68rem;color:var(--muted)">no score</span>`
+              : ""
         }
         <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
           r.fin ? "Done" : "—"
@@ -2667,32 +2667,51 @@ async function openGameReadOnly(gameId, gameChainId) {
         }
       } catch (_) {}
     }
+    // ── Winners block: only show players who actually submitted a score onchain ──
     let winnersHtml = "";
     if (
       s === 1 &&
       topPlayers[0] !== "0x0000000000000000000000000000000000000000"
     ) {
-      winnersHtml = `<div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:12px;padding:16px;margin-bottom:16px"><div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--gold);margin-bottom:10px">🏆 Winners</div>${[
-        0, 1, 2,
-      ]
-        .filter(
-          (i) =>
-            topPlayers[i] &&
-            topPlayers[i] !== "0x0000000000000000000000000000000000000000" &&
-            prizes[i] > 0,
-        )
+      // Fetch onchain leaderboard to check who actually played (score > 0)
+      let playedWallets = new Set();
+      try {
+        const [addrs, scoreList] = await readContract.getLeaderboard(gameId);
+        addrs.forEach((a, i) => {
+          if (Number(scoreList[i]) > 0) playedWallets.add(a.toLowerCase());
+        });
+      } catch (_) {}
+
+      // Only show winners who actually submitted a score
+      const realWinners = [0, 1, 2].filter(
+        (i) =>
+          topPlayers[i] &&
+          topPlayers[i] !== "0x0000000000000000000000000000000000000000" &&
+          prizes[i] > 0 &&
+          playedWallets.has(topPlayers[i].toLowerCase()),
+      );
+
+      if (realWinners.length > 0) {
+        winnersHtml = `<div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:12px;padding:16px;margin-bottom:16px">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--gold);margin-bottom:10px">🏆 Winners</div>
+      ${realWinners
         .map(
           (i) =>
             `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-              <span>${["🥇", "🥈", "🥉"][i]} ${fmt(topPlayers[i])}${
-                topPlayers[i]?.toLowerCase() === userAddress?.toLowerCase()
-                  ? " 👈 You"
-                  : ""
-              }</span>
-              <span style="color:var(--gold);font-weight:600">${prizes[i].toFixed(dp)} ${gameSymbol}</span>
-            </div>`,
+          <span>${["🥇", "🥈", "🥉"][i]} ${fmt(topPlayers[i])}${topPlayers[i]?.toLowerCase() === userAddress?.toLowerCase() ? " 👈 You" : ""}</span>
+          <span style="color:var(--gold);font-weight:600">${prizes[i].toFixed(dp)} ${gameSymbol}</span>
+        </div>`,
         )
-        .join("")}</div>`;
+        .join("")}
+    </div>`;
+      } else {
+        // Nobody actually played — show a notice instead
+        winnersHtml = `<div style="background:rgba(255,157,58,.06);border:1px solid rgba(255,157,58,.2);border-radius:12px;padding:16px;margin-bottom:16px;text-align:center">
+      <div style="font-size:1.5rem;margin-bottom:8px">😴</div>
+      <p style="color:var(--gold);font-weight:700">No one played this game</p>
+      <p style="color:var(--muted);font-size:.8rem;margin-top:6px">All registered players missed the deadline. Entry fees can be claimed back below.</p>
+    </div>`;
+      }
     }
     document.getElementById("joinContent").innerHTML = `
       <div style="margin-bottom:16px"><h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:2px">#${gameId} — ${sanitizeText(
