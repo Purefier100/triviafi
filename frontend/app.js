@@ -1062,12 +1062,12 @@ const NETWORKS = {
     isNative: true, // zkLTC is native gas token — no ERC20 approve needed
     contractAddress: "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765",
     tokenAddress: null,
-    rpc: "https://liteforge-testnet.rpc.caldera.xyz/http",
+    rpc: "https://liteforge.rpc.caldera.xyz/http",
     hexChainId: "0x" + (4441).toString(16),
     explorer: "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz",
     addParams: {
       chainName: "LitVM LiteForge Testnet",
-      rpcUrls: ["https://liteforge-testnet.rpc.caldera.xyz/http"],
+      rpcUrls: ["https://liteforge.rpc.caldera.xyz/http"],
       nativeCurrency: { name: "zkLTC", symbol: "zkLTC", decimals: 18 },
       blockExplorerUrls: [
         "https://explorerl2new-lit-forge-test-gy6psl6s4g.t.conduit.xyz",
@@ -1758,8 +1758,8 @@ async function loadGames() {
       "https://rpc.drpc.testnet.arc.network",
     ];
     const litvmRpcs = [
-      "https://liteforge-testnet.rpc.caldera.xyz/http",
       "https://liteforge.rpc.caldera.xyz/http",
+      "https://liteforge-testnet.rpc.caldera.xyz/http",
     ];
 
     // Pick fastest responding RPC for each chain
