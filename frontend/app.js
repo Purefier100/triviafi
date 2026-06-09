@@ -1753,7 +1753,6 @@ async function loadGames() {
   // Show skeleton only on first load
   if (grid && allGames.length === 0) {
     grid.innerHTML = skeletonCards(6);
-    // Retry button after 10s
     setTimeout(() => {
       if (grid.querySelector(".skeleton-card")) {
         grid.innerHTML = `
@@ -1766,50 +1765,59 @@ async function loadGames() {
       }
     }, 10000);
   } else if (allGames.length > 0) {
-    renderGames(); // instant re-render from cache
+    renderGames();
   }
 
   try {
-    // ── Arc: fetch from RPC (no rate limit issues) ──────────────────────
     const arcRpcs = [
       "https://rpc.testnet.arc.network",
       "https://rpc.drpc.testnet.arc.network",
     ];
-    let arcProvider = new ethers.JsonRpcProvider(arcRpcs[0], {
-      chainId: 5042002,
-      name: "arc-testnet",
-    });
-    for (const rpc of arcRpcs) {
-      try {
-        const p = new ethers.JsonRpcProvider(rpc, {
-          chainId: 5042002,
-          name: "arc-testnet",
-        });
-        await Promise.race([
-          p.getBlockNumber(),
-          new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
-        ]);
-        arcProvider = p;
-        break;
-      } catch (_) {}
+    const litvmRpcs = [
+      "https://liteforge-testnet.rpc.caldera.xyz/http",
+      "https://liteforge.rpc.caldera.xyz/http",
+    ];
+
+    async function getFastProvider(rpcs, chainId, name) {
+      for (const rpc of rpcs) {
+        try {
+          const p = new ethers.JsonRpcProvider(rpc, { chainId, name });
+          await Promise.race([
+            p.getBlockNumber(),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
+          ]);
+          return p;
+        } catch (_) {}
+      }
+      return new ethers.JsonRpcProvider(rpcs[0], { chainId, name });
     }
+
+    const [arcProvider, litvmProvider] = await Promise.all([
+      getFastProvider(arcRpcs, 5042002, "arc-testnet"),
+      getFastProvider(litvmRpcs, 4441, "litvm"),
+    ]);
+
     const arcRC = new ethers.Contract(
       NETWORKS[5042002].contractAddress,
       ABI,
       arcProvider,
     );
+    const litvmRC = new ethers.Contract(
+      NETWORKS[4441].contractAddress,
+      ABI,
+      litvmProvider,
+    );
 
-    // ── LitVM count: from DB only — ZERO RPC calls ──────────────────────
-    let litvmCount = 0;
-    try {
-      const r = await fetch(`${BACKEND}/games/count?chainId=4441`);
-      if (r.ok) litvmCount = (await r.json()).count || 0;
-    } catch (_) {}
-
-    const arcCount = await Promise.race([
-      arcRC.gameCounter().then(Number),
-      new Promise((_, r) => setTimeout(() => r(0), 4000)),
-    ]).catch(() => 0);
+    const [arcCount, litvmCount] = await Promise.all([
+      Promise.race([
+        arcRC.gameCounter().then(Number),
+        new Promise((_, r) => setTimeout(() => r(0), 4000)),
+      ]).catch(() => 0),
+      Promise.race([
+        litvmRC.gameCounter().then(Number),
+        new Promise((_, r) => setTimeout(() => r(0), 4000)),
+      ]).catch(() => 0),
+    ]);
 
     if (renderId !== lastGamesRender) {
       gamesLoading = false;
@@ -1818,22 +1826,22 @@ async function loadGames() {
 
     document.getElementById("gTotal").textContent = arcCount + litvmCount;
 
-    // ── Arc games: from RPC ─────────────────────────────────────────────
-    async function fetchArcGames(rc, count) {
+    const LIMIT = 30,
+      BATCH = 10;
+
+    async function fetchChainGames(rc, count, chainId) {
+      const net = NETWORKS[chainId];
       const ids = [];
-      for (let i = count; i >= Math.max(1, count - 30 + 1); i--) ids.push(i);
+      for (let i = count; i >= Math.max(1, count - LIMIT + 1); i--) ids.push(i);
       const results = [];
-      for (let b = 0; b < ids.length; b += 10) {
-        const batch = ids.slice(b, b + 10);
+      for (let b = 0; b < ids.length; b += BATCH) {
+        const batch = ids.slice(b, b + BATCH);
         const settled = await Promise.allSettled(
           batch.map((i) =>
             Promise.race([
-              rc.getGame(i).then((g) => ({
-                i,
-                g: gameToArray(g),
-                chainId: 5042002,
-                net: NETWORKS[5042002],
-              })),
+              rc
+                .getGame(i)
+                .then((g) => ({ i, g: gameToArray(g), chainId, net })),
               new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
             ]),
           ),
@@ -1844,61 +1852,9 @@ async function loadGames() {
       return results;
     }
 
-    // ── LitVM games: from DB only — ZERO RPC calls ──────────────────────
-    async function fetchLitvmFromDB() {
-      try {
-        const r = await fetch(`${BACKEND}/games?chainId=4441&limit=30`);
-        if (!r.ok) return [];
-        const rows = await r.json();
-        if (!Array.isArray(rows)) return [];
-        return rows.map((row) => {
-          const toWei = (val, dec) => {
-            try {
-              return ethers.parseUnits(
-                Math.abs(parseFloat(val || 0)).toFixed(dec),
-                dec,
-              );
-            } catch (_) {
-              return 0n;
-            }
-          };
-          const g = [
-            BigInt(row.contract_game_id || 0),
-            row.name || "",
-            row.creator || "0x0000000000000000000000000000000000000000",
-            BigInt(0),
-            row.category || "",
-            BigInt(row.difficulty || 0),
-            toWei(row.entry_fee, 18),
-            BigInt(row.max_players || 0),
-            toWei(row.prize_pool, 18),
-            BigInt(row.player_count || 0),
-            BigInt(row.registration_end || 0),
-            BigInt(row.play_deadline || 0),
-            [
-              "0x0000000000000000000000000000000000000000",
-              "0x0000000000000000000000000000000000000000",
-              "0x0000000000000000000000000000000000000000",
-            ],
-            false,
-            BigInt(row.status || 0),
-            BigInt(row.finished_count || 0),
-          ];
-          return {
-            i: row.contract_game_id,
-            g,
-            chainId: 4441,
-            net: NETWORKS[4441],
-          };
-        });
-      } catch (_) {
-        return [];
-      }
-    }
-
     const [arcGames, litvmGames] = await Promise.all([
-      arcCount > 0 ? fetchArcGames(arcRC, arcCount) : [],
-      fetchLitvmFromDB(),
+      arcCount > 0 ? fetchChainGames(arcRC, arcCount, 5042002) : [],
+      litvmCount > 0 ? fetchChainGames(litvmRC, litvmCount, 4441) : [],
     ]);
 
     if (renderId !== lastGamesRender) {
@@ -1909,7 +1865,6 @@ async function loadGames() {
     allGames = [...arcGames, ...litvmGames];
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
 
-    // ── Stats ───────────────────────────────────────────────────────────
     let arcPool = 0n,
       litvmPool = 0n,
       activeCount = 0;
@@ -1918,11 +1873,7 @@ async function loadGames() {
       if (Number(g[14]) === 0) {
         if (net.decimals === 6) arcPool += BigInt(g[8]);
         else litvmPool += BigInt(g[8]);
-        if (
-          Number(g[11]) > nowSec ||
-          (net.decimals === 18 && Number(g[11]) === 0)
-        )
-          activeCount++;
+        if (Number(g[11]) > nowSec) activeCount++;
       }
     }
     document.getElementById("gActive").textContent = activeCount;
@@ -1954,7 +1905,8 @@ async function loadGames() {
           ${finalLitvm > 0 ? finalLitvm.toFixed(4) : "0.0000"} zkLTC
         </span>
       </div>
-      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-top:5px">Total Volume</div>`;
+      <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;
+        letter-spacing:.6px;margin-top:5px">Total Volume</div>`;
 
     renderGames();
     updateTicker();
@@ -1964,7 +1916,8 @@ async function loadGames() {
       grid.innerHTML = `
         <div style="grid-column:1/-1;text-align:center;padding:40px">
           <p style="color:var(--muted);margin-bottom:16px">Could not load games.</p>
-          <button class="btn btn-ghost btn-sm" style="width:auto" onclick="loadGames()">🔄 Retry</button>
+          <button class="btn btn-ghost btn-sm" style="width:auto"
+            onclick="loadGames()">🔄 Retry</button>
         </div>`;
     }
   }
