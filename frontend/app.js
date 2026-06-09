@@ -1861,43 +1861,47 @@ async function loadGames() {
         const rows = await res.json();
         if (!Array.isArray(rows) || rows.length === 0) return [];
 
-        const provider = await getLitvmProvider();
-        const rc = new ethers.Contract(
-          NETWORKS[4441].contractAddress,
-          ABI,
-          provider,
-        );
-
-        const results = [];
-        const ids = rows.map((r) => r.contract_game_id).filter(Boolean);
-        const SMALL_BATCH = 3; // small batches to avoid 429
-
-        for (let b = 0; b < ids.length; b += SMALL_BATCH) {
-          const batch = ids.slice(b, b + SMALL_BATCH);
-          const settled = await Promise.allSettled(
-            batch.map((i) =>
-              Promise.race([
-                rc.getGame(i).then((g) => ({
-                  i,
-                  g: gameToArray(g),
-                  chainId: 4441,
-                  net: NETWORKS[4441],
-                })),
-                new Promise((_, r) =>
-                  setTimeout(() => r(new Error("t")), 6000),
-                ),
-              ]),
-            ),
+        // Convert DB rows directly to game array format — ZERO RPC calls
+        return rows.map((row) => {
+          const entryFee = ethers.parseUnits(
+            parseFloat(row.entry_fee || 0).toFixed(18),
+            18,
           );
-          for (const r of settled)
-            if (r.status === "fulfilled") results.push(r.value);
-
-          // Throttle between batches to avoid 429
-          if (b + SMALL_BATCH < ids.length) {
-            await new Promise((r) => setTimeout(r, 500));
-          }
-        }
-        return results;
+          const prizePool = ethers.parseUnits(
+            parseFloat(row.prize_pool || 0).toFixed(18),
+            18,
+          );
+          const g = [
+            BigInt(row.contract_game_id || 0), // [0] id
+            row.name || "", // [1] name
+            row.creator || "0x0000000000000000000000000000000000000000", // [2] creator
+            BigInt(0), // [3] categoryId
+            row.category || "", // [4] categoryName
+            BigInt(row.difficulty || 0), // [5] difficulty
+            entryFee, // [6] entryFee
+            BigInt(row.max_players || 0), // [7] maxPlayers
+            prizePool, // [8] prizePool
+            BigInt(0), // [9] playerCount
+            BigInt(0), // [10] registrationEnd
+            BigInt(0), // [11] playDeadline
+            [
+              // [12] topPlayers
+              "0x0000000000000000000000000000000000000000",
+              "0x0000000000000000000000000000000000000000",
+              "0x0000000000000000000000000000000000000000",
+            ],
+            false, // [13] prizeClaimed
+            BigInt(row.status || 0), // [14] status
+            BigInt(0), // [15] finishedCount
+          ];
+          return {
+            i: row.contract_game_id,
+            g,
+            chainId: 4441,
+            net: NETWORKS[4441],
+            _fromDb: true,
+          };
+        });
       } catch (_) {
         return [];
       }
@@ -1923,11 +1927,13 @@ async function loadGames() {
       activeCount = 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    for (const { g, net } of allGames) {
+    for (const { g, net, _fromDb } of allGames) {
       if (Number(g[14]) === 0) {
         if (net.decimals === 6) arcPool += BigInt(g[8]);
         else litvmPool += BigInt(g[8]);
-        if (Number(g[11]) > nowSec) activeCount++;
+        // For DB-only LitVM rows, registrationEnd is 0 — count as active if status=0
+        if (_fromDb && net.decimals === 18) activeCount++;
+        else if (Number(g[11]) > nowSec) activeCount++;
       }
     }
 
