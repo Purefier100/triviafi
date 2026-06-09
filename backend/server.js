@@ -3343,7 +3343,7 @@ app.post("/games/:gameId/refund", async (req, res) => {
         const ws = verifierWallet.connect(fastProvider);
 
         const tx = await ws.sendTransaction({
-          to: refund.wallet,
+          to: wallet,
           value: amountWei,
           gasLimit: 21000,
         });
