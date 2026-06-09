@@ -6017,39 +6017,63 @@ async function openTournament(id) {
         // Check if wallet already paid but registration didn't complete
         let alreadyPaidTx = null;
         try {
-          // First check localStorage for locally saved payment
+          // Check localStorage first
           const savedTx = localStorage.getItem(
             `tourney_paid_${t.id}_${userAddress.toLowerCase()}`,
           );
           if (savedTx) {
             alreadyPaidTx = savedTx;
           } else {
-            // Try backend payment-check if it exists
+            // Check backend recovery table
             const payCheck = await fetch(
               `${BACKEND}/tournaments/${t.id}/payment-check?wallet=${userAddress}`,
               { credentials: "include" },
             );
             if (payCheck.ok) {
               const pd = await payCheck.json();
-              if (pd.paid && !pd.registered) alreadyPaidTx = pd.txHash;
+              if (pd.paid && !pd.registered)
+                alreadyPaidTx = pd.txHash || "pending_recovery";
             }
           }
         } catch (_) {}
+
+        // Also check orphaned payment recovery table
+        if (!alreadyPaidTx) {
+          try {
+            const orphanCheck = await fetch(
+              `${BACKEND}/tournaments/${t.id}/recover-payment?wallet=${userAddress}`,
+              { credentials: "include" },
+            );
+            if (orphanCheck.ok) {
+              const od = await orphanCheck.json();
+              if (od.txHash) alreadyPaidTx = od.txHash;
+            }
+          } catch (_) {}
+        }
 
         if (alreadyPaidTx) {
           actionHtml = `
             <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:12px;padding:18px;text-align:center">
               <div style="font-size:1.5rem;margin-bottom:8px">⚠️</div>
               <p style="color:var(--gold);font-weight:700">Payment detected but registration incomplete</p>
-              <p style="color:var(--muted);font-size:.8rem;margin:8px 0 14px">Your ${fee} ${t.token_symbol} payment was confirmed onchain. Click below to complete registration.</p>
+              <p style="color:var(--muted);font-size:.8rem;margin:8px 0 14px">Your ${fee} ${t.token_symbol} payment was confirmed onchain. Click below to complete registration — no second payment needed.</p>
               <button class="btn btn-primary" onclick="recoverTournamentRegistration(${t.id},'${alreadyPaidTx}')"
                 style="background:linear-gradient(135deg,var(--gold),var(--orange));width:auto;padding:12px 32px">
-                ✅ Complete My Registration
+                ✅ Complete My Registration (No Payment Needed)
               </button>
             </div>`;
         } else {
-          actionHtml = `<button class="btn btn-primary" onclick="joinTournament(${t.id})">
-            💰 Pay ${fee} ${t.token_symbol} & Enter Tournament</button>`;
+          // Show a soft "already paid?" link below the pay button in case user is unsure
+          actionHtml = `
+            <button class="btn btn-primary" onclick="joinTournament(${t.id})">
+              💰 Pay ${fee} ${t.token_symbol} & Enter Tournament
+            </button>
+            <div style="text-align:center;margin-top:10px">
+              <button onclick="showManualRecovery(${t.id},'${fee}','${t.token_symbol}')"
+                style="background:none;border:none;color:var(--muted);font-size:.74rem;cursor:pointer;text-decoration:underline;font-family:inherit">
+                Already paid but not registered? Click here
+              </button>
+            </div>`;
         }
       } else if (t.status === "open" && isJoined) {
         actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;
@@ -6400,6 +6424,73 @@ async function markWlTaskDone(tournamentId, taskId) {
       row.style.border = "1px solid rgba(6,214,160,.25)";
     }
   } catch (_) {}
+}
+
+function showManualRecovery(tournamentId, fee, symbol) {
+  const existing = document.getElementById("manualRecoveryModal");
+  if (existing) existing.remove();
+  const modal = document.createElement("div");
+  modal.id = "manualRecoveryModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:440px;width:95%;text-align:center">
+      <div style="font-size:2rem;margin-bottom:10px">⚠️</div>
+      <h3 style="font-family:'Bebas Neue',sans-serif;font-size:1.3rem;letter-spacing:2px;color:var(--gold);margin-bottom:8px">
+        Payment Recovery
+      </h3>
+      <p style="color:var(--muted);font-size:.82rem;margin-bottom:16px;line-height:1.6">
+        If you already paid <strong style="color:var(--gold)">${fee} ${symbol}</strong> but aren't registered, 
+        paste your transaction hash below and we'll complete your registration.
+      </p>
+      <input id="recoveryTxInput" placeholder="0x... transaction hash"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+        padding:11px 14px;border-radius:8px;font-size:.85rem;width:100%;
+        box-sizing:border-box;margin-bottom:12px;font-family:'JetBrains Mono',monospace"/>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" onclick="submitManualRecovery(${tournamentId})"
+          style="flex:1;background:linear-gradient(135deg,var(--gold),var(--orange))">
+          ✅ Recover Registration
+        </button>
+        <button class="btn btn-ghost" style="width:auto;padding:13px 16px"
+          onclick="document.getElementById('manualRecoveryModal').remove()">
+          Cancel
+        </button>
+      </div>
+      <p style="font-size:.7rem;color:var(--muted);margin-top:10px">
+        Find your TX hash in MetaMask → Activity tab
+      </p>
+    </div>`;
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
+}
+
+async function submitManualRecovery(tournamentId) {
+  const txHash = document.getElementById("recoveryTxInput")?.value?.trim();
+  if (!txHash || !txHash.startsWith("0x"))
+    return toast("Enter a valid transaction hash", "error");
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const btn = document.querySelector("#manualRecoveryModal .btn-primary");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Recovering...";
+  }
+  try {
+    // Save to localStorage so openTournament picks it up
+    localStorage.setItem(
+      `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+      txHash,
+    );
+    document.getElementById("manualRecoveryModal")?.remove();
+    await recoverTournamentRegistration(tournamentId, txHash);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✅ Recover Registration";
+    }
+  }
 }
 
 async function recoverTournamentRegistration(tournamentId, txHash) {
