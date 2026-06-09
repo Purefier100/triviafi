@@ -984,16 +984,18 @@ function startAutoRefresh() {
       if (
         isOnJoinScreen &&
         currentGameId &&
-        window._joinScreenOrigin === "lobby"
+        window._joinScreenOrigin === "lobby" &&
+        !window._openingGame
       ) {
         try {
           const g = await getGame(currentGameId);
           if (g) {
             const s = Number(g[14]);
             if (s === 1 || s === 2) {
-              // Game ended — reload the view so user sees results without refresh
               toast("🏁 Game ended! Loading final results...", "info");
               stopAutoRefresh();
+              // Preserve origin before calling read-only
+              window._joinScreenOrigin = "lobby";
               await openGameReadOnly(currentGameId, currentGameChainId);
             }
           }
@@ -1010,17 +1012,23 @@ function startTournamentAutoRefresh(tournamentId) {
   stopTournamentAutoRefresh();
   tournamentRefreshInterval = setInterval(async () => {
     const active = document.querySelector(".screen.active")?.id;
-    if (active === "screenJoin" && currentTournamentId === tournamentId) {
-      if (!document.querySelector(".bet-modal-overlay")) {
-        try {
-          await openTournament(tournamentId);
-        } catch (_) {}
-      }
-    } else {
+    // Stop if user navigated away or a modal/lock is active
+    if (
+      active !== "screenJoin" ||
+      currentTournamentId !== tournamentId ||
+      window._openingGame ||
+      window._joiningTournament ||
+      document.querySelector(".bet-modal-overlay")
+    ) {
       stopTournamentAutoRefresh();
+      return;
     }
+    try {
+      await openTournament(tournamentId);
+    } catch (_) {}
   }, 8000);
 }
+
 function stopTournamentAutoRefresh() {
   if (tournamentRefreshInterval) {
     clearInterval(tournamentRefreshInterval);
@@ -1030,7 +1038,13 @@ function stopTournamentAutoRefresh() {
 
 function goBackFromJoin() {
   stopTournamentAutoRefresh();
-  if (window._joinScreenOrigin === "tournaments") {
+  stopAutoRefresh();
+  // Clear any pending navigation locks
+  window._openingGame = false;
+  window._joiningTournament = null;
+  const origin = window._joinScreenOrigin || "lobby";
+  window._joinScreenOrigin = null; // always reset after use
+  if (origin === "tournaments") {
     showScreen("screenTournaments");
     loadTournaments();
   } else {
@@ -2400,25 +2414,9 @@ async function renderGames() {
                       <div style="font-size:.68rem;color:var(--muted)">Entry ${isWL ? "" : sym}</div>
                     </div>
                     <div style="background:rgba(0,0,0,.2);border-radius:7px;padding:6px 8px;text-align:center">
-                      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--green)">${
-                        isWL
-                          ? (() => {
-                              const ws =
-                                t.winners && t.winners.length > 0
-                                  ? Math.max(
-                                      ...t.winners.map((w) =>
-                                        parseInt(w.total_score || w.score || 0),
-                                      ),
-                                    )
-                                  : 0;
-                              return (
-                                (parseInt(
-                                  t.top_score || t.highest_score || ws,
-                                ) || 0) + " pts"
-                              );
-                            })()
-                          : prizePool
-                      }</div>
+                      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--green)" ${isWL ? `id="wl-topscore-${t.id}"` : ""}>
+                        ${isWL ? "— pts" : prizePool}
+                      </div>
                       <div style="font-size:.68rem;color:var(--muted)">${isWL ? "Top Score" : "Prize Pool"}</div>
                     </div>
                   </div>
@@ -2816,6 +2814,27 @@ async function renderGames() {
 
   grid.innerHTML = html;
   setTimeout(() => loadGlobalStats(), 0);
+
+  // ── Load real top scores for WL tournaments asynchronously ──────────
+  const wlScoreEls = grid.querySelectorAll("[id^='wl-topscore-']");
+  wlScoreEls.forEach(async (el) => {
+    const tid = el.id.replace("wl-topscore-", "");
+    try {
+      const res = await fetch(`${BACKEND}/tournaments/${tid}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return;
+      const { players } = await res.json();
+      if (!players || players.length === 0) {
+        el.textContent = "0 pts";
+        return;
+      }
+      const top = Math.max(...players.map((p) => parseInt(p.total_score || 0)));
+      el.textContent = top > 0 ? top.toLocaleString() + " pts" : "0 pts";
+    } catch (_) {
+      el.textContent = "0 pts";
+    }
+  });
 }
 
 async function openGameReadOnly(gameId, gameChainId) {
@@ -3238,7 +3257,8 @@ async function openGameReadOnly(gameId, gameChainId) {
           ? `<div style="margin-top:16px;padding:12px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2);border-radius:10px;text-align:center"><p style="color:var(--muted);font-size:.83rem">Connect wallet to join active games</p><button class="btn btn-primary" style="margin-top:10px;width:auto;padding:10px 24px" onclick="connectWallet()">🦊 Connect Wallet</button></div>`
           : ""
       }`;
-    window._joinScreenOrigin = "lobby";
+    // Only set origin if not already set by caller (e.g. tournament flow)
+    if (!window._joinScreenOrigin) window._joinScreenOrigin = "lobby";
     showScreen("screenJoin");
   } catch (e) {
     toast("Error loading game: " + e.message, "error");
@@ -3704,7 +3724,7 @@ async function openGame(gameId, gameChainId) {
       </div>
       ${creatorHtml}`;
 
-    window._joinScreenOrigin = "lobby";
+    if (!window._joinScreenOrigin) window._joinScreenOrigin = "lobby";
     showScreen("screenJoin");
     loadGameStatus(currentGameId);
     startAutoRefresh(gameId);
@@ -5696,6 +5716,7 @@ function renderTournaments() {
 
 async function openTournament(id) {
   currentTournamentId = id;
+  window._joinScreenOrigin = "tournaments"; // set early before any await
   try {
     const res = await fetch(`${BACKEND}/tournaments/${id}`);
     const { tournament: t, players, rounds } = await res.json();
