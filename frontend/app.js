@@ -2248,149 +2248,236 @@ async function renderGames() {
   let html = "";
 
   // ── TOURNAMENTS SECTION (top, full-width) ────────────────────────────
-  if (activeTournaments.length > 0 || filter === "all") {
-    html += `
-      <div style="grid-column:1/-1;margin-bottom:8px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:1.1rem">🏆</span>
-            <span style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:1.5px;color:var(--gold)">TOURNAMENTS</span>
-            ${activeTournaments.length > 0 ? `<span style="background:rgba(255,209,102,.15);color:var(--gold);font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid rgba(255,209,102,.3)">${activeTournaments.length} ACTIVE</span>` : ""}
-          </div>
-          <button class="btn btn-ghost btn-sm" style="width:auto;padding:6px 14px;font-size:.78rem"
-            onclick="showScreen('screenTournaments');loadTournaments()">
-            View All →
-          </button>
-        </div>`;
-
-    if (activeTournaments.length > 0) {
-      html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:8px">`;
-      for (const t of activeTournaments) {
-        const fee = parseFloat(t.entry_fee || 0);
-        const sym = t.token_symbol || "USDC";
-        const dp = sym === "zkLTC" ? 4 : 2;
-        const isLive = t.status === "active" || t.status === "live";
-        const isFull = t.current_players >= t.max_players;
-        const prizePool = fee * (t.current_players || 0);
-        const chainColor = sym === "zkLTC" ? "var(--purple)" : "var(--accent)";
-        const chainBg =
-          sym === "zkLTC" ? "rgba(123,97,255,.15)" : "rgba(0,229,255,.1)";
-        const chainBorder =
-          sym === "zkLTC" ? "rgba(123,97,255,.3)" : "rgba(0,229,255,.25)";
-        const chainIcon = sym === "zkLTC" ? "🔷" : "⚡";
-
-        html += `
-          <div onclick="openTournament(${t.id})" style="
-            background:linear-gradient(135deg,rgba(255,209,102,.08) 0%,rgba(255,157,58,.04) 100%);
-            border:1px solid rgba(255,209,102,.25);
-            border-radius:14px;padding:16px;cursor:pointer;
-            transition:transform .15s,border-color .15s,box-shadow .15s;
-            position:relative;overflow:hidden"
-            onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='rgba(255,209,102,.5)';this.style.boxShadow='0 8px 24px rgba(255,209,102,.12)'"
-            onmouseout="this.style.transform='';this.style.borderColor='rgba(255,209,102,.25)';this.style.boxShadow=''">
-
-            <!-- Glow accent -->
-            <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:.6"></div>
-
-            <!-- Header -->
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
-              <div style="flex:1;min-width:0">
-                <div style="font-weight:700;font-size:.9rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                  🏆 ${sanitizeText(t.name)}
-                </div>
-                <div style="font-size:.72rem;color:var(--muted);margin-top:2px">
-                  ${t.rounds || 3} rounds · elimination
-                </div>
-              </div>
-              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:8px">
-                <span style="font-size:.68rem;padding:2px 8px;border-radius:10px;
-                  background:${isLive ? "rgba(255,157,58,.2)" : "rgba(6,214,160,.15)"};
-                  color:${isLive ? "var(--orange)" : "var(--green)"};
-                  border:1px solid ${isLive ? "rgba(255,157,58,.35)" : "rgba(6,214,160,.3)"};
-                  font-weight:700">
-                  ${isLive ? "🔴 LIVE" : "🟢 OPEN"}
-                </span>
-                <span style="font-size:.65rem;padding:1px 6px;border-radius:8px;
-                  background:${chainBg};color:${chainColor};border:1px solid ${chainBorder}">
-                  ${chainIcon} ${sym === "zkLTC" ? "LitVM" : "Arc"}
-                </span>
-              </div>
-            </div>
-
-            <!-- Stats row -->
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
-              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center">
-                <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--gold)">${fee.toFixed(dp)}</div>
-                <div style="font-size:.62rem;color:var(--muted)">Entry ${sym}</div>
-              </div>
-              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center">
-                <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--green)">${prizePool.toFixed(dp)}</div>
-                <div style="font-size:.62rem;color:var(--muted)">Prize Pool</div>
-              </div>
-              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center">
-                <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--accent)">${t.current_players || 0}/${t.max_players}</div>
-                <div style="font-size:.62rem;color:var(--muted)">Players</div>
-              </div>
-            </div>
-
-            <!-- Prize split -->
-            <div style="display:flex;gap:6px;margin-bottom:10px">
-              <div style="flex:1;background:rgba(255,209,102,.08);border-radius:6px;padding:5px;text-align:center;font-size:.65rem">
-                <span style="color:var(--gold);font-weight:700">🥇 60%</span>
-              </div>
-              <div style="flex:1;background:rgba(255,255,255,.04);border-radius:6px;padding:5px;text-align:center;font-size:.65rem">
-                <span style="color:#ccc;font-weight:700">🥈 25%</span>
-              </div>
-              <div style="flex:1;background:rgba(255,255,255,.04);border-radius:6px;padding:5px;text-align:center;font-size:.65rem">
-                <span style="color:#cd7f32;font-weight:700">🥉 15%</span>
-              </div>
-            </div>
-
-            <button class="btn btn-primary" style="width:100%;padding:9px;font-size:.82rem;
-              background:linear-gradient(135deg,var(--gold),var(--orange));border:none"
-              onclick="event.stopPropagation();openTournament(${t.id})">
-              ${isFull ? "👀 View Tournament" : isLive ? "🎮 Enter Now" : "🎟️ Join Tournament"}
-            </button>
-          </div>`;
-      }
-      html += `</div>`;
-    } else {
-      html += `
-        <div style="background:rgba(255,209,102,.04);border:1px dashed rgba(255,209,102,.2);
-          border-radius:12px;padding:20px;text-align:center;margin-bottom:8px">
-          <div style="font-size:1.8rem;margin-bottom:8px">🏆</div>
-          <p style="color:var(--gold);font-weight:700;font-size:.9rem">No active tournaments</p>
-          <p style="color:var(--muted);font-size:.78rem;margin-top:4px;margin-bottom:12px">
-            Be the first to create one — multi-round elimination with automatic prize distribution
-          </p>
-          <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 20px"
-            onclick="showScreen('screenTournaments');loadTournaments();showCreateTournamentModal()">
-            ＋ Create Tournament
-          </button>
-        </div>`;
+  // ── Fetch ALL tournaments (open + finished) ──────────────────────────
+  let openTournaments = [],
+    pastTournaments = [];
+  try {
+    const tr = await fetch(`${BACKEND}/tournaments?limit=20`, {
+      credentials: "include",
+    });
+    if (tr.ok) {
+      const all = await tr.json();
+      const list = Array.isArray(all) ? all : all.tournaments || [];
+      openTournaments = list.filter(
+        (t) => t.status === "open" || t.status === "active",
+      );
+      pastTournaments = list
+        .filter((t) => t.status === "finished" || t.status === "cancelled")
+        .slice(0, 8);
     }
+  } catch (_) {}
 
-    html += `</div>
+  // ── TOURNAMENTS SECTION ──────────────────────────────────────────────
+  if (filter === "active" || filter === "all") {
+    // ── Stats bar ──────────────────────────────────────────────────────
+    let tStats = { usdc: "0.00", litvm: "0.0000", total: 0, live: 0 };
+    try {
+      const sr = await fetch(`${BACKEND}/tournaments/stats`);
+      if (sr.ok) {
+        const sd = await sr.json();
+        tStats.usdc = parseFloat(sd.usdc_volume || 0).toFixed(2);
+        tStats.litvm = parseFloat(sd.litvm_volume || 0).toFixed(4);
+        tStats.total = sd.total_tournaments || 0;
+        tStats.live = sd.live_count || 0;
+      }
+    } catch (_) {}
 
-    <!-- Divider + Game Rooms header -->
-    <div style="grid-column:1/-1;margin:8px 0 14px">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
-        <div style="flex:1;height:1px;background:var(--border)"></div>
-        <span style="font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:1.5px;color:var(--muted)">GAME ROOMS</span>
-        <div style="flex:1;height:1px;background:var(--border)"></div>
-      </div>
-      <div style="background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.12);
-        border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
-        <span style="font-size:1rem">🎮</span>
-        <div style="flex:1">
-          <span style="font-size:.78rem;color:var(--muted)">
-            Prefer to play solo? <strong style="color:var(--accent)">Game Rooms</strong> are open trivia matches — pay entry, answer 10 questions, top scorers split the prize pool.
-          </span>
+    html += `
+      <div style="grid-column:1/-1;margin-bottom:16px">
+
+        <!-- Section header with stats -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-family:'Bebas Neue',sans-serif;font-size:1.2rem;letter-spacing:2px;color:var(--gold)">🏆 TOURNAMENTS</span>
+            ${tStats.live > 0 ? `<span style="background:rgba(239,71,111,.2);color:var(--red);font-size:.65rem;font-weight:800;padding:2px 8px;border-radius:20px;border:1px solid rgba(239,71,111,.4);animation:pulse 1.5s ease-in-out infinite">● ${tStats.live} LIVE</span>` : ""}
+            ${openTournaments.length > 0 ? `<span style="background:rgba(6,214,160,.12);color:var(--green);font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid rgba(6,214,160,.25)">${openTournaments.length} OPEN</span>` : ""}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:.72rem;color:var(--muted);display:flex;gap:10px;align-items:center">
+              <span>💰 <strong style="color:var(--accent)">$${tStats.usdc}</strong> USDC</span>
+              <span style="color:var(--border)">+</span>
+              <span>🔷 <strong style="color:var(--purple)">${tStats.litvm}</strong> zkLTC</span>
+              <span style="color:var(--muted);font-size:.65rem">PAID OUT</span>
+            </div>
+            <button onclick="showTournamentLeaderboard()"
+              style="background:rgba(255,209,102,.08);border:1px solid rgba(255,209,102,.2);
+              color:var(--gold);padding:5px 12px;border-radius:20px;cursor:pointer;
+              font-size:.72rem;font-weight:700;white-space:nowrap">
+              🏅 Leaderboard
+            </button>
+            <button class="btn btn-ghost btn-sm" style="width:auto;padding:5px 12px;font-size:.72rem;white-space:nowrap"
+              onclick="showScreen('screenTournaments');loadTournaments()">
+              View All →
+            </button>
+          </div>
         </div>
-        <button class="btn btn-ghost btn-sm" style="width:auto;padding:5px 12px;font-size:.72rem;white-space:nowrap"
-          onclick="showCreateModal()">＋ Create Room</button>
+
+        <!-- Open tournaments grid -->
+        ${
+          openTournaments.length > 0
+            ? `
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-bottom:12px">
+            ${openTournaments
+              .map((t) => {
+                const fee = parseFloat(t.entry_fee || 0);
+                const sym = t.token_symbol || "USDC";
+                const dp = sym === "zkLTC" ? 4 : 2;
+                const isLive = t.status === "active";
+                const isFull =
+                  (t.current_players || t.player_count || 0) >= t.max_players;
+                const players = parseInt(
+                  t.current_players || t.player_count || 0,
+                );
+                const prizePool = (fee * players).toFixed(dp);
+                const spotsLeft = t.max_players - players;
+                const isWL = t.tournament_type === "whitelist";
+                const chainColor =
+                  sym === "zkLTC" ? "var(--purple)" : "var(--accent)";
+                const chainBg =
+                  sym === "zkLTC"
+                    ? "rgba(123,97,255,.12)"
+                    : "rgba(0,229,255,.08)";
+                const fillPct = Math.min(
+                  100,
+                  Math.round((players / t.max_players) * 100),
+                );
+
+                return `
+                <div onclick="openTournament(${t.id})" style="
+                  background:${isWL ? "linear-gradient(135deg,rgba(88,101,242,.12),rgba(123,97,255,.06))" : isLive ? "linear-gradient(135deg,rgba(239,71,111,.1),rgba(123,97,255,.06))" : "linear-gradient(135deg,rgba(255,209,102,.07),rgba(255,157,58,.03))"};
+                  border:1.5px solid ${isLive ? "rgba(239,71,111,.5)" : isWL ? "rgba(88,101,242,.4)" : "rgba(255,209,102,.25)"};
+                  border-radius:12px;padding:14px;cursor:pointer;position:relative;overflow:hidden;
+                  transition:transform .15s,box-shadow .15s"
+                  onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(0,0,0,.3)'"
+                  onmouseout="this.style.transform='';this.style.boxShadow=''">
+
+                  <!-- Top accent line -->
+                  <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${isLive ? "linear-gradient(90deg,var(--red),var(--purple))" : isWL ? "linear-gradient(90deg,#7289da,var(--purple))" : "linear-gradient(90deg,var(--gold),var(--orange))"}"></div>
+
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">
+                    <div style="flex:1;min-width:0">
+                      <div style="font-weight:700;font-size:.85rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                        ${isWL ? "💬" : "🏆"} ${sanitizeText(t.name)}
+                      </div>
+                      <div style="font-size:.68rem;color:var(--muted);margin-top:1px">${t.rounds} rounds · elimination</div>
+                    </div>
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin-left:8px;flex-shrink:0">
+                      ${isLive ? `<span style="font-size:.62rem;font-weight:800;color:var(--red);background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.3);padding:1px 7px;border-radius:10px">🔴 LIVE</span>` : `<span style="font-size:.62rem;font-weight:800;color:var(--green);background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.25);padding:1px 7px;border-radius:10px">🟢 OPEN</span>`}
+                      <span style="font-size:.6rem;padding:1px 6px;border-radius:8px;background:${chainBg};color:${chainColor}">${sym === "zkLTC" ? "🔷 LitVM" : "⚡ Arc"}</span>
+                    </div>
+                  </div>
+
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+                    <div style="background:rgba(0,0,0,.2);border-radius:7px;padding:6px 8px;text-align:center">
+                      <div style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold)">${isWL ? "FREE" : fee.toFixed(dp)}</div>
+                      <div style="font-size:.58rem;color:var(--muted)">Entry ${isWL ? "" : sym}</div>
+                    </div>
+                    <div style="background:rgba(0,0,0,.2);border-radius:7px;padding:6px 8px;text-align:center">
+                      <div style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--green)">${isWL ? `${players} pts` : prizePool}</div>
+                      <div style="font-size:.58rem;color:var(--muted)">${isWL ? "Top Score" : "Prize Pool"}</div>
+                    </div>
+                  </div>
+
+                  <!-- Progress bar -->
+                  <div style="margin-bottom:8px">
+                    <div style="height:3px;background:rgba(255,255,255,.06);border-radius:2px;overflow:hidden">
+                      <div style="height:100%;width:${fillPct}%;background:${fillPct >= 100 ? "var(--red)" : fillPct > 60 ? "var(--gold)" : "var(--green)"};border-radius:2px"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-top:3px">
+                      <span style="font-size:.62rem;color:var(--muted)">👥 ${players}/${t.max_players}</span>
+                      ${!isFull ? `<span style="font-size:.62rem;color:var(--green);font-weight:700">${spotsLeft} spot${spotsLeft > 1 ? "s" : ""} left</span>` : `<span style="font-size:.62rem;color:var(--red);font-weight:700">Full</span>`}
+                    </div>
+                  </div>
+
+                  <div style="display:flex;gap:5px">
+                    <div style="flex:1;background:rgba(255,209,102,.06);border-radius:5px;padding:3px;text-align:center;font-size:.6rem;color:var(--gold);font-weight:700">🥇 60%</div>
+                    <div style="flex:1;background:rgba(255,255,255,.03);border-radius:5px;padding:3px;text-align:center;font-size:.6rem;color:#ccc;font-weight:700">🥈 25%</div>
+                    <div style="flex:1;background:rgba(255,255,255,.03);border-radius:5px;padding:3px;text-align:center;font-size:.6rem;color:#cd7f32;font-weight:700">🥉 15%</div>
+                  </div>
+                </div>`;
+              })
+              .join("")}
+          </div>`
+            : `
+          <div style="background:rgba(255,209,102,.03);border:1px dashed rgba(255,209,102,.15);
+            border-radius:10px;padding:16px;text-align:center;margin-bottom:12px;display:flex;
+            align-items:center;gap:12px;justify-content:center">
+            <span style="font-size:1.3rem">🏆</span>
+            <div style="text-align:left">
+              <p style="color:var(--gold);font-weight:700;font-size:.82rem;margin:0">No active tournaments right now</p>
+              <p style="color:var(--muted);font-size:.72rem;margin:2px 0 0">Be the first — create a paid or whitelist battle</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="width:auto;padding:5px 14px;font-size:.72rem;margin-left:auto"
+              onclick="showScreen('screenTournaments');loadTournaments();showTournamentTypeModal()">
+              ＋ Create
+            </button>
+          </div>`
+        }
+
+        <!-- Past tournaments as compact chips -->
+        ${
+          pastTournaments.length > 0
+            ? `
+          <div>
+            <div style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;font-weight:700">
+              📜 Past Tournaments
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              ${pastTournaments
+                .map((t) => {
+                  const isWL = t.tournament_type === "whitelist";
+                  const sym = t.token_symbol || "USDC";
+                  const fee = parseFloat(t.entry_fee || 0);
+                  const players = parseInt(
+                    t.current_players || t.player_count || 0,
+                  );
+                  const dp = sym === "zkLTC" ? 4 : 2;
+                  const pool = (fee * players).toFixed(dp);
+                  const winner = t.winners?.[0];
+                  const winnerName = winner?.username
+                    ? "@" + winner.username
+                    : winner?.wallet
+                      ? fmt(winner.wallet)
+                      : null;
+                  return `
+                  <button onclick="openTournament(${t.id})"
+                    style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+                    border-radius:20px;padding:4px 10px;cursor:pointer;font-size:.7rem;
+                    color:var(--muted);transition:.15s;display:flex;align-items:center;gap:5px;white-space:nowrap"
+                    onmouseover="this.style.background='rgba(255,255,255,.08)';this.style.color='#fff'"
+                    onmouseout="this.style.background='rgba(255,255,255,.04)';this.style.color='var(--muted)'">
+                    ${isWL ? "💬" : "🏆"}
+                    <span>${sanitizeText(t.name)}</span>
+                    ${winnerName ? `<span style="color:var(--gold);font-weight:700">· ${winnerName}</span>` : ""}
+                    ${!isWL && parseFloat(pool) > 0 ? `<span style="color:var(--green)">· ${pool} ${sym}</span>` : ""}
+                    <span style="background:rgba(6,214,160,.12);color:var(--green);padding:1px 5px;border-radius:8px;font-size:.6rem">✅</span>
+                  </button>`;
+                })
+                .join("")}
+            </div>
+          </div>`
+            : ""
+        }
+
       </div>
-    </div>`;
+
+      <!-- Divider -->
+      <div style="grid-column:1/-1;margin:4px 0 14px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+          <span style="font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:1.5px;color:var(--muted)">GAME ROOMS</span>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+        </div>
+        <div style="background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.12);
+          border-radius:10px;padding:9px 14px;display:flex;align-items:center;gap:10px">
+          <span style="font-size:.9rem">🎮</span>
+          <span style="font-size:.76rem;color:var(--muted);flex:1">
+            Prefer solo play? <strong style="color:var(--accent)">Game Rooms</strong> — pay entry, answer 10 questions, top scorers split the prize.
+          </span>
+          <button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 12px;font-size:.7rem;white-space:nowrap"
+            onclick="showCreateModal()">＋ Create Room</button>
+        </div>
+      </div>`;
   }
 
   // ── GAME CARDS ───────────────────────────────────────────────────────
