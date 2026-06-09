@@ -2493,10 +2493,10 @@ async function renderGames() {
             <div style="font-size:.72rem;color:var(--muted);margin-top:1px">Auto-created every hour · No setup needed</div>
           </div>
         </div>
-        <button onclick="filterGames('0',this)"
-          style="background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:6px 14px;border-radius:20px;cursor:pointer;font-size:.75rem;font-weight:700;white-space:nowrap">
-          🤖 Browse All
-        </button>
+        <button onclick="filterStatus='0';document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));renderGames()"
+  style="background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:6px 14px;border-radius:20px;cursor:pointer;font-size:.75rem;font-weight:700;white-space:nowrap">
+  🤖 Browse All
+</button>
       </div>
     </div>
 
@@ -2735,6 +2735,8 @@ async function renderGames() {
   }
 
   grid.innerHTML = html;
+  // Load stats into the bar now that it exists in the DOM
+  setTimeout(() => loadGlobalStats(), 0);
 }
 
 async function openGameReadOnly(gameId, gameChainId) {
