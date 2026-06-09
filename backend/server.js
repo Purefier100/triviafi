@@ -129,6 +129,9 @@ const arcContract = new ethers.Contract(
 // ── LitVM provider ────────────────────────────────────────────────────────────
 function makeLitvmProvider(attempt = 0) {
   const rpc = LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length];
+
+  console.log("LITVM RPC USED:", rpc);
+
   return new ethers.JsonRpcProvider(rpc, {
     chainId: 4441,
     name: "litvm",
@@ -149,6 +152,7 @@ const writeContract = new ethers.Contract(
 );
 
 async function makeLitvmProviderFast() {
+  console.log("LITVM_RPCS_LIST:", LITVM_RPCS_LIST);
   for (const rpc of LITVM_RPCS_LIST) {
     try {
       const p = new ethers.JsonRpcProvider(rpc, {
@@ -161,8 +165,9 @@ async function makeLitvmProviderFast() {
       ]);
       console.log(`✅ LitVM RPC: ${rpc}`);
       return p;
-    } catch (_) {
-      console.warn(`❌ LitVM RPC failed: ${rpc}`);
+    } catch (e) {
+      console.error(`❌ LitVM RPC failed: ${rpc}`);
+      console.error(e);
     }
   }
   // All failed — return default anyway
@@ -3223,7 +3228,9 @@ app.post("/games/:gameId/refund", async (req, res) => {
     // ── 3. Game must be finished or past deadline ─────────────────────
     if (rpcAvailable) {
       try {
-        const provider = isLitvm ? makeLitvmProvider() : makeProvider();
+        const provider = isLitvm
+          ? await makeLitvmProviderFast()
+          : makeProvider();
         const contractAddr = isLitvm
           ? LITVM_CONTRACT_ADDRESS
           : CONTRACT_ADDRESS;
@@ -3294,7 +3301,9 @@ app.post("/games/:gameId/refund", async (req, res) => {
     } else {
       // Fetch from chain if not in DB
       try {
-        const fallbackProvider = isLitvm ? makeLitvmProvider() : makeProvider();
+        const fallbackProvider = isLitvm
+          ? await makeLitvmProviderFast()
+          : makeProvider();
         const fallbackContract = new ethers.Contract(
           isLitvm ? LITVM_CONTRACT_ADDRESS : CONTRACT_ADDRESS,
           [
