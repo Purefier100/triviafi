@@ -2926,6 +2926,9 @@
   <div id="tournamentList" class="game-grid"></div>
 </div>
 
+  <!-- Floating badges -->
+  <div id="floatingBadgesRow" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;padding:16px 20px 24px;max-width:1280px;margin:0 auto"></div>
+
   </main>
 
   <script src="https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js"></script>
@@ -3123,21 +3126,24 @@
           </div>
         </div>`).join("");
     }
-    initFloatingBadges();
+    // Run after DOM is fully parsed
+    document.addEventListener("DOMContentLoaded", () => {
+      initFloatingBadges();
+    });
 
     // ── Particle canvas ───────────────────────────────────────────────
     (function() {
-      const canvas = document.getElementById("heroCanvas");
-      const section = document.getElementById("heroSection");
-      if (!canvas || !section) return;
-      const ctx = canvas.getContext("2d");
-      let animId;
-      const setSize = () => {
-        canvas.width = section.offsetWidth;
-        canvas.height = section.offsetHeight;
-      };
-      setSize();
-      window.addEventListener("resize", setSize);
+      function startCanvas() {
+        const canvas = document.getElementById("heroCanvas");
+        const section = document.getElementById("heroSection");
+        if (!canvas || !section) return;
+        const ctx = canvas.getContext("2d");
+        const setSize = () => {
+          canvas.width = section.offsetWidth;
+          canvas.height = Math.max(section.offsetHeight, 320);
+        };
+        setSize();
+        window.addEventListener("resize", setSize);;
       const pts = Array.from({length: 55}, () => ({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
@@ -3179,13 +3185,16 @@
         animId = requestAnimationFrame(draw);
       }
       draw();
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", startCanvas);
+      } else {
+        setTimeout(startCanvas, 50);
+      }
     })();
   </script>
 
 <script src="app.js"></script>
-
-<!-- Floating badges -->
-<div id="floatingBadgesRow" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;padding:8px 20px 0;max-width:1280px;margin:0 auto"></div>
 
 <footer class="app-footer">
 
