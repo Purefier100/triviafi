@@ -3339,12 +3339,15 @@ app.post("/games/:gameId/refund", async (req, res) => {
     try {
       let txHash;
       if (isLitvm) {
-        const ws = verifierWallet.connect(makeLitvmProvider());
+        const fastProvider = await makeLitvmProviderFast();
+        const ws = verifierWallet.connect(fastProvider);
+
         const tx = await ws.sendTransaction({
-          to: wallet,
+          to: refund.wallet,
           value: amountWei,
           gasLimit: 21000,
         });
+
         await tx.wait();
         txHash = tx.hash;
       } else {
