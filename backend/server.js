@@ -224,22 +224,35 @@ async function withLitvmRetry(fn, label = "litvm", retries = 6) {
   for (let i = 1; i <= retries; i++) {
     try {
       const provider = makeLitvmProvider(i - 1);
+
       const contract = new ethers.Contract(
         LITVM_CONTRACT_ADDRESS,
         CONTRACT_ABI,
         provider,
       );
+
       const result = await Promise.race([
         fn(contract, provider),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("LitVM timeout")), 15000),
+          setTimeout(() => reject(new Error("LitVM timeout")), 25000),
         ),
       ]);
+
       return result;
     } catch (e) {
-      console.warn(`[${label}] attempt ${i}/${retries}: ${e.message}`);
+      console.warn(`[${label}] attempt ${i}/${retries}:`, e.message, e.code);
+
+      if (
+        e.message?.includes("429") ||
+        e.message?.includes("Too Many Requests")
+      ) {
+        console.warn("⏳ LitVM RPC rate limited, backing off...");
+        await new Promise((r) => setTimeout(r, 5000 * i));
+      } else {
+        await new Promise((r) => setTimeout(r, 2000 * i));
+      }
+
       if (i === retries) throw e;
-      await new Promise((r) => setTimeout(r, 2000 * i));
     }
   }
 }
