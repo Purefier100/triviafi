@@ -2265,10 +2265,24 @@ async function renderGames() {
     if (tr.ok) {
       const all = await tr.json();
       const list = Array.isArray(all) ? all : all.tournaments || [];
-      openTournaments = list.filter(
-        (t) => t.status === "open" || t.status === "active",
-      );
-      pastTournaments = list.filter((t) => t.status === "finished").slice(0, 4);
+      const now24 = Date.now();
+      openTournaments = list.filter((t) => {
+        if (t.status === "open" || t.status === "active") return true;
+        // Also show finished/cancelled tournaments created within last 24 hours
+        if (t.status === "finished" || t.status === "cancelled") {
+          const created = t.created_at ? new Date(t.created_at).getTime() : 0;
+          return now24 - created < 24 * 60 * 60 * 1000;
+        }
+        return false;
+      });
+      pastTournaments = list
+        .filter((t) => {
+          if (t.status !== "finished") return false;
+          const created = t.created_at ? new Date(t.created_at).getTime() : 0;
+          // Only show in past chips if older than 24 hours
+          return now24 - created >= 24 * 60 * 60 * 1000;
+        })
+        .slice(0, 4);
     }
   } catch (_) {}
 
