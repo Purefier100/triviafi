@@ -70,8 +70,7 @@ const LITVM_RPC_URL =
   process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http";
 
 const LITVM_RPCS_LIST = [
-  process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http",
-  "https://liteforge-testnet.rpc.caldera.xyz/http",
+  process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http",
   "https://liteforge.rpc.caldera.xyz/http",
 ].filter((v, i, a) => v && a.indexOf(v) === i); // dedupe
 
@@ -131,7 +130,11 @@ const arcContract = new ethers.Contract(
 function makeLitvmProvider(attempt = 0) {
   const rpc = LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length];
   console.log("LITVM RPC USED:", rpc);
-  return new ethers.JsonRpcProvider(rpc, { chainId: 4441, name: "litvm" });
+  return new ethers.JsonRpcProvider(
+    rpc,
+    { chainId: 4441, name: "litvm" },
+    { staticNetwork: true }, // stops ethers retrying network detection on every call
+  );
 }
 const litvmProvider = makeLitvmProvider();
 const litvmVerifierSigner = verifierWallet.connect(litvmProvider);
@@ -3422,9 +3425,12 @@ app.post("/games/:gameId/refund", async (req, res) => {
         );
         let txHash = null;
         let lastErr = null;
-        for (let attempt = 0; attempt < LITVM_RPCS_LIST.length; attempt++) {
+        for (let attempt = 0; attempt < 4; attempt++) {
           try {
-            const fastProvider = makeLitvmProvider(attempt);
+            // Wait before each attempt to avoid 429
+            if (attempt > 0)
+              await new Promise((r) => setTimeout(r, 3000 * attempt));
+            const fastProvider = makeLitvmProvider(0); // only one real RPC
             console.log(
               `REFUND DEBUG 2: Attempt ${attempt + 1} using RPC: ${LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length]}`,
             );
