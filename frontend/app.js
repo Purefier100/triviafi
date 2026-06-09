@@ -2412,18 +2412,31 @@ async function renderGames() {
               .join("")}
           </div>`
             : `
-          <div style="background:rgba(255,209,102,.03);border:1px dashed rgba(255,209,102,.15);
-            border-radius:10px;padding:16px;text-align:center;margin-bottom:12px;display:flex;
-            align-items:center;gap:12px;justify-content:center">
-            <span style="font-size:1.3rem">🏆</span>
-            <div style="text-align:left">
-              <p style="color:var(--gold);font-weight:700;font-size:.82rem;margin:0">No active tournaments right now</p>
-              <p style="color:var(--muted);font-size:.72rem;margin:2px 0 0">Be the first — create a paid or whitelist battle</p>
+          <div style="background:linear-gradient(135deg,rgba(255,209,102,.06),rgba(123,97,255,.04));border:1px solid rgba(255,209,102,.18);border-radius:14px;padding:20px;margin-bottom:12px;position:relative;overflow:hidden">
+            <!-- bg glow -->
+            <div style="position:absolute;top:-30px;right:-30px;width:120px;height:120px;background:radial-gradient(circle,rgba(255,209,102,.12),transparent 70%);pointer-events:none"></div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <div style="width:44px;height:44px;border-radius:12px;background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.2);display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0">🏆</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:700;font-size:.88rem;color:var(--gold);margin-bottom:3px">No active tournaments right now</div>
+                <div style="font-size:.74rem;color:var(--muted);line-height:1.5">Tournaments run every day — paid USDC/zkLTC prizes or free whitelist battles for your community.</div>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+                  <span style="background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.18);color:var(--accent);padding:3px 10px;border-radius:20px;font-size:.68rem;font-weight:700">💰 USDC Prizes</span>
+                  <span style="background:rgba(123,97,255,.08);border:1px solid rgba(123,97,255,.18);color:var(--purple);padding:3px 10px;border-radius:20px;font-size:.68rem;font-weight:700">🔷 zkLTC Prizes</span>
+                  <span style="background:rgba(88,101,242,.08);border:1px solid rgba(88,101,242,.18);color:#7289da;padding:3px 10px;border-radius:20px;font-size:.68rem;font-weight:700">💬 Discord Whitelist</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px;flex-shrink:0">
+                <button class="btn btn-primary" style="width:auto;padding:8px 18px;font-size:.78rem;white-space:nowrap"
+                  onclick="showScreen('screenTournaments');loadTournaments();showTournamentTypeModal()">
+                  🚀 Create Tournament
+                </button>
+                <button class="btn btn-ghost btn-sm" style="font-size:.72rem;text-align:center"
+                  onclick="showScreen('screenTournaments');loadTournaments()">
+                  Browse Past →
+                </button>
+              </div>
             </div>
-            <button class="btn btn-ghost btn-sm" style="width:auto;padding:5px 14px;font-size:.72rem;margin-left:auto"
-              onclick="showScreen('screenTournaments');loadTournaments();showTournamentTypeModal()">
-              ＋ Create
-            </button>
           </div>`
         }
 
@@ -2600,6 +2613,8 @@ async function renderGames() {
                         <span>🏆 <strong style="color:var(--green)">${pool}</strong> ${net.symbol}</span>
                         <span style="color:rgba(255,255,255,.2)">·</span>
                         <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
+                        ${s === 0 && hasDeadlines && regSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="color:var(--green);font-weight:700" data-deadline="${g[10]}" data-prefix="⏰ " data-expiredtext="Closed">⏰ ${fmtTime(regSecs)}</span>` : ""}
+                        ${s === 0 && hasDeadlines && regSecs <= 0 && playSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="color:var(--gold);font-weight:700" data-deadline="${g[11]}" data-prefix="🎮 " data-expiredtext="Ended">🎮 ${fmtTime(playSecs)}</span>` : ""}
                       </div>
                       <div style="margin-top:7px;height:2px;background:rgba(255,255,255,.06);border-radius:1px;overflow:hidden">
                         <div style="height:100%;width:${fillPct}%;background:${fillPct >= 100 ? "var(--red)" : fillPct > 60 ? "var(--gold)" : "var(--green)"};border-radius:1px;transition:width .5s"></div>
