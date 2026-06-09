@@ -2195,249 +2195,311 @@ function disconnectWallet() {
   toast("Wallet disconnected", "info");
 }
 
-function renderGames() {
-  const el = document.getElementById("gamesList");
-  const now = Math.floor(Date.now() / 1000);
+async function renderGames() {
+  const grid = document.getElementById("gamesList");
+  if (!grid) return;
 
-  let filtered;
+  const filter = currentFilter || "all";
+  const nowSec = Math.floor(Date.now() / 1000);
 
-  // helper: normalize DB row OR onchain array into consistent shape
-  function norm(item) {
-    if (item && item.g) return item.g; // old {i,g} shape
-    // DB row shape — map to array positions
-    return {
-      _db: true,
-      id: item.contract_game_id,
-      name: item.name,
-      creator: item.creator,
-      categoryId: 0,
-      categoryName: item.category || "",
-      difficulty: item.difficulty || 0,
-      entryFee: BigInt(Math.round(parseFloat(item.entry_fee || 0) * 1e6)),
-      maxPlayers: item.max_players || 0,
-      prizePool: 0n,
-      playerCount: 0,
-      registrationEnd: 0,
-      playDeadline: 0,
-      topPlayers: [
-        "0x0000000000000000000000000000000000000000",
-        "0x0000000000000000000000000000000000000000",
-        "0x0000000000000000000000000000000000000000",
-      ],
-      prizeClaimed: false,
-      status: item.status || 0,
-      finishedCount: 0,
-      chainId: item.chain_id || 5042002,
-      tokenSymbol: item.token_symbol || "USDC",
-    };
-  }
+  // ── Filter games ────────────────────────────────────────────────────
+  const filtered = allGames.filter(({ g }) => {
+    const s = Number(g[14]);
+    const regSecs = Number(g[10]) - nowSec;
+    const playSecs = Number(g[11]) - nowSec;
+    if (filter === "open") return s === 0 && regSecs > 0;
+    if (filter === "live") return s === 0 && regSecs <= 0 && playSecs > 0;
+    if (filter === "ended") return s === 1;
+    if (filter === "cancelled") return s === 2;
+    return true;
+  });
 
-  const getG = (item) => item.g || item;
-
-  if (filterStatus === "all") {
-    filtered = allGames.filter((item) => {
-      const g = getG(item);
-      const s = Number(g[14]);
-      if (s !== 0) return false;
-      const playDeadline = Number(g[11]);
-      // If playDeadline is 0 or missing, include the game anyway
-      return playDeadline === 0 || playDeadline > now;
+  // ── Fetch tournaments for the banner section ─────────────────────────
+  let activeTournaments = [];
+  try {
+    const tr = await fetch(`${BACKEND}/tournaments?limit=6`, {
+      credentials: "include",
     });
-  } else if (filterStatus === "0") {
-    filtered = allGames.filter((item) => {
-      const g = getG(item);
-      if (Number(g[14]) !== 0) return false;
-      return Number(g[10]) > now;
-    });
-  } else if (filterStatus === "live") {
-    filtered = allGames.filter((item) => {
-      const g = getG(item);
-      if (Number(g[14]) !== 0) return false;
-      return Number(g[10]) <= now && Number(g[11]) > now;
-    });
-  } else if (filterStatus === "1") {
-    filtered = allGames.filter((item) => Number(getG(item)[14]) === 1);
-  } else if (filterStatus === "2") {
-    filtered = allGames.filter((item) => Number(getG(item)[14]) === 2);
-  } else {
-    filtered = allGames.filter(
-      (item) => Number(getG(item)[14]) === parseInt(filterStatus),
-    );
-  }
+    if (tr.ok) {
+      const all = await tr.json();
+      activeTournaments = (Array.isArray(all) ? all : all.tournaments || [])
+        .filter(
+          (t) =>
+            t.status === "open" || t.status === "active" || t.status === "live",
+        )
+        .slice(0, 4);
+    }
+  } catch (_) {}
 
-  if (filtered.length === 0) {
-    const msgs = {
-      all: `<p style="color:var(--muted);text-align:center;padding:32px">No active games right now.<br><span style="font-size:.8rem">Agent creates new rooms automatically every hour.</span></p>`,
-      0: `<p style="color:var(--muted);text-align:center;padding:24px">No open games right now.</p>`,
-      live: `<p style="color:var(--muted);text-align:center;padding:24px">No live games right now.</p>`,
-      1: `<p style="color:var(--muted);text-align:center;padding:24px">No ended games yet.</p>`,
-      2: `<p style="color:var(--muted);text-align:center;padding:24px">No cancelled games.</p>`,
-    };
-    el.innerHTML = msgs[filterStatus] || msgs.all;
-    return;
-  }
+  // ── Build HTML ───────────────────────────────────────────────────────
+  let html = "";
 
-  let html = '<div class="game-grid">';
-  for (const item of filtered) {
-    const { i, g, chainId: itemChainId } = item;
-    const net = NETWORKS[itemChainId] || NETWORKS[5042002];
-    const [
-      ,
-      name,
-      creator,
-      ,
-      catName,
-      ,
-      entryFee,
-      maxPlayers,
-      prizePool,
-      playerCount,
-      regEnd,
-      playDeadline,
-      ,
-      ,
-      status,
-      finishedCount,
-    ] = g;
-    // ── chain info (use itemChainId already destructured above) ──
-    const chainBadge =
-      itemChainId === 4441
-        ? `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);margin-left:5px">🔷 LitVM</span>`
-        : `<span style="font-size:.63rem;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.25);margin-left:5px">⚡ Arc</span>`;
-    const tokenSymbol = net.symbol;
-    const dp = net.decimals === 18 ? 4 : 2;
-    const feeFormatted = parseFloat(
-      ethers.formatUnits(entryFee, net.decimals),
-    ).toFixed(dp);
-    const poolFormatted = parseFloat(
-      ethers.formatUnits(prizePool, net.decimals),
-    ).toFixed(dp);
+  // ── TOURNAMENTS SECTION (top, full-width) ────────────────────────────
+  if (activeTournaments.length > 0 || filter === "all") {
+    html += `
+      <div style="grid-column:1/-1;margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:1.1rem">🏆</span>
+            <span style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:1.5px;color:var(--gold)">TOURNAMENTS</span>
+            ${activeTournaments.length > 0 ? `<span style="background:rgba(255,209,102,.15);color:var(--gold);font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid rgba(255,209,102,.3)">${activeTournaments.length} ACTIVE</span>` : ""}
+          </div>
+          <button class="btn btn-ghost btn-sm" style="width:auto;padding:6px 14px;font-size:.78rem"
+            onclick="showScreen('screenTournaments');loadTournaments()">
+            View All →
+          </button>
+        </div>`;
 
-    const s = Number(status),
-      n = Number(playerCount),
-      diff = Number(g[5]);
-    const regSecs = Number(regEnd) - now,
-      playSecs = Number(playDeadline) - now;
+    if (activeTournaments.length > 0) {
+      html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:8px">`;
+      for (const t of activeTournaments) {
+        const fee = parseFloat(t.entry_fee || 0);
+        const sym = t.token_symbol || "USDC";
+        const dp = sym === "zkLTC" ? 4 : 2;
+        const isLive = t.status === "active" || t.status === "live";
+        const isFull = t.current_players >= t.max_players;
+        const prizePool = fee * (t.current_players || 0);
+        const chainColor = sym === "zkLTC" ? "var(--purple)" : "var(--accent)";
+        const chainBg =
+          sym === "zkLTC" ? "rgba(123,97,255,.15)" : "rgba(0,229,255,.1)";
+        const chainBorder =
+          sym === "zkLTC" ? "rgba(123,97,255,.3)" : "rgba(0,229,255,.25)";
+        const chainIcon = sym === "zkLTC" ? "🔷" : "⚡";
 
-    let phase = "",
-      phaseColor = "var(--muted)";
-    const hasDeadlines = Number(g[10]) > 0 || Number(g[11]) > 0;
-    if (s === 0) {
-      if (!hasDeadlines) {
-        // Data still loading — show nothing, not "Ended (pending)"
-        phase = "";
-      } else if (regSecs > 0) {
-        phase = "📋 Open — Joining Now";
-        phaseColor = "var(--green)";
-      } else if (playSecs > 0) {
-        phase = "🎮 Live — Play Now!";
-        phaseColor = "var(--gold)";
-      } else {
-        phase = "⏰ Ended (pending close)";
-        phaseColor = "var(--muted)";
+        html += `
+          <div onclick="openTournament(${t.id})" style="
+            background:linear-gradient(135deg,rgba(255,209,102,.08) 0%,rgba(255,157,58,.04) 100%);
+            border:1px solid rgba(255,209,102,.25);
+            border-radius:14px;padding:16px;cursor:pointer;
+            transition:transform .15s,border-color .15s,box-shadow .15s;
+            position:relative;overflow:hidden"
+            onmouseover="this.style.transform='translateY(-2px)';this.style.borderColor='rgba(255,209,102,.5)';this.style.boxShadow='0 8px 24px rgba(255,209,102,.12)'"
+            onmouseout="this.style.transform='';this.style.borderColor='rgba(255,209,102,.25)';this.style.boxShadow=''">
+
+            <!-- Glow accent -->
+            <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:.6"></div>
+
+            <!-- Header -->
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px">
+              <div style="flex:1;min-width:0">
+                <div style="font-weight:700;font-size:.9rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                  🏆 ${sanitizeText(t.name)}
+                </div>
+                <div style="font-size:.72rem;color:var(--muted);margin-top:2px">
+                  ${t.rounds || 3} rounds · elimination
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-left:8px">
+                <span style="font-size:.68rem;padding:2px 8px;border-radius:10px;
+                  background:${isLive ? "rgba(255,157,58,.2)" : "rgba(6,214,160,.15)"};
+                  color:${isLive ? "var(--orange)" : "var(--green)"};
+                  border:1px solid ${isLive ? "rgba(255,157,58,.35)" : "rgba(6,214,160,.3)"};
+                  font-weight:700">
+                  ${isLive ? "🔴 LIVE" : "🟢 OPEN"}
+                </span>
+                <span style="font-size:.65rem;padding:1px 6px;border-radius:8px;
+                  background:${chainBg};color:${chainColor};border:1px solid ${chainBorder}">
+                  ${chainIcon} ${sym === "zkLTC" ? "LitVM" : "Arc"}
+                </span>
+              </div>
+            </div>
+
+            <!-- Stats row -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--gold)">${fee.toFixed(dp)}</div>
+                <div style="font-size:.62rem;color:var(--muted)">Entry ${sym}</div>
+              </div>
+              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--green)">${prizePool.toFixed(dp)}</div>
+                <div style="font-size:.62rem;color:var(--muted)">Prize Pool</div>
+              </div>
+              <div style="background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center">
+                <div style="font-family:'Bebas Neue',sans-serif;font-size:1rem;color:var(--accent)">${t.current_players || 0}/${t.max_players}</div>
+                <div style="font-size:.62rem;color:var(--muted)">Players</div>
+              </div>
+            </div>
+
+            <!-- Prize split -->
+            <div style="display:flex;gap:6px;margin-bottom:10px">
+              <div style="flex:1;background:rgba(255,209,102,.08);border-radius:6px;padding:5px;text-align:center;font-size:.65rem">
+                <span style="color:var(--gold);font-weight:700">🥇 60%</span>
+              </div>
+              <div style="flex:1;background:rgba(255,255,255,.04);border-radius:6px;padding:5px;text-align:center;font-size:.65rem">
+                <span style="color:#ccc;font-weight:700">🥈 25%</span>
+              </div>
+              <div style="flex:1;background:rgba(255,255,255,.04);border-radius:6px;padding:5px;text-align:center;font-size:.65rem">
+                <span style="color:#cd7f32;font-weight:700">🥉 15%</span>
+              </div>
+            </div>
+
+            <button class="btn btn-primary" style="width:100%;padding:9px;font-size:.82rem;
+              background:linear-gradient(135deg,var(--gold),var(--orange));border:none"
+              onclick="event.stopPropagation();openTournament(${t.id})">
+              ${isFull ? "👀 View Tournament" : isLive ? "🎮 Enter Now" : "🎟️ Join Tournament"}
+            </button>
+          </div>`;
       }
-    } else if (s === 1) {
-      phase = "✅ Finished";
-      phaseColor = "var(--muted)";
+      html += `</div>`;
     } else {
-      phase = "❌ Cancelled";
-      phaseColor = "var(--red)";
+      html += `
+        <div style="background:rgba(255,209,102,.04);border:1px dashed rgba(255,209,102,.2);
+          border-radius:12px;padding:20px;text-align:center;margin-bottom:8px">
+          <div style="font-size:1.8rem;margin-bottom:8px">🏆</div>
+          <p style="color:var(--gold);font-weight:700;font-size:.9rem">No active tournaments</p>
+          <p style="color:var(--muted);font-size:.78rem;margin-top:4px;margin-bottom:12px">
+            Be the first to create one — multi-round elimination with automatic prize distribution
+          </p>
+          <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 20px"
+            onclick="showScreen('screenTournaments');loadTournaments();showCreateTournamentModal()">
+            ＋ Create Tournament
+          </button>
+        </div>`;
     }
 
-    const dist = parseFloat(poolFormatted) * 0.95;
-    let prizeHtml = "";
-    if (n >= 3)
-      prizeHtml = `<div style="font-size:.73rem;color:var(--muted);margin-top:4px">🥇${(
-        dist * 0.6
-      ).toFixed(dp)} · 🥈${(dist * 0.25).toFixed(dp)} · 🥉${(
-        dist * 0.15
-      ).toFixed(dp)} ${tokenSymbol}</div>`;
-    else if (n === 2)
-      prizeHtml = `<div style="font-size:.73rem;color:var(--muted);margin-top:4px">🥇${(
-        dist * 0.7
-      ).toFixed(dp)} · 🥈${(dist * 0.3).toFixed(dp)} ${tokenSymbol}</div>`;
-    else if (n === 1)
-      prizeHtml = `<div style="font-size:.73rem;color:var(--green);margin-top:4px">🥇 Winner: ${dist.toFixed(
-        dp,
-      )} ${tokenSymbol}</div>`;
-    // Format game creation/deadline dates
-    const regEndDate =
-      Number(regEnd) > 0
-        ? new Date(Number(regEnd) * 1000).toLocaleString([], {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : null;
-    const playEndDate =
-      Number(playDeadline) > 0
-        ? new Date(Number(playDeadline) * 1000).toLocaleString([], {
-            month: "short",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
-          })
-        : null;
-    const dateHtml =
-      regEndDate || playEndDate
-        ? `<div style="font-size:.68rem;color:var(--muted);margin-top:5px">
-  ${regEndDate ? `📅 Join closes: ${regEndDate}` : ""}
-  ${playEndDate ? `<br>🎮 Play ends: ${playEndDate}` : ""}
-  </div>`
-        : "";
-    let timerHtml = "";
-    if (s === 0 && regSecs > 0)
-      timerHtml = `<div class="countdown${
-        regSecs < 300 ? " urg" : ""
-      }" data-deadline="${Number(
-        regEnd,
-      )}" data-prefix="⏰ Join closes in ">⏰ Join closes in ${fmtTime(
-        regSecs,
-      )}</div>`;
-    else if (s === 0 && playSecs > 0)
-      timerHtml = `<div class="countdown${
-        playSecs < 300 ? " urg" : ""
-      }" data-deadline="${Number(
-        playDeadline,
-      )}" data-prefix="🎮 Play ends in ">🎮 Play ends in ${fmtTime(
-        playSecs,
-      )}</div>`;
+    html += `</div>
 
-    const isAgent = name.includes("🤖");
-    const agentBadge = isAgent
-      ? `<span style="font-size:.68rem;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.3);padding:1px 6px;border-radius:10px;margin-left:6px">🤖 AI Room</span>`
-      : "";
-    const clickAction =
-      s === 1 || s === 2
-        ? `openGameReadOnly(${i},${itemChainId})`
-        : `openGame(${i},${itemChainId})`;
-
-    html += `<div class="gcard" onclick="${clickAction}">
-      <div class="gcard-title">#${i} ${sanitizeText(name)} <span class="badge ${
-        STATUS_BADGE[s]
-      }">${STATUS_LABEL[s]}</span>${agentBadge}${chainBadge}</div>
-      ${phase ? `<div style="font-size:.75rem;color:${phaseColor};margin-bottom:8px;font-weight:600">${phase}</div>` : ""}
-      <div class="gmeta">💰 Entry: <strong>${feeFormatted} ${tokenSymbol}</strong> | 🏆 Pool: <strong>${poolFormatted} ${tokenSymbol}</strong></div>
-      <div class="gmeta">👥 <strong>${n}/${maxPlayers}</strong> joined | ✅ <strong>${finishedCount}</strong> done</div>
-      <div class="gmeta">By: <span style="color:var(--purple)">${fmt(
-        creator,
-      )}</span></div>
-      <span class="cat-pill">📚 ${sanitizeText(catName)}</span>
-      ${
-        diff > 0
-          ? `<span style="margin-left:6px;font-size:.72rem;color:var(--${
-              DIFF_CLASSES[diff] || "accent"
-            })">· ${DIFF_LABELS[diff]}</span>`
-          : ""
-      }
-      ${prizeHtml}
-      ${timerHtml}
-      ${dateHtml}
+    <!-- Divider -->
+    <div style="grid-column:1/-1;display:flex;align-items:center;gap:12px;margin:4px 0 12px">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <span style="font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:1.5px;color:var(--muted)">GAME ROOMS</span>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
     </div>`;
   }
-  html += "</div>";
-  el.innerHTML = html;
+
+  // ── GAME CARDS ───────────────────────────────────────────────────────
+  if (filtered.length === 0) {
+    html += `<div style="grid-column:1/-1;text-align:center;padding:32px">
+      <div style="font-size:2rem;margin-bottom:10px">🎮</div>
+      <p style="color:var(--muted)">No games found.</p>
+      <button class="btn btn-ghost btn-sm" style="margin-top:12px;width:auto"
+        onclick="showCreateModal()">＋ Create a Game Room</button>
+    </div>`;
+  } else {
+    for (const { i, g, chainId: cid, net } of filtered) {
+      const s = Number(g[14]);
+      const regSecs = Number(g[10]) - nowSec;
+      const playSecs = Number(g[11]) - nowSec;
+      const n = Number(g[9]);
+      const max = Number(g[7]);
+      const dp = net.decimals === 18 ? 4 : 2;
+      const fee = parseFloat(ethers.formatUnits(g[6], net.decimals)).toFixed(
+        dp,
+      );
+      const pool = parseFloat(ethers.formatUnits(g[8], net.decimals)).toFixed(
+        dp,
+      );
+      const hasDeadlines = Number(g[10]) > 0 || Number(g[11]) > 0;
+
+      const STATUS_BADGE = {
+        0: "badge-open",
+        1: "badge-ended",
+        2: "badge-cancelled",
+      };
+      const STATUS_LABEL = { 0: "OPEN", 1: "ENDED", 2: "CANCELLED" };
+
+      let phase = "",
+        phaseColor = "var(--muted)";
+      if (s === 0) {
+        if (!hasDeadlines) {
+          phase = "";
+        } else if (regSecs > 0) {
+          phase = "📋 Open — Joining Now";
+          phaseColor = "var(--green)";
+        } else if (playSecs > 0) {
+          phase = "🎮 Live — Play Now!";
+          phaseColor = "var(--gold)";
+        } else {
+          phase = "⏰ Ended (pending close)";
+          phaseColor = "var(--muted)";
+        }
+      } else if (s === 1) {
+        phase = "✅ Finished";
+        phaseColor = "var(--muted)";
+      } else {
+        phase = "❌ Cancelled";
+        phaseColor = "var(--red)";
+      }
+
+      const chainBadge =
+        cid === 4441
+          ? `<span style="font-size:.65rem;padding:2px 7px;border-radius:8px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.25)">🔷 LitVM</span>`
+          : `<span style="font-size:.65rem;padding:2px 7px;border-radius:8px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.2)">⚡ Arc</span>`;
+
+      const isActive = s === 0 && hasDeadlines && (regSecs > 0 || playSecs > 0);
+      const borderColor = isActive
+        ? regSecs > 0
+          ? "rgba(6,214,160,.3)"
+          : "rgba(255,209,102,.3)"
+        : "var(--border)";
+
+      html += `
+        <div onclick="openGame(${i}, ${cid})" style="
+          background:var(--surface);
+          border:1px solid ${borderColor};
+          border-radius:12px;padding:14px;cursor:pointer;
+          transition:transform .15s,border-color .15s,box-shadow .15s;
+          position:relative"
+          onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(0,0,0,.3)'"
+          onmouseout="this.style.transform='';this.style.boxShadow=''">
+
+          <!-- Header -->
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+            <div style="font-weight:700;font-size:.88rem;color:#fff;flex:1;min-width:0;
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:8px">
+              #${i} ${sanitizeText(g[1])}
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+              <span class="badge ${STATUS_BADGE[s]}">${STATUS_LABEL[s]}</span>
+              ${chainBadge}
+            </div>
+          </div>
+
+          <!-- Tags -->
+          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
+            <span class="cat-pill" style="font-size:.68rem">📚 ${sanitizeText(g[4])}</span>
+            ${Number(g[5]) > 0 ? `<span style="font-size:.68rem;color:var(--muted)">· ${["", "Easy", "Medium", "Hard"][Number(g[5])] || ""}</span>` : ""}
+          </div>
+
+          <!-- Stats -->
+          <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px">
+            💰 Entry: <strong style="color:#fff">${fee} ${net.symbol}</strong>
+            &nbsp;|&nbsp;
+            🏆 Pool: <strong style="color:var(--green)">${pool} ${net.symbol}</strong>
+          </div>
+          <div style="font-size:.76rem;color:var(--muted);margin-bottom:6px">
+            👥 ${n}/${max} joined
+            &nbsp;|&nbsp;
+            ✅ ${Number(g[15])} done
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px">
+            By: <span style="color:var(--accent)">${fmt(g[2])}</span>
+          </div>
+
+          ${phase ? `<div style="font-size:.75rem;color:${phaseColor};font-weight:600;margin-bottom:4px">${phase}</div>` : ""}
+
+          ${
+            s === 0 && hasDeadlines && regSecs > 0
+              ? `
+            <div style="font-size:.72rem;color:var(--green);font-weight:600;margin-bottom:2px">
+              🎟️ Join closes in ${fmtTime(regSecs)}
+            </div>
+            <div style="font-size:.68rem;color:var(--muted)">📅 Join closes: ${new Date(Number(g[10]) * 1000).toLocaleString()}</div>
+            <div style="font-size:.68rem;color:var(--muted)">🎮 Play ends: ${new Date(Number(g[11]) * 1000).toLocaleString()}</div>
+          `
+              : s === 0 && hasDeadlines && playSecs > 0
+                ? `
+            <div style="font-size:.72rem;color:var(--gold);font-weight:600">
+              ⏳ Play ends in ${fmtTime(playSecs)}
+            </div>
+          `
+                : ""
+          }
+        </div>`;
+    }
+  }
+
+  grid.innerHTML = html;
 }
 
 async function openGameReadOnly(gameId, gameChainId) {
