@@ -2586,20 +2586,6 @@ async function renderGames() {
   </div>
 </div>
       </div>`;
-  }
-
-  // ── GAME CARDS ───────────────────────────────────────────────────────
-  if (filtered.length === 0) {
-    html += `<div style="grid-column:1/-1;background:rgba(0,229,255,.03);border:1px dashed rgba(0,229,255,.15);
-      border-radius:12px;padding:24px;text-align:center">
-      <div style="font-size:1.8rem;margin-bottom:8px">🎮</div>
-      <p style="color:var(--accent);font-weight:700;font-size:.9rem">No open game rooms right now</p>
-      <p style="color:var(--muted);font-size:.78rem;margin-top:4px;margin-bottom:14px">
-        New rooms open every hour — or create your own and invite friends to play
-      </p>
-      <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 20px"
-        onclick="showCreateModal()">＋ Create a Game Room</button>
-    </div>`;
   } else {
     for (const { i, g, chainId: cid, net } of filtered) {
       const s = Number(g[14]);
