@@ -3153,7 +3153,6 @@ app.post("/admin/manual-refund", async (req, res) => {
 });
 
 // ── GAME REFUND — for players who joined but never played ─────────────────
-// Conditions: game finished, player joined onchain, player never submitted score
 app.post("/games/:gameId/refund", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet, chainId: reqChainId } = req.body;
@@ -3169,7 +3168,7 @@ app.post("/games/:gameId/refund", async (req, res) => {
     return res.status(403).json({ error: "Wallet mismatch" });
 
   try {
-    // ── 1. Check already refunded ─────────────────────────────────────
+    // ── 1. Already refunded? ──────────────────────────────────────────
     const existingRefund = await pool.query(
       `SELECT * FROM game_refunds
        WHERE game_id=$1 AND chain_id=$2 AND LOWER(wallet)=LOWER($3)`,
@@ -3182,80 +3181,84 @@ app.post("/games/:gameId/refund", async (req, res) => {
       return res.status(400).json({ error: "Already refunded" });
     }
 
-    // ── 2. Verify player joined onchain ───────────────────────────────
+    // ── 2. Verify joined — RPC first, DB fallback ─────────────────────
     let joined = false,
       alreadyFinishedOnchain = false;
+    let rpcAvailable = true;
+
     try {
       const retryFn = isLitvm ? withLitvmRetry : withRetry;
       [joined, alreadyFinishedOnchain] = await retryFn(
         (c) => c.getPlayerStatus(gameId, wallet),
         "refund-playerStatus",
       );
-    } catch (e) {
-      console.warn(`[refund] RPC unavailable, checking DB: ${e.message}`);
-      // RPC down — check DB as fallback
-      // If they have a game_session entry, they joined
+    } catch (rpcErr) {
+      rpcAvailable = false;
+      console.warn(`[refund] RPC down, using DB fallback: ${rpcErr.message}`);
+
+      // DB fallback — if they have a session they definitely joined
       const sessionFallback = await pool.query(
         `SELECT finished, score FROM game_sessions
-           WHERE user_id=$1 AND game_id=$2 AND chain_id=$3`,
+         WHERE user_id=$1 AND game_id=$2 AND chain_id=$3`,
         [req.user.id, gameId, chainId],
       );
-      if (sessionFallback.rows.length === 0) {
-        // No DB session either — check game_refunds for any prior refund attempts
-        const priorRefund = await pool.query(
-          `SELECT * FROM game_refunds WHERE game_id=$1 AND chain_id=$2 AND LOWER(wallet)=LOWER($3)`,
-          [gameId, chainId, wallet],
+
+      if (sessionFallback.rows.length > 0) {
+        joined = true;
+        alreadyFinishedOnchain = sessionFallback.rows[0].finished || false;
+      } else {
+        // No session in DB either — can't verify, queue for manual review
+        return res.status(503).json({
+          error:
+            "LitVM network is temporarily down. Please try again in a few minutes.",
+        });
+      }
+    }
+
+    if (!joined)
+      return res
+        .status(400)
+        .json({ error: "You did not join this game onchain" });
+
+    // ── 3. Game must be finished or past deadline ─────────────────────
+    if (rpcAvailable) {
+      try {
+        const provider = isLitvm ? makeLitvmProvider() : makeProvider();
+        const contractAddr = isLitvm
+          ? LITVM_CONTRACT_ADDRESS
+          : CONTRACT_ADDRESS;
+        const statusContract = new ethers.Contract(
+          contractAddr,
+          [
+            "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
+          ],
+          provider,
         );
-        if (priorRefund.rows.length === 0) {
-          return res.status(503).json({
-            error:
-              "Network temporarily unavailable. Please try again in a few minutes.",
-          });
+        const gameData = await Promise.race([
+          statusContract.getGame(gameId),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 8000),
+          ),
+        ]);
+        const gameStatus = Number(gameData.status);
+        if (gameStatus === 0) {
+          const playDeadline = Number(gameData.playDeadline);
+          const now = Math.floor(Date.now() / 1000);
+          if (playDeadline > now) {
+            return res.status(400).json({
+              error:
+                "Game is still active. Wait for it to end before requesting a refund.",
+            });
+          }
         }
+      } catch (_) {
+        // RPC failed for status check — continue anyway, DB check below covers it
       }
-      // DB says they have a session — allow refund to proceed
-      joined = true;
-      alreadyFinishedOnchain = sessionFallback.rows[0]?.finished || false;
     }
 
-    // ── 3. Check game is finished or past deadline (not still open) ───
-    let gameStatus = null;
-    try {
-      const provider = isLitvm ? makeLitvmProvider() : makeProvider();
-      const contractAddr = isLitvm ? LITVM_CONTRACT_ADDRESS : CONTRACT_ADDRESS;
-      const statusContract = new ethers.Contract(
-        contractAddr,
-        [
-          "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
-        ],
-        provider,
-      );
-      const gameData = await Promise.race([
-        statusContract.getGame(gameId),
-        new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 10000)),
-      ]);
-      gameStatus = Number(gameData.status);
-
-      // Only refund if game has ended (status=1) OR cancelled (status=2)
-      if (gameStatus === 0) {
-        const playDeadline = Number(gameData.playDeadline);
-        const now = Math.floor(Date.now() / 1000);
-        if (playDeadline > now) {
-          return res.status(400).json({
-            error:
-              "Game is still active. Wait for it to end before requesting a refund.",
-          });
-        }
-      }
-    } catch (e) {
-      console.warn("Could not fetch game status:", e.message);
-      // Continue — we still check DB for play status
-    }
-
-    // ── 4. Check player never actually played (no finished session) ───
+    // ── 4. Player never played ────────────────────────────────────────
     const sessionCheck = await pool.query(
-      `SELECT id, finished, score
-       FROM game_sessions
+      `SELECT id, finished, score FROM game_sessions
        WHERE user_id=$1 AND game_id=$2 AND chain_id=$3`,
       [req.user.id, gameId, chainId],
     );
@@ -3269,7 +3272,6 @@ app.post("/games/:gameId/refund", async (req, res) => {
       });
     }
 
-    // Also check if they submitted a score onchain
     if (alreadyFinishedOnchain) {
       return res.status(400).json({
         error:
@@ -3277,32 +3279,24 @@ app.post("/games/:gameId/refund", async (req, res) => {
       });
     }
 
-    // ── 5. Look up entry fee — DB first, onchain fallback ─────────────────
+    // ── 5. Get entry fee ──────────────────────────────────────────────
     let entryFee, tokenSymbol;
-
     const gameRow = await pool.query(
       `SELECT entry_fee, token_symbol FROM games
-      WHERE contract_game_id=$1 AND chain_id=$2`,
+       WHERE contract_game_id=$1 AND chain_id=$2`,
       [gameId, chainId],
     );
 
     if (gameRow.rows.length > 0) {
-      // ✅ Found in DB — use stored values
       entryFee = parseFloat(gameRow.rows[0].entry_fee || 0);
       tokenSymbol =
         gameRow.rows[0].token_symbol || (isLitvm ? "zkLTC" : "USDC");
     } else {
-      // ✅ Not in DB — fetch entry fee directly from the contract
-      console.warn(
-        `Game ${gameId} on chain ${chainId} not in DB — fetching from chain`,
-      );
+      // Fetch from chain if not in DB
       try {
         const fallbackProvider = isLitvm ? makeLitvmProvider() : makeProvider();
-        const fallbackAddr = isLitvm
-          ? LITVM_CONTRACT_ADDRESS
-          : CONTRACT_ADDRESS;
         const fallbackContract = new ethers.Contract(
-          fallbackAddr,
+          isLitvm ? LITVM_CONTRACT_ADDRESS : CONTRACT_ADDRESS,
           [
             "function getGame(uint256) view returns (tuple(uint256 id,string name,address creator,uint8 categoryId,string categoryName,uint8 difficulty,uint256 entryFee,uint256 maxPlayers,uint256 prizePool,uint256 playerCount,uint256 registrationEnd,uint256 playDeadline,address[3] topPlayers,bool prizeClaimed,uint8 status,uint256 finishedCount))",
           ],
@@ -3311,7 +3305,7 @@ app.post("/games/:gameId/refund", async (req, res) => {
         const onchainGame = await Promise.race([
           fallbackContract.getGame(gameId),
           new Promise((_, r) =>
-            setTimeout(() => r(new Error("timeout")), 10000),
+            setTimeout(() => r(new Error("timeout")), 8000),
           ),
         ]);
         const decimals = isLitvm ? 18 : 6;
@@ -3319,28 +3313,6 @@ app.post("/games/:gameId/refund", async (req, res) => {
           ethers.formatUnits(onchainGame.entryFee, decimals),
         );
         tokenSymbol = isLitvm ? "zkLTC" : "USDC";
-
-        // ✅ Opportunistically save to DB so future requests hit the cache
-        try {
-          await pool.query(
-            `INSERT INTO games
-              (chain_id, contract_game_id, creator, name, category,
-               difficulty, entry_fee, token_symbol, max_players, tx_hash, prize_pool)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'',0)
-            ON CONFLICT (chain_id, contract_game_id) DO NOTHING`,
-            [
-              chainId,
-              gameId,
-              onchainGame.creator?.toLowerCase() || "",
-              onchainGame.name || `Game #${gameId}`,
-              onchainGame.categoryName || "",
-              Number(onchainGame.difficulty || 0),
-              entryFee,
-              tokenSymbol,
-              Number(onchainGame.maxPlayers || 0),
-            ],
-          );
-        } catch (_) {} // non-fatal — just a cache save
       } catch (fetchErr) {
         console.error("Onchain game fetch failed:", fetchErr.message);
         return res.status(503).json({
@@ -3349,14 +3321,13 @@ app.post("/games/:gameId/refund", async (req, res) => {
       }
     }
 
-    if (entryFee <= 0) {
+    if (!entryFee || entryFee <= 0)
       return res.status(400).json({ error: "No entry fee to refund." });
-    }
 
     const decimals = isLitvm ? 18 : 6;
     const amountWei = ethers.parseUnits(entryFee.toFixed(decimals), decimals);
 
-    // ── 6. Insert pending refund record (idempotent) ──────────────────
+    // ── 6. Insert pending refund ──────────────────────────────────────
     await pool.query(
       `INSERT INTO game_refunds (game_id, chain_id, wallet, amount, token_symbol, status)
        VALUES ($1,$2,LOWER($3),$4,$5,'pending')
@@ -3364,7 +3335,7 @@ app.post("/games/:gameId/refund", async (req, res) => {
       [gameId, chainId, wallet, entryFee, tokenSymbol],
     );
 
-    // ── 7. Send refund from treasury ──────────────────────────────────
+    // ── 7. Send refund ────────────────────────────────────────────────
     try {
       let txHash;
       if (isLitvm) {
@@ -3390,19 +3361,15 @@ app.post("/games/:gameId/refund", async (req, res) => {
         txHash = tx.hash;
       }
 
-      // Mark paid
       await pool.query(
-        `UPDATE game_refunds
-         SET status='paid', tx_hash=$1
+        `UPDATE game_refunds SET status='paid', tx_hash=$1
          WHERE game_id=$2 AND chain_id=$3 AND LOWER(wallet)=LOWER($4)`,
         [txHash, gameId, chainId, wallet],
       );
 
       console.log(
-        `✅ Game refund: game=${gameId} chain=${chainId} wallet=${wallet} ` +
-          `amount=${entryFee} ${tokenSymbol} tx=${txHash}`,
+        `✅ Game refund: game=${gameId} chain=${chainId} wallet=${wallet} amount=${entryFee} ${tokenSymbol} tx=${txHash}`,
       );
-
       return res.json({
         ok: true,
         refunded: true,
@@ -3411,9 +3378,8 @@ app.post("/games/:gameId/refund", async (req, res) => {
         txHash,
       });
     } catch (payErr) {
-      console.error("Game refund tx failed:", payErr.message, payErr.code);
+      console.error("Game refund tx failed:", payErr.message);
 
-      // Mark as queued — auto-retry processor will pick it up
       await pool
         .query(
           `UPDATE game_refunds SET status='queued'
@@ -3422,36 +3388,21 @@ app.post("/games/:gameId/refund", async (req, res) => {
         )
         .catch(() => {});
 
-      console.error("REFUND PAY ERROR:", payErr);
-      console.error("REFUND MESSAGE:", payErr?.message);
-      console.error("REFUND CODE:", payErr?.code);
-      console.error("REFUND REASON:", payErr?.reason);
-
       let userMsg =
-        "Refund transaction failed. Please try again or contact support.";
-      if (
-        payErr.message?.includes("insufficient funds") ||
-        payErr.code === "INSUFFICIENT_FUNDS"
-      ) {
+        "Refund queued — will be processed automatically within 10 minutes.";
+      if (payErr.message?.includes("insufficient funds")) {
         userMsg =
-          "Treasury temporarily low on funds. Your refund is queued — contact support with game ID: " +
+          "Treasury low on funds. Refund queued — contact support with game ID: " +
           gameId;
-      } else if (
-        payErr.message?.includes("timeout") ||
-        payErr.message?.includes("unavailable")
-      ) {
-        userMsg =
-          "Network is temporarily slow. Your refund is queued and will be processed automatically within 10 minutes.";
       }
 
       console.error(
         `REFUND QUEUED: game=${gameId} chain=${chainId} wallet=${wallet} amount=${entryFee} ${tokenSymbol}`,
       );
-
       return res.status(500).json({ error: userMsg, queued: true, gameId });
     }
   } catch (e) {
-    console.error("Game refund error:", e.message);
+    console.error("Game refund error:", e.message, e.stack?.slice(0, 300));
     res.status(500).json({ error: "Server error: " + e.message });
   }
 });
