@@ -2448,69 +2448,47 @@ async function renderGames() {
         s === 1 || s === 2
           ? `openGameReadOnly(${i},${cid})`
           : `openGame(${i},${cid})`;
+      const timerStr =
+        s === 0 && hasDeadlines && regSecs > 0
+          ? `<span style="color:var(--green);font-weight:600">⏰ ${fmtTime(regSecs)}</span>`
+          : s === 0 && hasDeadlines && playSecs > 0
+            ? `<span style="color:var(--gold);font-weight:600">🎮 ${fmtTime(playSecs)}</span>`
+            : "";
+
       html += `
           <div onclick="${clickFn}" style="
-          background:var(--surface);
-          border:1px solid ${borderColor};
-          border-radius:12px;padding:14px;cursor:pointer;
-          transition:transform .15s,border-color .15s,box-shadow .15s;
-          position:relative"
-          onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(0,0,0,.3)'"
-          onmouseout="this.style.transform='';this.style.boxShadow=''">
-
-          <!-- Header -->
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-            <div style="font-weight:700;font-size:.88rem;color:#fff;flex:1;min-width:0;
-              white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:8px">
-              #${i} ${sanitizeText(g[1])}
+            background:var(--surface);border:1px solid ${borderColor};
+            border-radius:10px;padding:10px 12px;cursor:pointer;
+            transition:transform .12s,box-shadow .12s;display:flex;
+            align-items:center;gap:10px;min-height:0"
+            onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 16px rgba(0,0,0,.25)'"
+            onmouseout="this.style.transform='';this.style.boxShadow=''">
+  
+            <!-- Left: main info -->
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+                <span style="font-weight:700;font-size:.82rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">#${i} ${sanitizeText(g[1])}</span>
+                ${phase ? `<span style="font-size:.68rem;color:${phaseColor};font-weight:600">${phase}</span>` : ""}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.72rem;color:var(--muted)">
+                <span class="cat-pill" style="font-size:.63rem;padding:1px 6px">📚 ${sanitizeText(g[4])}</span>
+                ${Number(g[5]) > 0 ? `<span style="color:var(--muted)">· ${["", "Easy", "Medium", "Hard"][Number(g[5])] || ""}</span>` : ""}
+                <span>💰 <strong style="color:#fff">${fee}</strong> ${net.symbol}</span>
+                <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
+                ${timerStr}
+              </div>
             </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
-              <span class="badge ${STATUS_BADGE[s]}">${STATUS_LABEL[s]}</span>
-              ${chainBadge}
+  
+            <!-- Right: badges + pool -->
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0">
+              <div style="display:flex;gap:4px;align-items:center">
+                <span class="badge ${STATUS_BADGE[s]}" style="font-size:.6rem;padding:1px 6px">${STATUS_LABEL[s]}</span>
+                ${chainBadge}
+              </div>
+              <div style="font-size:.72rem;color:var(--green);font-weight:700">🏆 ${pool} ${net.symbol}</div>
+              <div style="font-size:.62rem;color:var(--muted)">By: ${fmt(g[2])}</div>
             </div>
-          </div>
-
-          <!-- Tags -->
-          <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
-            <span class="cat-pill" style="font-size:.68rem">📚 ${sanitizeText(g[4])}</span>
-            ${Number(g[5]) > 0 ? `<span style="font-size:.68rem;color:var(--muted)">· ${["", "Easy", "Medium", "Hard"][Number(g[5])] || ""}</span>` : ""}
-          </div>
-
-          <!-- Stats -->
-          <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px">
-            💰 Entry: <strong style="color:#fff">${fee} ${net.symbol}</strong>
-            &nbsp;|&nbsp;
-            🏆 Pool: <strong style="color:var(--green)">${pool} ${net.symbol}</strong>
-          </div>
-          <div style="font-size:.76rem;color:var(--muted);margin-bottom:6px">
-            👥 ${n}/${max} joined
-            &nbsp;|&nbsp;
-            ✅ ${Number(g[15])} done
-          </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px">
-            By: <span style="color:var(--accent)">${fmt(g[2])}</span>
-          </div>
-
-          ${phase ? `<div style="font-size:.75rem;color:${phaseColor};font-weight:600;margin-bottom:4px">${phase}</div>` : ""}
-
-          ${
-            s === 0 && hasDeadlines && regSecs > 0
-              ? `
-            <div style="font-size:.72rem;color:var(--green);font-weight:600;margin-bottom:2px">
-              🎟️ Join closes in ${fmtTime(regSecs)}
-            </div>
-            <div style="font-size:.68rem;color:var(--muted)">📅 Join closes: ${new Date(Number(g[10]) * 1000).toLocaleString()}</div>
-            <div style="font-size:.68rem;color:var(--muted)">🎮 Play ends: ${new Date(Number(g[11]) * 1000).toLocaleString()}</div>
-          `
-              : s === 0 && hasDeadlines && playSecs > 0
-                ? `
-            <div style="font-size:.72rem;color:var(--gold);font-weight:600">
-              ⏳ Play ends in ${fmtTime(playSecs)}
-            </div>
-          `
-                : ""
-          }
-        </div>`;
+          </div>`;
     }
   }
 
