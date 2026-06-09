@@ -640,6 +640,27 @@ async function initDB() {
       )
       .catch(() => {});
 
+    await pool
+      .query(
+        `ALTER TABLE games ADD COLUMN IF NOT EXISTS player_count INT DEFAULT 0`,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `ALTER TABLE games ADD COLUMN IF NOT EXISTS registration_end BIGINT DEFAULT 0`,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `ALTER TABLE games ADD COLUMN IF NOT EXISTS play_deadline BIGINT DEFAULT 0`,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `ALTER TABLE games ADD COLUMN IF NOT EXISTS finished_count INT DEFAULT 0`,
+      )
+      .catch(() => {});
+
     // =========================================================================
     // GAME QUESTIONS
     // =========================================================================
@@ -960,73 +981,6 @@ app.get("/games/count", async (req, res) => {
         )
       : await pool.query(`SELECT COUNT(*) as count FROM games`);
     res.json({ count: parseInt(result.rows[0].count) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post("/games/sync", async (req, res) => {
-  try {
-    const {
-      chainId,
-      contractGameId,
-      creator,
-      name,
-      category,
-      difficulty,
-      entryFee,
-      tokenSymbol,
-      maxPlayers,
-      prizePool,
-      status,
-      playerCount,
-      registrationEnd,
-      playDeadline,
-      finishedCount,
-    } = req.body;
-
-    if (!chainId || !contractGameId) return res.json({ ok: false });
-
-    const cleanName = sanitizeHtml(String(name || ""), {
-      allowedTags: [],
-      allowedAttributes: {},
-    });
-
-    await pool.query(
-      `INSERT INTO games (chain_id,contract_game_id,creator,name,category,
-        difficulty,entry_fee,token_symbol,max_players,tx_hash,prize_pool,status,
-        player_count,registration_end,play_deadline,finished_count)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'',$10,COALESCE($11,0),$12,$13,$14,$15)
-      ON CONFLICT (chain_id,contract_game_id)
-      DO UPDATE SET
-        prize_pool       = EXCLUDED.prize_pool,
-        status           = COALESCE(EXCLUDED.status, games.status),
-        player_count     = EXCLUDED.player_count,
-        registration_end = EXCLUDED.registration_end,
-        play_deadline    = EXCLUDED.play_deadline,
-        finished_count   = EXCLUDED.finished_count,
-        name             = EXCLUDED.name,
-        creator          = EXCLUDED.creator`,
-      [
-        chainId,
-        contractGameId,
-        creator || "",
-        cleanName,
-        category || "",
-        difficulty || 0,
-        entryFee || 0,
-        tokenSymbol || "zkLTC",
-        maxPlayers || 0,
-        prizePool || 0,
-        status ?? null,
-        playerCount ?? 0,
-        registrationEnd ?? 0,
-        playDeadline ?? 0,
-        finishedCount ?? 0,
-      ],
-    );
-
-    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -4456,6 +4410,77 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
       });
     }
     res.json({ ok: true, score, roundFinished: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/games/sync", async (req, res) => {
+  try {
+    const {
+      chainId,
+      contractGameId,
+      creator,
+      name,
+      category,
+      difficulty,
+      entryFee,
+      tokenSymbol,
+      maxPlayers,
+      prizePool,
+      status,
+      playerCount,
+      registrationEnd,
+      playDeadline,
+      finishedCount,
+    } = req.body;
+    if (!chainId || !contractGameId) return res.json({ ok: false });
+    const cleanName = sanitizeHtml(String(name || ""), {
+      allowedTags: [],
+      allowedAttributes: {},
+    });
+    await pool.query(
+      `INSERT INTO games (chain_id,contract_game_id,creator,name,category,difficulty,entry_fee,token_symbol,max_players,tx_hash,prize_pool,status,player_count,registration_end,play_deadline,finished_count)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'',$10,COALESCE($11,0),$12,$13,$14,$15)
+       ON CONFLICT (chain_id,contract_game_id) DO UPDATE SET
+         prize_pool=EXCLUDED.prize_pool, status=COALESCE(EXCLUDED.status,games.status),
+         player_count=EXCLUDED.player_count, registration_end=EXCLUDED.registration_end,
+         play_deadline=EXCLUDED.play_deadline, finished_count=EXCLUDED.finished_count,
+         name=EXCLUDED.name, creator=EXCLUDED.creator`,
+      [
+        chainId,
+        contractGameId,
+        creator || "",
+        cleanName,
+        category || "",
+        difficulty || 0,
+        entryFee || 0,
+        tokenSymbol || "zkLTC",
+        maxPlayers || 0,
+        prizePool || 0,
+        status ?? null,
+        playerCount ?? 0,
+        registrationEnd ?? 0,
+        playDeadline ?? 0,
+        finishedCount ?? 0,
+      ],
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/games/count", async (req, res) => {
+  try {
+    const chainId = req.query.chainId ? parseInt(req.query.chainId) : null;
+    const result = chainId
+      ? await pool.query(
+          `SELECT COUNT(*) as count FROM games WHERE chain_id=$1`,
+          [chainId],
+        )
+      : await pool.query(`SELECT COUNT(*) as count FROM games`);
+    res.json({ count: parseInt(result.rows[0].count) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
