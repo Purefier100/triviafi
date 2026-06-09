@@ -2226,7 +2226,7 @@ async function renderGames() {
     if (filter === "live") return s === 0 && regSecs <= 0 && playSecs > 0;
     if (filter === "ended") return s === 1;
     if (filter === "cancelled") return s === 2;
-    if (filter === "all") return true; // agent mode: show everything
+    if (filter === "all") return s === 0 || s === 1; // agent mode: open + ended only, hide cancelled
     if (filter === "active") return s === 0;
     return s === 0;
   });
@@ -2268,9 +2268,7 @@ async function renderGames() {
       openTournaments = list.filter(
         (t) => t.status === "open" || t.status === "active",
       );
-      pastTournaments = list
-        .filter((t) => t.status === "finished" || t.status === "cancelled")
-        .slice(0, 8);
+      pastTournaments = list.filter((t) => t.status === "finished").slice(0, 4);
     }
   } catch (_) {}
 
@@ -2508,7 +2506,7 @@ async function renderGames() {
     </div>
 
     <!-- Live Stats Bar -->
-    <div id="globalStatsBar" style="padding:10px 18px;background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.73rem">
+    <div id="agentStatsBar" style="padding:10px 18px;background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.73rem">
       <span style="width:6px;height:6px;border-radius:50%;background:#06d6a0;box-shadow:0 0 10px rgba(6,214,160,.8);flex-shrink:0;animation:pulse 1.5s infinite"></span>
       <span style="color:var(--muted)">Loading stats...</span>
     </div>
@@ -4945,27 +4943,42 @@ async function loadGlobalStats() {
   try {
     const res = await fetch(`${BACKEND}/stats/global`);
     const data = await res.json();
-    const el = document.getElementById("globalStatsBar");
-    if (!el) return;
 
     const players = data.totalPlayers || 0;
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
 
-    el.innerHTML = `
+    const statsHtml = `
       <span style="width:6px;height:6px;border-radius:50%;background:#06d6a0;box-shadow:0 0 10px rgba(6,214,160,.8);flex-shrink:0;animation:pulse 1.5s infinite"></span>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="color:#d8e7ff">👥 <strong style="color:var(--accent);text-shadow:0 0 10px rgba(0,229,255,.4)">${players}</strong> players</span>
+        <span style="color:#d8e7ff">👥 <strong style="color:var(--accent)">${players}</strong> players</span>
         <span style="width:1px;height:12px;background:rgba(255,255,255,.08)"></span>
-        <span style="color:#d8e7ff">🎮 <strong style="color:var(--accent);text-shadow:0 0 10px rgba(0,229,255,.4)">${games}</strong> games played</span>
+        <span style="color:#d8e7ff">🎮 <strong style="color:var(--accent)">${games}</strong> games played</span>
         <span style="width:1px;height:12px;background:rgba(255,255,255,.08)"></span>
-        <span style="color:#d8e7ff">✅ <strong style="color:var(--accent);text-shadow:0 0 10px rgba(0,229,255,.4)">${scores}</strong> scores submitted</span>
+        <span style="color:#d8e7ff">✅ <strong style="color:var(--accent)">${scores}</strong> scores submitted</span>
       </div>
-      <button onclick="showGlobalLeaderboard()" style="margin-left:auto;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(255,140,0,.08));border:1px solid rgba(255,209,102,.2);color:var(--gold);padding:5px 13px;border-radius:20px;cursor:pointer;font-size:.72rem;font-weight:700;white-space:nowrap;transition:.2s"
-        onmouseover="this.style.borderColor='rgba(255,209,102,.45)';this.style.background='linear-gradient(135deg,rgba(255,209,102,.25),rgba(255,140,0,.15))'"
-        onmouseout="this.style.borderColor='rgba(255,209,102,.2)';this.style.background='linear-gradient(135deg,rgba(255,209,102,.15),rgba(255,140,0,.08))'">
+      <button onclick="showGlobalLeaderboard()" style="margin-left:auto;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(255,140,0,.08));border:1px solid rgba(255,209,102,.2);color:var(--gold);padding:5px 13px;border-radius:20px;cursor:pointer;font-size:.72rem;font-weight:700;white-space:nowrap">
         🏆 Leaderboard
       </button>`;
+
+    // Update agent bar (in game room card) — only if content changed to prevent flicker
+    const agentBar = document.getElementById("agentStatsBar");
+    if (
+      agentBar &&
+      agentBar.dataset.loaded !== `${players}-${games}-${scores}`
+    ) {
+      agentBar.innerHTML = statsHtml;
+      agentBar.dataset.loaded = `${players}-${games}-${scores}`;
+    }
+
+    // Update header global bar
+    const el = document.getElementById("globalStatsBar");
+    if (!el) return;
+
+    if (el.dataset.loaded !== `${players}-${games}-${scores}`) {
+      el.innerHTML = statsHtml;
+      el.dataset.loaded = `${players}-${games}-${scores}`;
+    }
   } catch (_) {}
 }
 
