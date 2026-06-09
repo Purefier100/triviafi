@@ -2356,10 +2356,18 @@ async function renderGames() {
 
                   <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px">
                     <div style="flex:1;min-width:0">
-                      <div style="font-weight:700;font-size:.85rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-                        ${isWL ? "💬" : "🏆"} ${sanitizeText(t.name)}
+                      <div style="font-weight:700;font-size:.88rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                        ${sanitizeText(t.name)}
                       </div>
-                      <div style="font-size:.68rem;color:var(--muted);margin-top:1px">${t.rounds} rounds · elimination</div>
+                      <div style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;
+                        background:${isWL ? "rgba(88,101,242,.18)" : "rgba(255,209,102,.1)"};
+                        border:1px solid ${isWL ? "rgba(88,101,242,.4)" : "rgba(255,209,102,.25)"};
+                        border-radius:20px;padding:2px 8px">
+                        <span style="font-size:.7rem;font-weight:800;color:${isWL ? "#7289da" : "var(--gold)"}">
+                          ${isWL ? "💬 FREE · WHITELIST BATTLE" : "💰 PAID TOURNAMENT"}
+                        </span>
+                      </div>
+                      <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${t.rounds} rounds · bottom half eliminated</div>
                     </div>
                     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin-left:8px;flex-shrink:0">
                       ${isLive ? `<span style="font-size:.62rem;font-weight:800;color:var(--red);background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.3);padding:1px 7px;border-radius:10px">🔴 LIVE</span>` : `<span style="font-size:.62rem;font-weight:800;color:var(--green);background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.25);padding:1px 7px;border-radius:10px">🟢 OPEN</span>`}
@@ -2369,12 +2377,12 @@ async function renderGames() {
 
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
                     <div style="background:rgba(0,0,0,.2);border-radius:7px;padding:6px 8px;text-align:center">
-                      <div style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--gold)">${isWL ? "FREE" : fee.toFixed(dp)}</div>
-                      <div style="font-size:.58rem;color:var(--muted)">Entry ${isWL ? "" : sym}</div>
+                      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--gold)">${isWL ? "FREE" : fee.toFixed(dp)}</div>
+                      <div style="font-size:.68rem;color:var(--muted)">Entry ${isWL ? "" : sym}</div>
                     </div>
                     <div style="background:rgba(0,0,0,.2);border-radius:7px;padding:6px 8px;text-align:center">
-                      <div style="font-family:'Bebas Neue',sans-serif;font-size:.95rem;color:var(--green)">${isWL ? `${players} pts` : prizePool}</div>
-                      <div style="font-size:.58rem;color:var(--muted)">${isWL ? "Top Score" : "Prize Pool"}</div>
+                      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--green)">${isWL ? `${players} pts` : prizePool}</div>
+                      <div style="font-size:.68rem;color:var(--muted)">${isWL ? "Top Score" : "Prize Pool"}</div>
                     </div>
                   </div>
 
@@ -2461,21 +2469,50 @@ async function renderGames() {
 
       </div>
 
-      <!-- Divider -->
-      <div style="grid-column:1/-1;margin:4px 0 14px">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <!-- Game Rooms divider -->
+      <div style="grid-column:1/-1;margin:4px 0 16px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
           <div style="flex:1;height:1px;background:var(--border)"></div>
-          <span style="font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:1.5px;color:var(--muted)">GAME ROOMS</span>
+          <span style="font-family:'Bebas Neue',sans-serif;font-size:1rem;letter-spacing:2px;color:var(--muted)">GAME ROOMS</span>
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
-        <div style="background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.12);
-          border-radius:10px;padding:9px 14px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:.9rem">🎮</span>
-          <span style="font-size:.76rem;color:var(--muted);flex:1">
-            Prefer solo play? <strong style="color:var(--accent)">Game Rooms</strong> — pay entry, answer 10 questions, top scorers split the prize.
-          </span>
-          <button class="btn btn-ghost btn-sm" style="width:auto;padding:4px 12px;font-size:.7rem;white-space:nowrap"
-            onclick="showCreateModal()">＋ Create Room</button>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <!-- AI Agent card -->
+          <div style="background:linear-gradient(135deg,rgba(123,97,255,.1),rgba(0,229,255,.05));border:1px solid rgba(123,97,255,.25);border-radius:12px;padding:16px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font-size:1.4rem">🤖</span>
+              <div>
+                <div style="font-weight:700;font-size:.92rem;color:var(--purple)">AI Agent Rooms</div>
+                <div style="font-size:.72rem;color:var(--muted)">Auto-created every hour</div>
+              </div>
+            </div>
+            <p style="font-size:.78rem;color:var(--muted);margin:0 0 12px;line-height:1.6">
+              Our AI agent creates trivia rooms 24/7. Pay entry, beat other players across 10 questions — top scorers split the prize pool automatically. No setup needed.
+            </p>
+            <button onclick="filterGames('0',this)"
+              style="width:100%;background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:9px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:700">
+              🤖 Browse Agent Games
+            </button>
+          </div>
+
+          <!-- Create your own card -->
+          <div style="background:linear-gradient(135deg,rgba(0,229,255,.08),rgba(6,214,160,.04));border:1px solid rgba(0,229,255,.2);border-radius:12px;padding:16px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font-size:1.4rem">🎮</span>
+              <div>
+                <div style="font-weight:700;font-size:.92rem;color:var(--accent)">Create Your Room</div>
+                <div style="font-size:.72rem;color:var(--muted)">Custom entry · Solo play</div>
+              </div>
+            </div>
+            <p style="font-size:.78rem;color:var(--muted);margin:0 0 12px;line-height:1.6">
+              Set your own category, difficulty and entry fee. Invite friends or let anyone join. You earn 2.5% of the prize pool as creator when the game ends.
+            </p>
+            <button onclick="showCreateModal()"
+              style="width:100%;background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.25);color:var(--accent);padding:9px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:700">
+              ＋ Create a Game Room
+            </button>
+          </div>
         </div>
       </div>`;
   }
