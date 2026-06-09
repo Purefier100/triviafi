@@ -1861,16 +1861,29 @@ async function loadGames() {
         const rows = await res.json();
         if (!Array.isArray(rows) || rows.length === 0) return [];
 
-        // Convert DB rows directly to game array format — ZERO RPC calls
         return rows.map((row) => {
-          const entryFee = ethers.parseUnits(
-            parseFloat(row.entry_fee || 0).toFixed(18),
-            18,
-          );
-          const prizePool = ethers.parseUnits(
-            parseFloat(row.prize_pool || 0).toFixed(18),
-            18,
-          );
+          const decimals = 18;
+          const entryFee = (() => {
+            try {
+              return ethers.parseUnits(
+                parseFloat(row.entry_fee || 0).toFixed(decimals),
+                decimals,
+              );
+            } catch (_) {
+              return 0n;
+            }
+          })();
+          const prizePool = (() => {
+            try {
+              return ethers.parseUnits(
+                parseFloat(row.prize_pool || 0).toFixed(decimals),
+                decimals,
+              );
+            } catch (_) {
+              return 0n;
+            }
+          })();
+
           const g = [
             BigInt(row.contract_game_id || 0), // [0] id
             row.name || "", // [1] name
@@ -1881,18 +1894,17 @@ async function loadGames() {
             entryFee, // [6] entryFee
             BigInt(row.max_players || 0), // [7] maxPlayers
             prizePool, // [8] prizePool
-            BigInt(0), // [9] playerCount
-            BigInt(0), // [10] registrationEnd
-            BigInt(0), // [11] playDeadline
+            BigInt(row.player_count || 0), // [9] playerCount ✅ now from DB
+            BigInt(row.registration_end || 0), // [10] registrationEnd ✅ now from DB
+            BigInt(row.play_deadline || 0), // [11] playDeadline ✅ now from DB
             [
-              // [12] topPlayers
               "0x0000000000000000000000000000000000000000",
               "0x0000000000000000000000000000000000000000",
               "0x0000000000000000000000000000000000000000",
             ],
             false, // [13] prizeClaimed
             BigInt(row.status || 0), // [14] status
-            BigInt(0), // [15] finishedCount
+            BigInt(row.finished_count || 0), // [15] finishedCount ✅ now from DB
           ];
           return {
             i: row.contract_game_id,
@@ -1920,6 +1932,38 @@ async function loadGames() {
 
     allGames = [...arcGames, ...litvmGames];
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
+
+    // Save fresh onchain data to DB in background (non-blocking)
+    // This keeps DB in sync so LitVM games show correct player counts next load
+    setTimeout(async () => {
+      for (const { i, g, chainId: cid, net } of allGames) {
+        if (!g || g._fromDb) continue; // skip DB-only rows, only save fresh RPC data
+        try {
+          await fetch(`${BACKEND}/games/sync`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              chainId: cid,
+              contractGameId: i,
+              creator: g[2],
+              name: g[1],
+              category: g[4],
+              difficulty: Number(g[5]),
+              entryFee: parseFloat(ethers.formatUnits(g[6], net.decimals)),
+              tokenSymbol: net.symbol,
+              maxPlayers: Number(g[7]),
+              prizePool: parseFloat(ethers.formatUnits(g[8], net.decimals)),
+              playerCount: Number(g[9]),
+              registrationEnd: Number(g[10]),
+              playDeadline: Number(g[11]),
+              finishedCount: Number(g[15]),
+              status: Number(g[14]),
+            }),
+          });
+        } catch (_) {}
+      }
+    }, 100);
 
     // ── Stats ───────────────────────────────────────────────────────────
     let arcPool = 0n,
