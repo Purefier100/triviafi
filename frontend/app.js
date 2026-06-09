@@ -4948,6 +4948,35 @@ async function loadGlobalStats() {
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
 
+    // Animate the hero stat counters
+    const gTotalEl = document.getElementById("gTotal");
+    const gActiveEl = document.getElementById("gActive");
+    if (typeof window.animateCounter === "function") {
+      if (gTotalEl && gTotalEl.textContent !== "...") {
+        const totalVal = parseInt(gTotalEl.textContent.replace(/,/g, "")) || 0;
+        if (totalVal > 0) window.animateCounter(gTotalEl, totalVal);
+      }
+      if (gActiveEl) {
+        const activeVal = parseInt(gActiveEl.textContent) || 0;
+        if (activeVal > 0) window.animateCounter(gActiveEl, activeVal);
+      }
+    }
+
+    // Update floating badge values
+    const badgePaidOut = document.getElementById("badgePaidOut");
+    const badgeTournaments = document.getElementById("badgeTournaments");
+    if (badgePaidOut)
+      badgePaidOut.textContent = `$${data.arcVolume ? parseFloat(data.arcVolume).toFixed(2) : "0.00"} USDC`;
+    if (badgeTournaments) {
+      fetch(`${BACKEND}/tournaments/stats`)
+        .then((r) => r.json())
+        .then((s) => {
+          if (badgeTournaments)
+            badgeTournaments.textContent = `${s.total_tournaments || 0} Finished`;
+        })
+        .catch(() => {});
+    }
+
     const statsHtml = `
       <span style="width:6px;height:6px;border-radius:50%;background:#06d6a0;box-shadow:0 0 10px rgba(6,214,160,.8);flex-shrink:0;animation:pulse 1.5s infinite"></span>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
