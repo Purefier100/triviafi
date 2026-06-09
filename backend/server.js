@@ -3339,17 +3339,28 @@ app.post("/games/:gameId/refund", async (req, res) => {
     try {
       let txHash;
       if (isLitvm) {
+        console.log("REFUND DEBUG 1: Starting LitVM refund");
         const fastProvider = await makeLitvmProviderFast();
+        console.log("REFUND DEBUG 2: Provider created");
         const ws = verifierWallet.connect(fastProvider);
+        console.log("REFUND DEBUG 3: Wallet connected", ws.address);
+
+        const feeData = await fastProvider.getFeeData();
+
+        console.log("REFUND FEE DATA:", feeData);
 
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
           gasLimit: 21000,
+          maxFeePerGas: feeData.maxFeePerGas,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
         });
+        console.log("REFUND DEBUG 5: TX SENT", tx.hash);
 
         await tx.wait();
         txHash = tx.hash;
+        console.log("REFUND DEBUG 6: TX CONFIRMED", tx.hash);
       } else {
         const ARC_USDC = "0x3600000000000000000000000000000000000000";
         const ws = verifierWallet.connect(makeProvider());
