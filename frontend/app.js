@@ -76,6 +76,38 @@ async function initAuth() {
   }
 }
 
+// ── Cached RPC providers — reuse instead of creating new ones every call ──
+let _cachedLitvmProvider = null;
+let _litvmProviderAge = 0;
+const PROVIDER_TTL = 60000; // reuse for 60s before refreshing
+
+async function getLitvmProvider() {
+  const now = Date.now();
+  if (_cachedLitvmProvider && now - _litvmProviderAge < PROVIDER_TTL) {
+    return _cachedLitvmProvider;
+  }
+  const p = new ethers.JsonRpcProvider(
+    "https://liteforge.rpc.caldera.xyz/http",
+    {
+      chainId: 4441,
+      name: "litvm",
+    },
+  );
+  try {
+    await Promise.race([
+      p.getBlockNumber(),
+      new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
+    ]);
+    _cachedLitvmProvider = p;
+    _litvmProviderAge = now;
+  } catch (_) {
+    // Use it anyway — better than nothing
+    _cachedLitvmProvider = p;
+    _litvmProviderAge = now;
+  }
+  return _cachedLitvmProvider;
+}
+
 function toggleProfileDropdown(e) {
   if (e) e.stopPropagation();
   const t = document.getElementById("profileTrigger");
@@ -473,9 +505,7 @@ async function loadDropdownStats() {
       ABI,
       arcProvider2,
     );
-    const litvmProvider2 = new ethers.JsonRpcProvider(
-      "https://liteforge.rpc.caldera.xyz/http",
-    );
+    const litvmProvider2 = await getLitvmProvider();
     const litvmRC2 = new ethers.Contract(
       NETWORKS[4441].contractAddress,
       ABI,
@@ -1287,7 +1317,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   setInterval(() => {
     const screen = document.querySelector(".screen.active");
     if (screen?.id === "screenLobby") loadGames();
-  }, 10000);
+  }, 30000);
   setInterval(() => {
     const screen = document.querySelector(".screen.active");
     if (screen?.id === "screenTournaments") loadTournaments();
@@ -1761,6 +1791,8 @@ async function loadGames() {
 
     // Pick fastest responding RPC for each chain
     async function getFastProvider(rpcs, chainId, name) {
+      // For LitVM, use the cached provider to avoid 429s
+      if (chainId === 4441) return getLitvmProvider();
       for (const rpc of rpcs) {
         try {
           const p = new ethers.JsonRpcProvider(rpc, { chainId, name });
@@ -4597,9 +4629,7 @@ async function checkUnclaimedPrizes() {
     const arcProvider = new ethers.JsonRpcProvider(
       "https://rpc.testnet.arc.network",
     );
-    const litvmProvider = new ethers.JsonRpcProvider(
-      "https://liteforge.rpc.caldera.xyz/http",
-    );
+    const litvmProvider = await getLitvmProvider();
     const arcRC = new ethers.Contract(
       NETWORKS[5042002].contractAddress,
       ABI,
@@ -4859,9 +4889,7 @@ async function loadMyStats() {
       ABI,
       arcProvider2,
     );
-    const litvmProvider2 = new ethers.JsonRpcProvider(
-      "https://liteforge.rpc.caldera.xyz/http",
-    );
+    const litvmProvider2 = await getLitvmProvider();
     const litvmRC2 = new ethers.Contract(
       NETWORKS[4441].contractAddress,
       ABI,
