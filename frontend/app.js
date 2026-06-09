@@ -441,6 +441,8 @@ async function submitScore() {
   }
 }
 
+let currentFilter = "all";
+
 async function claimRefund(gameId) {
   try {
     const tx = await contract.claimRefund(gameId);
@@ -2199,7 +2201,16 @@ async function renderGames() {
   const grid = document.getElementById("gamesList");
   if (!grid) return;
 
-  const filter = currentFilter || "all";
+  const filter =
+    filterStatus === "0"
+      ? "open"
+      : filterStatus === "live"
+        ? "live"
+        : filterStatus === "1"
+          ? "ended"
+          : filterStatus === "2"
+            ? "cancelled"
+            : "all";
   const nowSec = Math.floor(Date.now() / 1000);
 
   // ── Filter games ────────────────────────────────────────────────────
@@ -2433,8 +2444,12 @@ async function renderGames() {
           : "rgba(255,209,102,.3)"
         : "var(--border)";
 
+      const clickFn =
+        s === 1 || s === 2
+          ? `openGameReadOnly(${i},${cid})`
+          : `openGame(${i},${cid})`;
       html += `
-        <div onclick="openGame(${i}, ${cid})" style="
+          <div onclick="${clickFn}" style="
           background:var(--surface);
           border:1px solid ${borderColor};
           border-radius:12px;padding:14px;cursor:pointer;
