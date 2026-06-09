@@ -2178,13 +2178,13 @@ function filterGames(status, btn) {
   document
     .querySelectorAll(".tab")
     .forEach((t) => t.classList.remove("active"));
-  btn.classList.add("active");
+  if (btn) btn.classList.add("active");
   if (allGames.length === 0) {
     document.getElementById("gamesList").innerHTML =
       `<p style="color:var(--muted);text-align:center;padding:24px">Loading games...</p>`;
-    loadGames(); // trigger load if not yet loaded
+    loadGames();
   } else {
-    renderGames(); // instant if already loaded
+    renderGames();
   }
 }
 
@@ -2202,6 +2202,7 @@ async function renderGames() {
   if (!grid) return;
 
   // Default "all" only shows active games — cancelled/ended hidden unless explicitly filtered
+  const isAgentMode = !!window._agentRoomMode;
   const filter =
     filterStatus === "0"
       ? "open"
@@ -2211,7 +2212,9 @@ async function renderGames() {
           ? "ended"
           : filterStatus === "2"
             ? "cancelled"
-            : "active"; // new default — only open/live
+            : isAgentMode
+              ? "all"
+              : "active"; // new default — only open/live
   const nowSec = Math.floor(Date.now() / 1000);
 
   // ── Filter games ────────────────────────────────────────────────────
@@ -2223,7 +2226,8 @@ async function renderGames() {
     if (filter === "live") return s === 0 && regSecs <= 0 && playSecs > 0;
     if (filter === "ended") return s === 1;
     if (filter === "cancelled") return s === 2;
-    if (filter === "active") return s === 0; // default: only open/live, no ended/cancelled
+    if (filter === "all") return true; // agent mode: show everything
+    if (filter === "active") return s === 0;
     return s === 0;
   });
 
@@ -2271,7 +2275,7 @@ async function renderGames() {
   } catch (_) {}
 
   // ── TOURNAMENTS SECTION ──────────────────────────────────────────────
-  if (filter === "active" || filter === "all") {
+  if ((filter === "active" || filter === "all") && !isAgentMode) {
     // ── Stats bar ──────────────────────────────────────────────────────
     let tStats = { usdc: "0.00", litvm: "0.0000", total: 0, live: 0 };
     try {
@@ -2496,10 +2500,10 @@ async function renderGames() {
             <div style="font-size:.72rem;color:var(--muted);margin-top:1px">Auto-created every hour · No setup needed</div>
           </div>
         </div>
-        <button onclick="filterStatus='0';document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));renderGames()"
-  style="background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:6px 14px;border-radius:20px;cursor:pointer;font-size:.75rem;font-weight:700;white-space:nowrap">
-  🤖 Browse All
-</button>
+        <button onclick="showAgentRooms()"
+          style="background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:6px 14px;border-radius:20px;cursor:pointer;font-size:.75rem;font-weight:700;white-space:nowrap">
+          🤖 Browse All
+        </button>
       </div>
     </div>
 
@@ -2632,113 +2636,144 @@ async function renderGames() {
 </div>
       </div>`;
   } else {
-    for (const { i, g, chainId: cid, net } of filtered) {
-      const s = Number(g[14]);
-      const regSecs = Number(g[10]) - nowSec;
-      const playSecs = Number(g[11]) - nowSec;
-      const n = Number(g[9]);
-      const max = Number(g[7]);
-      const dp = net.decimals === 18 ? 4 : 2;
-      const fee = parseFloat(ethers.formatUnits(g[6], net.decimals)).toFixed(
-        dp,
-      );
-      const pool = parseFloat(ethers.formatUnits(g[8], net.decimals)).toFixed(
-        dp,
-      );
-      const hasDeadlines = Number(g[10]) > 0 || Number(g[11]) > 0;
+    // ── Agent room browse mode: full-page view with back button + filters ──
+    html += `
+      <div style="grid-column:1/-1;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <button onclick="hideAgentRooms()"
+              style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+              color:var(--text);padding:8px 16px;border-radius:20px;cursor:pointer;
+              font-size:.82rem;font-weight:700">
+              ← Back
+            </button>
+            <div>
+              <span style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;letter-spacing:2px;color:var(--purple)">🤖 AI AGENT ROOMS</span>
+              <div style="font-size:.7rem;color:var(--muted);margin-top:1px">Auto-created every hour · Pay entry · Top scorers split prize pool</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="tab ${filterStatus === "all" || filterStatus === "active" ? "active" : ""}" onclick="filterGames('all',this)">All</button>
+            <button class="tab ${filterStatus === "0" ? "active" : ""}" onclick="filterGames('0',this)">🟢 Open</button>
+            <button class="tab ${filterStatus === "live" ? "active" : ""}" onclick="filterGames('live',this)">🔴 Live</button>
+            <button class="tab ${filterStatus === "1" ? "active" : ""}" onclick="filterGames('1',this)">✅ Ended</button>
+            <button class="tab ${filterStatus === "2" ? "active" : ""}" onclick="filterGames('2',this)">❌ Cancelled</button>
+          </div>
+        </div>
+      </div>`;
 
-      const STATUS_BADGE = {
-        0: "badge-open",
-        1: "badge-ended",
-        2: "badge-cancelled",
-      };
-      const STATUS_LABEL = { 0: "OPEN", 1: "ENDED", 2: "CANCELLED" };
-
-      let phase = "",
-        phaseColor = "var(--muted)";
-      if (s === 0) {
-        if (!hasDeadlines) {
-          phase = "";
-        } else if (regSecs > 0) {
-          phase = "📋 Open — Joining Now";
-          phaseColor = "var(--green)";
-        } else if (playSecs > 0) {
-          phase = "🎮 Live — Play Now!";
-          phaseColor = "var(--gold)";
-        } else {
-          phase = "⏰ Ended (pending close)";
-          phaseColor = "var(--muted)";
-        }
-      } else if (s === 1) {
-        phase = "✅ Finished";
-        phaseColor = "var(--muted)";
-      } else {
-        phase = "❌ Cancelled";
-        phaseColor = "var(--red)";
-      }
-
-      const chainBadge =
-        cid === 4441
-          ? `<span style="font-size:.65rem;padding:2px 7px;border-radius:8px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.25)">🔷 LitVM</span>`
-          : `<span style="font-size:.65rem;padding:2px 7px;border-radius:8px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.2)">⚡ Arc</span>`;
-
-      const isActive = s === 0 && hasDeadlines && (regSecs > 0 || playSecs > 0);
-      const borderColor = isActive
-        ? regSecs > 0
-          ? "rgba(6,214,160,.3)"
-          : "rgba(255,209,102,.3)"
-        : "var(--border)";
-
-      const clickFn =
-        s === 1 || s === 2
-          ? `openGameReadOnly(${i},${cid})`
-          : `openGame(${i},${cid})`;
-      const timerStr =
-        s === 0 && hasDeadlines && regSecs > 0
-          ? `<span style="color:var(--green);font-weight:600">⏰ ${fmtTime(regSecs)}</span>`
-          : s === 0 && hasDeadlines && playSecs > 0
-            ? `<span style="color:var(--gold);font-weight:600">🎮 ${fmtTime(playSecs)}</span>`
-            : "";
-
+    if (filtered.length === 0) {
       html += `
+        <div style="grid-column:1/-1;background:rgba(123,97,255,.04);border:1px dashed rgba(123,97,255,.2);
+          border-radius:12px;padding:28px;text-align:center">
+          <div style="font-size:1.8rem;margin-bottom:8px">🤖</div>
+          <p style="color:var(--purple);font-weight:700;font-size:.92rem">No agent rooms for this filter</p>
+          <p style="color:var(--muted);font-size:.78rem;margin-top:4px">Try a different filter or check back soon</p>
+        </div>`;
+    } else {
+      for (const { i, g, chainId: cid, net } of filtered) {
+        const s = Number(g[14]);
+        const regSecs = Number(g[10]) - nowSec;
+        const playSecs = Number(g[11]) - nowSec;
+        const n = Number(g[9]);
+        const max = Number(g[7]);
+        const dp = net.decimals === 18 ? 4 : 2;
+        const fee = parseFloat(ethers.formatUnits(g[6], net.decimals)).toFixed(
+          dp,
+        );
+        const pool = parseFloat(ethers.formatUnits(g[8], net.decimals)).toFixed(
+          dp,
+        );
+        const hasDeadlines = Number(g[10]) > 0 || Number(g[11]) > 0;
+
+        const STATUS_BADGE = {
+          0: "badge-open",
+          1: "badge-ended",
+          2: "badge-cancelled",
+        };
+        const STATUS_LABEL = { 0: "OPEN", 1: "ENDED", 2: "CANCELLED" };
+
+        let phase = "",
+          phaseColor = "var(--muted)";
+        if (s === 0) {
+          if (!hasDeadlines) {
+            phase = "";
+          } else if (regSecs > 0) {
+            phase = "📋 Open — Joining Now";
+            phaseColor = "var(--green)";
+          } else if (playSecs > 0) {
+            phase = "🎮 Live — Play Now!";
+            phaseColor = "var(--gold)";
+          } else {
+            phase = "⏰ Ended (pending close)";
+            phaseColor = "var(--muted)";
+          }
+        } else if (s === 1) {
+          phase = "✅ Finished";
+          phaseColor = "var(--muted)";
+        } else {
+          phase = "❌ Cancelled";
+          phaseColor = "var(--red)";
+        }
+
+        const chainBadge =
+          cid === 4441
+            ? `<span style="font-size:.65rem;padding:2px 7px;border-radius:8px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.25)">🔷 LitVM</span>`
+            : `<span style="font-size:.65rem;padding:2px 7px;border-radius:8px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.2)">⚡ Arc</span>`;
+
+        const isActive =
+          s === 0 && hasDeadlines && (regSecs > 0 || playSecs > 0);
+        const borderColor = isActive
+          ? regSecs > 0
+            ? "rgba(6,214,160,.3)"
+            : "rgba(255,209,102,.3)"
+          : "var(--border)";
+        const clickFn =
+          s === 1 || s === 2
+            ? `openGameReadOnly(${i},${cid})`
+            : `openGame(${i},${cid})`;
+        const timerStr =
+          s === 0 && hasDeadlines && regSecs > 0
+            ? `<span style="color:var(--green);font-weight:600">⏰ ${fmtTime(regSecs)}</span>`
+            : s === 0 && hasDeadlines && playSecs > 0
+              ? `<span style="color:var(--gold);font-weight:600">🎮 ${fmtTime(playSecs)}</span>`
+              : "";
+
+        html += `
           <div onclick="${clickFn}" style="
             background:var(--surface);border:1px solid ${borderColor};
             border-radius:10px;padding:10px 12px;cursor:pointer;
             transition:transform .12s,box-shadow .12s;display:flex;
-            align-items:center;gap:10px;min-height:0"
+            align-items:center;gap:10px"
             onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 16px rgba(0,0,0,.25)'"
             onmouseout="this.style.transform='';this.style.boxShadow=''">
-  
-            <!-- Left: main info -->
             <div style="flex:1;min-width:0">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
-                <span style="font-weight:700;font-size:.82rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">#${i} ${sanitizeText(g[1])}</span>
-                ${phase ? `<span style="font-size:.68rem;color:${phaseColor};font-weight:600">${phase}</span>` : ""}
+                <span style="font-weight:700;font-size:.85rem;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">#${i} ${sanitizeText(g[1])}</span>
+                ${phase ? `<span style="font-size:.72rem;color:${phaseColor};font-weight:600">${phase}</span>` : ""}
               </div>
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.72rem;color:var(--muted)">
-                <span class="cat-pill" style="font-size:.63rem;padding:1px 6px">📚 ${sanitizeText(g[4])}</span>
-                ${Number(g[5]) > 0 ? `<span style="color:var(--muted)">· ${["", "Easy", "Medium", "Hard"][Number(g[5])] || ""}</span>` : ""}
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:var(--muted)">
+                <span class="cat-pill" style="font-size:.65rem;padding:1px 6px">📚 ${sanitizeText(g[4])}</span>
+                ${Number(g[5]) > 0 ? `<span>· ${["", "Easy", "Medium", "Hard"][Number(g[5])] || ""}</span>` : ""}
                 <span>💰 <strong style="color:#fff">${fee}</strong> ${net.symbol}</span>
                 <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
                 ${timerStr}
               </div>
             </div>
-  
-            <!-- Right: badges + pool -->
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0">
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
               <div style="display:flex;gap:4px;align-items:center">
-                <span class="badge ${STATUS_BADGE[s]}" style="font-size:.6rem;padding:1px 6px">${STATUS_LABEL[s]}</span>
+                <span class="badge ${STATUS_BADGE[s]}" style="font-size:.62rem;padding:2px 7px">${STATUS_LABEL[s]}</span>
                 ${chainBadge}
               </div>
-              <div style="font-size:.72rem;color:var(--green);font-weight:700">🏆 ${pool} ${net.symbol}</div>
-              <div style="font-size:.62rem;color:var(--muted)">By: ${fmt(g[2])}</div>
+              <div style="font-size:.75rem;color:var(--green);font-weight:700">🏆 ${pool} ${net.symbol}</div>
+              <div style="font-size:.65rem;color:var(--muted)">By: ${fmt(g[2])}</div>
             </div>
           </div>`;
+      }
     }
   }
 
   grid.innerHTML = html;
-  // Load stats into the bar now that it exists in the DOM
   setTimeout(() => loadGlobalStats(), 0);
 }
 
@@ -6976,6 +7011,26 @@ async function joinTournament(id) {
       joinBtn.textContent = `💰 Pay ${""} & Enter Tournament`;
     }
   }
+}
+
+function showAgentRooms() {
+  window._agentRoomMode = true;
+  filterStatus = "all";
+  renderGames();
+  // scroll to game list
+  setTimeout(
+    () =>
+      document
+        .getElementById("gamesList")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    100,
+  );
+}
+
+function hideAgentRooms() {
+  window._agentRoomMode = false;
+  filterStatus = "all";
+  renderGames();
 }
 
 async function deleteTournament(id) {
