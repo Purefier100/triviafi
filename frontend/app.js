@@ -6014,8 +6014,43 @@ async function openTournament(id) {
       // ══ PAID TOURNAMENT FLOW ══════════════════════════════════════════════
     } else {
       if (t.status === "open" && !isJoined && !isFull && userAddress) {
-        actionHtml = `<button class="btn btn-primary" onclick="joinTournament(${t.id})">
-          💰 Pay ${fee} ${t.token_symbol} & Enter Tournament</button>`;
+        // Check if wallet already paid but registration didn't complete
+        let alreadyPaidTx = null;
+        try {
+          // First check localStorage for locally saved payment
+          const savedTx = localStorage.getItem(
+            `tourney_paid_${t.id}_${userAddress.toLowerCase()}`,
+          );
+          if (savedTx) {
+            alreadyPaidTx = savedTx;
+          } else {
+            // Try backend payment-check if it exists
+            const payCheck = await fetch(
+              `${BACKEND}/tournaments/${t.id}/payment-check?wallet=${userAddress}`,
+              { credentials: "include" },
+            );
+            if (payCheck.ok) {
+              const pd = await payCheck.json();
+              if (pd.paid && !pd.registered) alreadyPaidTx = pd.txHash;
+            }
+          }
+        } catch (_) {}
+
+        if (alreadyPaidTx) {
+          actionHtml = `
+            <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.25);border-radius:12px;padding:18px;text-align:center">
+              <div style="font-size:1.5rem;margin-bottom:8px">⚠️</div>
+              <p style="color:var(--gold);font-weight:700">Payment detected but registration incomplete</p>
+              <p style="color:var(--muted);font-size:.8rem;margin:8px 0 14px">Your ${fee} ${t.token_symbol} payment was confirmed onchain. Click below to complete registration.</p>
+              <button class="btn btn-primary" onclick="recoverTournamentRegistration(${t.id},'${alreadyPaidTx}')"
+                style="background:linear-gradient(135deg,var(--gold),var(--orange));width:auto;padding:12px 32px">
+                ✅ Complete My Registration
+              </button>
+            </div>`;
+        } else {
+          actionHtml = `<button class="btn btn-primary" onclick="joinTournament(${t.id})">
+            💰 Pay ${fee} ${t.token_symbol} & Enter Tournament</button>`;
+        }
       } else if (t.status === "open" && isJoined) {
         actionHtml = `<div style="text-align:center;padding:14px;border-radius:10px;
           background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2)">
@@ -6365,6 +6400,54 @@ async function markWlTaskDone(tournamentId, taskId) {
       row.style.border = "1px solid rgba(6,214,160,.25)";
     }
   } catch (_) {}
+}
+
+async function recoverTournamentRegistration(tournamentId, txHash) {
+  if (!userAddress) return toast("Connect wallet first", "error");
+  const btn = document.querySelector(
+    `[onclick="recoverTournamentRegistration(${tournamentId},'${txHash}')"]`,
+  );
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Recovering...";
+  }
+  try {
+    let csrfToken = "";
+    try {
+      const ct = await fetch(`${BACKEND}/csrf-token`, {
+        credentials: "include",
+      });
+      csrfToken = (await ct.json()).csrfToken || "";
+    } catch (_) {}
+
+    const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/join`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
+      credentials: "include",
+      body: JSON.stringify({ wallet: userAddress, txHash }),
+    });
+    const data = await res.json();
+    if (!res.ok && !data.error?.includes("already")) {
+      toast(
+        data.error ||
+          "Recovery failed — contact support with TX: " + txHash?.slice(0, 12),
+        "error",
+      );
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "✅ Complete My Registration";
+      }
+      return;
+    }
+    toast("✅ Registration recovered! Welcome to the tournament.", "success");
+    await openTournament(tournamentId);
+  } catch (e) {
+    toast("Failed: " + e.message, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✅ Complete My Registration";
+    }
+  }
 }
 
 // ── Recheck WL tasks and re-enable apply button if all done ───────────────
@@ -6996,6 +7079,11 @@ async function joinTournament(id) {
         throw new Error("Payment transaction failed onchain");
       }
       paymentTxHash = tx.hash;
+      // Save immediately so recovery works if registration fails
+      localStorage.setItem(
+        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+        paymentTxHash,
+      );
       toast("✅ zkLTC payment confirmed!", "success");
     } else {
       // Arc USDC path
@@ -7062,6 +7150,10 @@ async function joinTournament(id) {
         throw new Error("Payment transaction failed onchain");
       }
       paymentTxHash = transferTx.hash;
+      localStorage.setItem(
+        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+        paymentTxHash,
+      );
       toast("✅ Entry fee sent!", "success");
     }
 
@@ -7139,6 +7231,9 @@ async function joinTournament(id) {
       return;
     }
 
+    localStorage.removeItem(
+      `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+    );
     toast("🏆 Successfully entered tournament!", "success");
     await openTournament(id);
   } catch (e) {
