@@ -6468,29 +6468,21 @@ function showManualRecovery(tournamentId, fee, symbol) {
 
 async function submitManualRecovery(tournamentId) {
   const txHash = document.getElementById("recoveryTxInput")?.value?.trim();
-  if (!txHash || !txHash.startsWith("0x"))
-    return toast("Enter a valid transaction hash", "error");
+  if (!txHash || !txHash.startsWith("0x") || txHash.length !== 66) {
+    return toast(
+      "Enter a valid 66-character transaction hash starting with 0x",
+      "error",
+    );
+  }
   if (!userAddress) return toast("Connect wallet first", "error");
   const btn = document.querySelector("#manualRecoveryModal .btn-primary");
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "⏳ Recovering...";
+    btn.textContent = "⏳ Verifying onchain...";
   }
-  try {
-    // Save to localStorage so openTournament picks it up
-    localStorage.setItem(
-      `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
-      txHash,
-    );
-    document.getElementById("manualRecoveryModal")?.remove();
-    await recoverTournamentRegistration(tournamentId, txHash);
-  } catch (e) {
-    toast("Failed: " + e.message, "error");
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = "✅ Recover Registration";
-    }
-  }
+  // Do NOT save to localStorage until onchain verification passes inside recoverTournamentRegistration
+  document.getElementById("manualRecoveryModal")?.remove();
+  await recoverTournamentRegistration(tournamentId, txHash);
 }
 
 async function recoverTournamentRegistration(tournamentId, txHash) {
@@ -6500,9 +6492,97 @@ async function recoverTournamentRegistration(tournamentId, txHash) {
   );
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "⏳ Recovering...";
+    btn.textContent = "⏳ Verifying transaction...";
   }
   try {
+    // ── STEP 1: Verify tx onchain before sending to backend ──────────
+    // Determine which network this tournament is on
+    let txVerified = false;
+    let txFrom = null;
+    let txTo = null;
+    let txValue = null;
+
+    // Try LitVM first, then Arc
+    const rpcsToTry = [
+      {
+        rpc: "https://liteforge.rpc.caldera.xyz/http",
+        chainId: 4441,
+        name: "LitVM",
+      },
+      { rpc: "https://rpc.testnet.arc.network", chainId: 5042002, name: "Arc" },
+    ];
+
+    for (const { rpc } of rpcsToTry) {
+      try {
+        const p = new ethers.JsonRpcProvider(rpc);
+        const receipt = await Promise.race([
+          p.getTransaction(txHash),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 5000),
+          ),
+        ]);
+        if (receipt && receipt.from) {
+          txFrom = receipt.from.toLowerCase();
+          txTo = receipt.to?.toLowerCase();
+          txValue = receipt.value;
+          txVerified = true;
+          break;
+        }
+      } catch (_) {}
+    }
+
+    if (!txVerified) {
+      toast(
+        "Could not verify transaction onchain. Check the hash and try again.",
+        "error",
+      );
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "✅ Complete My Registration";
+      }
+      localStorage.removeItem(
+        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+      );
+      return;
+    }
+
+    // ── STEP 2: Verify tx was sent FROM the current wallet ───────────
+    if (txFrom !== userAddress.toLowerCase()) {
+      toast(
+        "❌ This transaction was not sent from your wallet. Recovery denied.",
+        "error",
+      );
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "✅ Complete My Registration";
+      }
+      // Clear any saved tx — it's fraudulent
+      localStorage.removeItem(
+        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+      );
+      return;
+    }
+
+    // ── STEP 3: Verify tx was sent TO the treasury ───────────────────
+    const treasuryLower = TREASURY_ADDRESS.toLowerCase();
+    if (txTo && txTo !== treasuryLower) {
+      toast(
+        "❌ This transaction was not sent to the correct address. Recovery denied.",
+        "error",
+      );
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "✅ Complete My Registration";
+      }
+      localStorage.removeItem(
+        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+      );
+      return;
+    }
+
+    if (btn) btn.textContent = "⏳ Registering...";
+
+    // ── STEP 4: Send to backend with verified proof ──────────────────
     let csrfToken = "";
     try {
       const ct = await fetch(`${BACKEND}/csrf-token`, {
@@ -6515,7 +6595,13 @@ async function recoverTournamentRegistration(tournamentId, txHash) {
       method: "POST",
       headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
       credentials: "include",
-      body: JSON.stringify({ wallet: userAddress, txHash }),
+      body: JSON.stringify({
+        wallet: userAddress,
+        txHash,
+        // Pass verified fields so backend can double-check
+        verifiedFrom: txFrom,
+        verifiedTo: txTo,
+      }),
     });
     const data = await res.json();
     if (!res.ok && !data.error?.includes("already")) {
@@ -6530,6 +6616,9 @@ async function recoverTournamentRegistration(tournamentId, txHash) {
       }
       return;
     }
+    localStorage.removeItem(
+      `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+    );
     toast("✅ Registration recovered! Welcome to the tournament.", "success");
     await openTournament(tournamentId);
   } catch (e) {
