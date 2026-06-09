@@ -2227,6 +2227,9 @@ async function renderGames() {
     return s === 0;
   });
 
+  // Agent box always shows ALL games regardless of tab filter
+  const agentGames = allGames;
+
   // ── Fetch tournaments for the banner section ─────────────────────────
   let activeTournaments = [];
   try {
