@@ -2477,43 +2477,114 @@ async function renderGames() {
           <div style="flex:1;height:1px;background:var(--border)"></div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <!-- AI Agent card -->
-          <div style="background:linear-gradient(135deg,rgba(123,97,255,.1),rgba(0,229,255,.05));border:1px solid rgba(123,97,255,.25);border-radius:12px;padding:16px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <span style="font-size:1.4rem">🤖</span>
-              <div>
-                <div style="font-weight:700;font-size:.92rem;color:var(--purple)">AI Agent Rooms</div>
-                <div style="font-size:.72rem;color:var(--muted)">Auto-created every hour</div>
-              </div>
-            </div>
-            <p style="font-size:.78rem;color:var(--muted);margin:0 0 12px;line-height:1.6">
-              Our AI agent creates trivia rooms 24/7. Pay entry, beat other players across 10 questions — top scorers split the prize pool automatically. No setup needed.
-            </p>
-            <button onclick="filterGames('0',this)"
-              style="width:100%;background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:9px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:700">
-              🤖 Browse Agent Games
-            </button>
-          </div>
+        <div style="margin-bottom:14px">
+  <div style="background:linear-gradient(135deg,rgba(123,97,255,.1),rgba(0,229,255,.05));border:1px solid rgba(123,97,255,.25);border-radius:12px;padding:16px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-size:1.4rem">🤖</span>
+      <div>
+        <div style="font-weight:700;font-size:.92rem;color:var(--purple)">AI Agent Rooms</div>
+        <div style="font-size:.72rem;color:var(--muted)">Auto-created every hour</div>
+      </div>
+    </div>
+    <p style="font-size:.78rem;color:var(--muted);margin:0 0 12px;line-height:1.6">
+      Our AI agent creates trivia rooms 24/7. Pay entry, beat other players across 10 questions — top scorers split the prize pool automatically. No setup needed.
+    </p>
 
-          <!-- Create your own card -->
-          <div style="background:linear-gradient(135deg,rgba(0,229,255,.08),rgba(6,214,160,.04));border:1px solid rgba(0,229,255,.2);border-radius:12px;padding:16px">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-              <span style="font-size:1.4rem">🎮</span>
-              <div>
-                <div style="font-weight:700;font-size:.92rem;color:var(--accent)">Create Your Room</div>
-                <div style="font-size:.72rem;color:var(--muted)">Custom entry · Solo play</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+      ${
+        filtered.length === 0
+          ? `
+        <div style="background:rgba(0,0,0,.2);border:1px dashed rgba(123,97,255,.2);border-radius:8px;padding:14px;text-align:center">
+          <p style="color:var(--muted);font-size:.78rem;margin:0">No agent rooms open right now — next one drops soon</p>
+        </div>
+      `
+          : filtered
+              .map(({ i, g, chainId: cid, net }) => {
+                const s = Number(g[14]);
+                const regSecs = Number(g[10]) - nowSec;
+                const playSecs = Number(g[11]) - nowSec;
+                const hasDeadlines = Number(g[10]) > 0 || Number(g[11]) > 0;
+                const dp = net.decimals === 18 ? 4 : 2;
+                const fee = parseFloat(
+                  ethers.formatUnits(g[6], net.decimals),
+                ).toFixed(dp);
+                const pool = parseFloat(
+                  ethers.formatUnits(g[8], net.decimals),
+                ).toFixed(dp);
+                const n = Number(g[9]);
+                const max = Number(g[7]);
+
+                let phase = "",
+                  phaseColor = "var(--muted)";
+                if (s === 0) {
+                  if (!hasDeadlines) phase = "";
+                  else if (regSecs > 0) {
+                    phase = "📋 Open";
+                    phaseColor = "var(--green)";
+                  } else if (playSecs > 0) {
+                    phase = "🎮 Live";
+                    phaseColor = "var(--gold)";
+                  } else {
+                    phase = "⏰ Pending close";
+                    phaseColor = "var(--muted)";
+                  }
+                } else if (s === 1) {
+                  phase = "✅ Finished";
+                  phaseColor = "var(--muted)";
+                } else {
+                  phase = "❌ Cancelled";
+                  phaseColor = "var(--red)";
+                }
+
+                const chainBadge =
+                  cid === 4441
+                    ? `<span style="font-size:.6rem;padding:2px 6px;border-radius:8px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.25)">🔷 LitVM</span>`
+                    : `<span style="font-size:.6rem;padding:2px 6px;border-radius:8px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.2)">⚡ Arc</span>`;
+
+                const isEnded = s === 1 || s === 2;
+
+                return `
+          <div style="background:rgba(0,0,0,.25);border:1px solid rgba(123,97,255,.2);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
+                <span style="font-weight:700;font-size:.82rem;color:#fff">#${i} ${sanitizeText(g[1])}</span>
+                ${phase ? `<span style="font-size:.68rem;color:${phaseColor};font-weight:600">${phase}</span>` : ""}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.72rem;color:var(--muted)">
+                <span>📚 ${sanitizeText(g[4])}</span>
+                <span>💰 <strong style="color:#fff">${fee}</strong> ${net.symbol}</span>
+                <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
+                <span>🏆 <strong style="color:var(--green)">${pool} ${net.symbol}</strong></span>
+                ${chainBadge}
               </div>
             </div>
-            <p style="font-size:.78rem;color:var(--muted);margin:0 0 12px;line-height:1.6">
-              Set your own category, difficulty and entry fee. Invite friends or let anyone join. You earn 2.5% of the prize pool as creator when the game ends.
-            </p>
-            <button onclick="showCreateModal()"
-              style="width:100%;background:rgba(0,229,255,.12);border:1px solid rgba(0,229,255,.25);color:var(--accent);padding:9px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:700">
-              ＋ Create a Game Room
-            </button>
-          </div>
-        </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button onclick="event.stopPropagation();openGameReadOnly(${i},${cid})"
+                style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#ccc;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:600">
+                👁 View
+              </button>
+              ${
+                !isEnded
+                  ? `
+              <button onclick="event.stopPropagation();openGame(${i},${cid})"
+                style="background:rgba(123,97,255,.25);border:1px solid rgba(123,97,255,.45);color:var(--purple);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:700">
+                ▶ Play
+              </button>`
+                  : ""
+              }
+            </div>
+          </div>`;
+              })
+              .join("")
+      }
+    </div>
+
+    <button onclick="filterGames('0',this)"
+      style="width:100%;background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:9px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:700">
+      🤖 Browse All Agent Games
+    </button>
+  </div>
+</div>
       </div>`;
   }
 
