@@ -4471,6 +4471,66 @@ app.post("/games/sync", async (req, res) => {
   }
 });
 
+app.post("/admin/debug-refund", async (req, res) => {
+  if (req.headers["x-admin-key"] !== process.env.ADMIN_SECRET)
+    return res.status(403).json({ error: "Forbidden" });
+
+  const { wallet, chainId } = req.body;
+  const results = {};
+
+  // 1. Check treasury balance
+  try {
+    const provider = chainId === 4441 ? makeLitvmProvider() : makeProvider();
+    const balance = await provider.getBalance(
+      process.env.TREASURY_ADDRESS || verifierWallet.address,
+    );
+    results.treasuryBalance = ethers.formatUnits(
+      balance,
+      chainId === 4441 ? 18 : 18,
+    );
+    results.treasuryAddress =
+      process.env.TREASURY_ADDRESS || verifierWallet.address;
+  } catch (e) {
+    results.treasuryBalanceError = e.message;
+  }
+
+  // 2. Check RPC connectivity
+  try {
+    const provider = chainId === 4441 ? makeLitvmProvider() : makeProvider();
+    const block = await provider.getBlockNumber();
+    results.blockNumber = block;
+    results.rpcOk = true;
+  } catch (e) {
+    results.rpcError = e.message;
+    results.rpcOk = false;
+  }
+
+  // 3. Check pending refunds for this wallet
+  try {
+    const pending = await pool.query(
+      `SELECT * FROM game_refunds WHERE wallet=$1 ORDER BY created_at DESC LIMIT 10`,
+      [wallet],
+    );
+    results.pendingRefunds = pending.rows;
+  } catch (e) {
+    results.pendingRefundsError = e.message;
+  }
+
+  // 4. Check verifier wallet address
+  results.verifierAddress = verifierWallet.address;
+
+  // 5. Try a test getBalance call
+  try {
+    const provider = chainId === 4441 ? makeLitvmProvider() : makeProvider();
+    const walletBal = await provider.getBalance(wallet);
+    results.walletBalance = ethers.formatUnits(walletBal, 18);
+  } catch (e) {
+    results.walletBalanceError = e.message;
+  }
+
+  res.json(results);
+});
+
 app.get("/games/count", async (req, res) => {
   try {
     const chainId = req.query.chainId ? parseInt(req.query.chainId) : null;
