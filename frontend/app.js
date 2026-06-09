@@ -3808,7 +3808,17 @@ async function doJoin() {
     const entryFee = currentGame[6];
     if (activeNet.isNative) {
       toast("Joining with zkLTC...", "info");
-      const tx = await contract.joinGame(currentGameId, { value: entryFee });
+      let joinGas = 200000n;
+      try {
+        joinGas = await contract.joinGame.estimateGas(currentGameId, {
+          value: entryFee,
+        });
+        joinGas = (joinGas * 150n) / 100n;
+      } catch (_) {}
+      const tx = await contract.joinGame(currentGameId, {
+        value: entryFee,
+        gasLimit: joinGas,
+      });
       // Optimistic UI update — no refresh needed
       const newCount = Number(currentGame[9]) + 1;
       document.querySelectorAll(".gmeta strong").forEach((el) => {
@@ -3830,7 +3840,14 @@ async function doJoin() {
         await tx1.wait();
       }
       toast("Step 2/2: Joining game...", "info");
-      const tx2 = await contract.joinGame(currentGameId);
+      let joinGas2 = 200000n;
+      try {
+        joinGas2 = await contract.joinGame.estimateGas(currentGameId);
+        joinGas2 = (joinGas2 * 150n) / 100n;
+      } catch (_) {}
+      const tx2 = await contract.joinGame(currentGameId, {
+        gasLimit: joinGas2,
+      });
       // Optimistic update
       const newCount = Number(currentGame[9]) + 1;
       document.querySelectorAll(".gmeta strong").forEach((el) => {
@@ -6971,7 +6988,7 @@ async function joinTournament(id) {
       const tx = await signer.sendTransaction({
         to: PLATFORM,
         value: entryFee,
-        gasLimit: 21000,
+        gasLimit: 50000, // higher than 21000 — covers LitVM testnet overhead
       });
       toast("⛓️ Confirming zkLTC payment...", "info");
       const receipt = await tx.wait();
@@ -7012,7 +7029,14 @@ async function joinTournament(id) {
       const allowance = await freshUsdc.allowance(userAddress, PLATFORM);
       if (allowance < entryFee) {
         toast("Step 1/2: Approving USDC transfer...", "info");
-        const approveTx = await freshUsdc.approve(PLATFORM, entryFee);
+        let approveGas = 100000n;
+        try {
+          approveGas = await freshUsdc.approve.estimateGas(PLATFORM, entryFee);
+          approveGas = (approveGas * 150n) / 100n;
+        } catch (_) {}
+        const approveTx = await freshUsdc.approve(PLATFORM, entryFee, {
+          gasLimit: approveGas,
+        });
         toast("⛓️ Confirming approval...", "info");
         await approveTx.wait();
         toast("✅ USDC approved!", "success");
@@ -7024,7 +7048,14 @@ async function joinTournament(id) {
         ["function transfer(address,uint256) external returns (bool)"],
         signer,
       );
-      const transferTx = await usdcW.transfer(PLATFORM, entryFee);
+      let transferGas = 100000n;
+      try {
+        transferGas = await usdcW.transfer.estimateGas(PLATFORM, entryFee);
+        transferGas = (transferGas * 150n) / 100n; // add 50% buffer
+      } catch (_) {}
+      const transferTx = await usdcW.transfer(PLATFORM, entryFee, {
+        gasLimit: transferGas,
+      });
       toast("⛓️ Confirming payment...", "info");
       const transferReceipt = await transferTx.wait();
       if (!transferReceipt || transferReceipt.status !== 1) {
