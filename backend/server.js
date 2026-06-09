@@ -3422,6 +3422,11 @@ app.post("/games/:gameId/refund", async (req, res) => {
         )
         .catch(() => {});
 
+      console.error("REFUND PAY ERROR:", payErr);
+      console.error("REFUND MESSAGE:", payErr?.message);
+      console.error("REFUND CODE:", payErr?.code);
+      console.error("REFUND REASON:", payErr?.reason);
+
       let userMsg =
         "Refund transaction failed. Please try again or contact support.";
       if (
