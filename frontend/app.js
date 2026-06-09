@@ -2478,24 +2478,50 @@ async function renderGames() {
         </div>
 
         <div style="margin-bottom:14px">
-  <div style="background:linear-gradient(135deg,rgba(123,97,255,.1),rgba(0,229,255,.05));border:1px solid rgba(123,97,255,.25);border-radius:12px;padding:16px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <span style="font-size:1.4rem">🤖</span>
-      <div>
-        <div style="font-weight:700;font-size:.92rem;color:var(--purple)">AI Agent Rooms</div>
-        <div style="font-size:.72rem;color:var(--muted)">Auto-created every hour</div>
+  <div style="background:linear-gradient(135deg,rgba(123,97,255,.12),rgba(0,229,255,.04));border:1px solid rgba(123,97,255,.3);border-radius:16px;overflow:hidden">
+
+    <!-- Agent Header -->
+    <div style="padding:16px 18px 14px;border-bottom:1px solid rgba(255,255,255,.06)">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:38px;height:38px;border-radius:10px;background:rgba(123,97,255,.2);border:1px solid rgba(123,97,255,.35);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0">🤖</div>
+          <div>
+            <div style="font-weight:700;font-size:.95rem;color:#fff;display:flex;align-items:center;gap:8px">
+              AI Agent Rooms
+              <span style="width:7px;height:7px;border-radius:50%;background:#06d6a0;box-shadow:0 0 8px rgba(6,214,160,.8);display:inline-block;animation:pulse 1.8s ease-in-out infinite"></span>
+            </div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:1px">Auto-created every hour · No setup needed</div>
+          </div>
+        </div>
+        <button onclick="filterGames('0',this)"
+          style="background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:6px 14px;border-radius:20px;cursor:pointer;font-size:.75rem;font-weight:700;white-space:nowrap">
+          🤖 Browse All
+        </button>
       </div>
     </div>
-    <p style="font-size:.78rem;color:var(--muted);margin:0 0 12px;line-height:1.6">
-      Our AI agent creates trivia rooms 24/7. Pay entry, beat other players across 10 questions — top scorers split the prize pool automatically. No setup needed.
-    </p>
 
-    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+    <!-- Live Stats Bar -->
+    <div id="globalStatsBar" style="padding:10px 18px;background:rgba(0,0,0,.2);border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:.73rem">
+      <span style="width:6px;height:6px;border-radius:50%;background:#06d6a0;box-shadow:0 0 10px rgba(6,214,160,.8);flex-shrink:0;animation:pulse 1.5s infinite"></span>
+      <span style="color:var(--muted)">Loading stats...</span>
+    </div>
+
+    <!-- Description -->
+    <div style="padding:12px 18px 10px">
+      <p style="font-size:.78rem;color:var(--muted);margin:0;line-height:1.6">
+        Our AI agent creates trivia rooms 24/7. Pay entry, beat other players across 10 questions — top scorers split the prize pool automatically.
+      </p>
+    </div>
+
+    <!-- Game Rows -->
+    <div style="padding:0 12px 12px;display:flex;flex-direction:column;gap:7px">
       ${
         filtered.length === 0
           ? `
-        <div style="background:rgba(0,0,0,.2);border:1px dashed rgba(123,97,255,.2);border-radius:8px;padding:14px;text-align:center">
-          <p style="color:var(--muted);font-size:.78rem;margin:0">No agent rooms open right now — next one drops soon</p>
+        <div style="background:rgba(0,0,0,.2);border:1px dashed rgba(123,97,255,.2);border-radius:10px;padding:18px;text-align:center">
+          <div style="font-size:1.4rem;margin-bottom:6px">🤖</div>
+          <p style="color:var(--muted);font-size:.78rem;margin:0;font-weight:600">No agent rooms open right now</p>
+          <p style="color:rgba(122,122,154,.6);font-size:.7rem;margin:4px 0 0">Next room drops soon — check back in a few minutes</p>
         </div>
       `
           : filtered
@@ -2515,74 +2541,90 @@ async function renderGames() {
                 const max = Number(g[7]);
 
                 let phase = "",
-                  phaseColor = "var(--muted)";
+                  phaseColor = "var(--muted)",
+                  phaseBg = "rgba(122,122,154,.1)";
                 if (s === 0) {
-                  if (!hasDeadlines) phase = "";
-                  else if (regSecs > 0) {
+                  if (!hasDeadlines || regSecs > 0) {
                     phase = "📋 Open";
                     phaseColor = "var(--green)";
+                    phaseBg = "rgba(6,214,160,.1)";
                   } else if (playSecs > 0) {
                     phase = "🎮 Live";
                     phaseColor = "var(--gold)";
+                    phaseBg = "rgba(255,209,102,.1)";
                   } else {
-                    phase = "⏰ Pending close";
+                    phase = "⏰ Pending";
                     phaseColor = "var(--muted)";
+                    phaseBg = "rgba(122,122,154,.08)";
                   }
                 } else if (s === 1) {
-                  phase = "✅ Finished";
+                  phase = "✅ Ended";
                   phaseColor = "var(--muted)";
+                  phaseBg = "rgba(122,122,154,.08)";
                 } else {
                   phase = "❌ Cancelled";
                   phaseColor = "var(--red)";
+                  phaseBg = "rgba(239,71,111,.08)";
                 }
 
                 const chainBadge =
                   cid === 4441
-                    ? `<span style="font-size:.6rem;padding:2px 6px;border-radius:8px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.25)">🔷 LitVM</span>`
-                    : `<span style="font-size:.6rem;padding:2px 6px;border-radius:8px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.2)">⚡ Arc</span>`;
+                    ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:8px;background:rgba(123,97,255,.15);color:var(--purple);border:1px solid rgba(123,97,255,.25);font-weight:700">🔷 LitVM</span>`
+                    : `<span style="font-size:.6rem;padding:2px 7px;border-radius:8px;background:rgba(0,229,255,.1);color:var(--accent);border:1px solid rgba(0,229,255,.2);font-weight:700">⚡ Arc</span>`;
 
                 const isEnded = s === 1 || s === 2;
+                const fillPct =
+                  max > 0 ? Math.min(100, Math.round((n / max) * 100)) : 0;
 
                 return `
-          <div style="background:rgba(0,0,0,.25);border:1px solid rgba(123,97,255,.2);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px">
-            <div style="flex:1;min-width:0">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;flex-wrap:wrap">
-                <span style="font-weight:700;font-size:.82rem;color:#fff">#${i} ${sanitizeText(g[1])}</span>
-                ${phase ? `<span style="font-size:.68rem;color:${phaseColor};font-weight:600">${phase}</span>` : ""}
-              </div>
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.72rem;color:var(--muted)">
-                <span>📚 ${sanitizeText(g[4])}</span>
-                <span>💰 <strong style="color:#fff">${fee}</strong> ${net.symbol}</span>
-                <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
-                <span>🏆 <strong style="color:var(--green)">${pool} ${net.symbol}</strong></span>
-                ${chainBadge}
-              </div>
-            </div>
-            <div style="display:flex;gap:6px;flex-shrink:0">
-              <button onclick="event.stopPropagation();openGameReadOnly(${i},${cid})"
-                style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:#ccc;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:600">
-                👁 View
-              </button>
-              ${
-                !isEnded
-                  ? `
-              <button onclick="event.stopPropagation();openGame(${i},${cid})"
-                style="background:rgba(123,97,255,.25);border:1px solid rgba(123,97,255,.45);color:var(--purple);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:.75rem;font-weight:700">
-                ▶ Play
-              </button>`
-                  : ""
-              }
-            </div>
-          </div>`;
+                <div style="background:rgba(0,0,0,.25);border:1px solid rgba(123,97,255,.15);border-radius:10px;padding:11px 13px;transition:border-color .15s,background .15s"
+                  onmouseover="this.style.borderColor='rgba(123,97,255,.4)';this.style.background='rgba(0,0,0,.35)'"
+                  onmouseout="this.style.borderColor='rgba(123,97,255,.15)';this.style.background='rgba(0,0,0,.25)'">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div style="flex:1;min-width:0">
+                      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+                        <span style="font-weight:700;font-size:.83rem;color:#fff">#${i} ${sanitizeText(g[1])}</span>
+                        <span style="font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:20px;background:${phaseBg};color:${phaseColor}">${phase}</span>
+                        ${chainBadge}
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.71rem;color:var(--muted)">
+                        <span>📚 ${sanitizeText(g[4])}</span>
+                        <span style="color:rgba(255,255,255,.2)">·</span>
+                        <span>💰 <strong style="color:#fff">${fee}</strong> ${net.symbol}</span>
+                        <span style="color:rgba(255,255,255,.2)">·</span>
+                        <span>🏆 <strong style="color:var(--green)">${pool}</strong> ${net.symbol}</span>
+                        <span style="color:rgba(255,255,255,.2)">·</span>
+                        <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
+                      </div>
+                      <div style="margin-top:7px;height:2px;background:rgba(255,255,255,.06);border-radius:1px;overflow:hidden">
+                        <div style="height:100%;width:${fillPct}%;background:${fillPct >= 100 ? "var(--red)" : fillPct > 60 ? "var(--gold)" : "var(--green)"};border-radius:1px;transition:width .5s"></div>
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:5px;flex-shrink:0">
+                      <button onclick="event.stopPropagation();openGameReadOnly(${i},${cid})"
+                        style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#aaa;padding:6px 12px;border-radius:8px;cursor:pointer;font-size:.73rem;font-weight:600;transition:.15s"
+                        onmouseover="this.style.background='rgba(255,255,255,.1)';this.style.color='#fff'"
+                        onmouseout="this.style.background='rgba(255,255,255,.05)';this.style.color='#aaa'">
+                        👁 View
+                      </button>
+                      ${
+                        !isEnded
+                          ? `
+                      <button onclick="event.stopPropagation();openGame(${i},${cid})"
+                        style="background:rgba(123,97,255,.25);border:1px solid rgba(123,97,255,.45);color:var(--purple);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:.73rem;font-weight:700;transition:.15s"
+                        onmouseover="this.style.background='rgba(123,97,255,.4)';this.style.borderColor='rgba(123,97,255,.7)'"
+                        onmouseout="this.style.background='rgba(123,97,255,.25)';this.style.borderColor='rgba(123,97,255,.45)'">
+                        ▶ Play
+                      </button>`
+                          : ""
+                      }
+                    </div>
+                  </div>
+                </div>`;
               })
               .join("")
       }
     </div>
-
-    <button onclick="filterGames('0',this)"
-      style="width:100%;background:rgba(123,97,255,.18);border:1px solid rgba(123,97,255,.35);color:var(--purple);padding:9px;border-radius:8px;cursor:pointer;font-size:.8rem;font-weight:700">
-      🤖 Browse All Agent Games
-    </button>
   </div>
 </div>
       </div>`;
@@ -4863,34 +4905,27 @@ async function loadGlobalStats() {
   try {
     const res = await fetch(`${BACKEND}/stats/global`);
     const data = await res.json();
-
     const el = document.getElementById("globalStatsBar");
     if (!el) return;
 
     const players = data.totalPlayers || 0;
     const games = data.totalGamesPlayed || 0;
     const scores = data.totalFinished || 0;
-    const arcVol = parseFloat(data.arcVolume || 0).toFixed(2);
-    const litvmVol = parseFloat(data.litvmVolume || 0).toFixed(4);
 
     el.innerHTML = `
-      <div class="gs-live-dot"></div>
-      <div class="gs-item">
-        👥 <strong class="live-counter">${players}</strong> players
+      <span style="width:6px;height:6px;border-radius:50%;background:#06d6a0;box-shadow:0 0 10px rgba(6,214,160,.8);flex-shrink:0;animation:pulse 1.5s infinite"></span>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="color:#d8e7ff">👥 <strong style="color:var(--accent);text-shadow:0 0 10px rgba(0,229,255,.4)">${players}</strong> players</span>
+        <span style="width:1px;height:12px;background:rgba(255,255,255,.08)"></span>
+        <span style="color:#d8e7ff">🎮 <strong style="color:var(--accent);text-shadow:0 0 10px rgba(0,229,255,.4)">${games}</strong> games played</span>
+        <span style="width:1px;height:12px;background:rgba(255,255,255,.08)"></span>
+        <span style="color:#d8e7ff">✅ <strong style="color:var(--accent);text-shadow:0 0 10px rgba(0,229,255,.4)">${scores}</strong> scores submitted</span>
       </div>
-      <div class="gs-divider"></div>
-      <div class="gs-item">
-        🎮 <strong class="live-counter">${games}</strong> games played
-      </div>
-      <div class="gs-divider"></div>
-      <div class="gs-item">
-        ✅ <strong class="live-counter">${scores}</strong> scores submitted
-      </div>
-      <div class="gs-divider"></div>
-      <div class="gs-leaderboard" onclick="showGlobalLeaderboard()">
-        🏆 View Leaderboard
-      </div>
-    `;
+      <button onclick="showGlobalLeaderboard()" style="margin-left:auto;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(255,140,0,.08));border:1px solid rgba(255,209,102,.2);color:var(--gold);padding:5px 13px;border-radius:20px;cursor:pointer;font-size:.72rem;font-weight:700;white-space:nowrap;transition:.2s"
+        onmouseover="this.style.borderColor='rgba(255,209,102,.45)';this.style.background='linear-gradient(135deg,rgba(255,209,102,.25),rgba(255,140,0,.15))'"
+        onmouseout="this.style.borderColor='rgba(255,209,102,.2)';this.style.background='linear-gradient(135deg,rgba(255,209,102,.15),rgba(255,140,0,.08))'">
+        🏆 Leaderboard
+      </button>`;
   } catch (_) {}
 }
 
