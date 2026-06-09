@@ -3377,8 +3377,11 @@ app.post("/games/:gameId/refund", async (req, res) => {
         txHash,
       });
     } catch (payErr) {
-      console.error("Game refund tx failed:", payErr.message);
-
+      console.error("Game refund tx failed:", payErr);
+      console.error("Message:", payErr?.message);
+      console.error("Code:", payErr?.code);
+      console.error("Reason:", payErr?.reason);
+      console.error("Stack:", payErr?.stack);
       await pool
         .query(
           `UPDATE game_refunds SET status='queued'
