@@ -79,7 +79,7 @@ async function initAuth() {
 // ── Cached RPC providers — reuse instead of creating new ones every call ──
 let _cachedLitvmProvider = null;
 let _litvmProviderAge = 0;
-const PROVIDER_TTL = 60000; // reuse for 60s before refreshing
+const PROVIDER_TTL = 300000; // 5 minutes — reduces new provider creation significantly
 
 async function getLitvmProvider() {
   const now = Date.now();
@@ -1770,16 +1770,12 @@ async function loadGames() {
   }
 
   try {
-    // ── Parallel fetch both chains ──────────────────────────────────────
     const arcRpcs = [
       "https://rpc.testnet.arc.network",
       "https://rpc.drpc.testnet.arc.network",
     ];
-    const litvmRpcs = ["https://liteforge.rpc.caldera.xyz/http"];
 
-    // Pick fastest responding RPC for each chain
     async function getFastProvider(rpcs, chainId, name) {
-      // For LitVM, use the cached provider to avoid 429s
       if (chainId === 4441) return getLitvmProvider();
       for (const rpc of rpcs) {
         try {
@@ -1794,27 +1790,32 @@ async function loadGames() {
       return new ethers.JsonRpcProvider(rpcs[0], { chainId, name });
     }
 
-    const arcProvider = await getFastProvider(arcRpcs, 5042002, "arc-testnet");
+    const [arcProvider, litvmProvider] = await Promise.all([
+      getFastProvider(arcRpcs, 5042002, "arc-testnet"),
+      getLitvmProvider(),
+    ]);
+
     const arcRC = new ethers.Contract(
       NETWORKS[5042002].contractAddress,
       ABI,
       arcProvider,
     );
+    const litvmRC = new ethers.Contract(
+      NETWORKS[4441].contractAddress,
+      ABI,
+      litvmProvider,
+    );
 
-    // Arc count from RPC, LitVM count from DB to avoid 429
-    const arcCount = await Promise.race([
-      arcRC.gameCounter().then(Number),
-      new Promise((_, r) => setTimeout(() => r(0), 4000)),
-    ]).catch(() => 0);
-
-    let litvmCount = 0;
-    try {
-      const countRes = await fetch(`${BACKEND}/games/count?chainId=4441`);
-      if (countRes.ok) {
-        const countData = await countRes.json();
-        litvmCount = countData.count || 0;
-      }
-    } catch (_) {}
+    const [arcCount, litvmCount] = await Promise.all([
+      Promise.race([
+        arcRC.gameCounter().then(Number),
+        new Promise((_, r) => setTimeout(() => r(0), 4000)),
+      ]).catch(() => 0),
+      Promise.race([
+        litvmRC.gameCounter().then(Number),
+        new Promise((_, r) => setTimeout(() => r(0), 4000)),
+      ]).catch(() => 0),
+    ]);
 
     if (renderId !== lastGamesRender) {
       gamesLoading = false;
@@ -1823,10 +1824,8 @@ async function loadGames() {
 
     document.getElementById("gTotal").textContent = arcCount + litvmCount;
 
-    // ── Fetch only last 30 games per chain in large parallel batches ────
     const LIMIT = 30,
-      BATCH = 10; // bigger batches = fewer round trips
-    const freshGames = [];
+      BATCH = 10;
 
     async function fetchChainGames(rc, count, chainId) {
       const net = NETWORKS[chainId];
@@ -1834,95 +1833,34 @@ async function loadGames() {
       for (let i = count; i >= Math.max(1, count - LIMIT + 1); i--) ids.push(i);
 
       const results = [];
-      for (let b = 0; b < ids.length; b += BATCH) {
-        const batch = ids.slice(b, b + BATCH);
+      const batchSize = chainId === 4441 ? 3 : BATCH;
+      const batchDelay = chainId === 4441 ? 400 : 0;
+
+      for (let b = 0; b < ids.length; b += batchSize) {
+        const batch = ids.slice(b, b + batchSize);
         const settled = await Promise.allSettled(
           batch.map((i) =>
             Promise.race([
               rc
                 .getGame(i)
                 .then((g) => ({ i, g: gameToArray(g), chainId, net })),
-              new Promise((_, r) => setTimeout(() => r(new Error("t")), 5000)),
+              new Promise((_, r) => setTimeout(() => r(new Error("t")), 6000)),
             ]),
           ),
         );
         for (const r of settled)
           if (r.status === "fulfilled") results.push(r.value);
+
+        if (batchDelay > 0 && b + batchSize < ids.length) {
+          await new Promise((r) => setTimeout(r, batchDelay));
+        }
       }
       return results;
     }
 
-    // Fetch both chains simultaneously
-    // LitVM: fetch game IDs from DB, hydrate from RPC with cached provider + batching
-    async function fetchLitvmGamesFromDB() {
-      try {
-        const res = await fetch(`${BACKEND}/games?chainId=4441&limit=30`);
-        if (!res.ok) return [];
-        const rows = await res.json();
-        if (!Array.isArray(rows) || rows.length === 0) return [];
-
-        return rows.map((row) => {
-          const decimals = 18;
-          const entryFee = (() => {
-            try {
-              return ethers.parseUnits(
-                parseFloat(row.entry_fee || 0).toFixed(decimals),
-                decimals,
-              );
-            } catch (_) {
-              return 0n;
-            }
-          })();
-          const prizePool = (() => {
-            try {
-              return ethers.parseUnits(
-                parseFloat(row.prize_pool || 0).toFixed(decimals),
-                decimals,
-              );
-            } catch (_) {
-              return 0n;
-            }
-          })();
-
-          const g = [
-            BigInt(row.contract_game_id || 0), // [0] id
-            row.name || "", // [1] name
-            row.creator || "0x0000000000000000000000000000000000000000", // [2] creator
-            BigInt(0), // [3] categoryId
-            row.category || "", // [4] categoryName
-            BigInt(row.difficulty || 0), // [5] difficulty
-            entryFee, // [6] entryFee
-            BigInt(row.max_players || 0), // [7] maxPlayers
-            prizePool, // [8] prizePool
-            BigInt(row.player_count || 0), // [9] playerCount ✅ now from DB
-            BigInt(row.registration_end || 0), // [10] registrationEnd ✅ now from DB
-            BigInt(row.play_deadline || 0), // [11] playDeadline ✅ now from DB
-            [
-              "0x0000000000000000000000000000000000000000",
-              "0x0000000000000000000000000000000000000000",
-              "0x0000000000000000000000000000000000000000",
-            ],
-            false, // [13] prizeClaimed
-            BigInt(row.status || 0), // [14] status
-            BigInt(row.finished_count || 0), // [15] finishedCount ✅ now from DB
-          ];
-          return {
-            i: row.contract_game_id,
-            g,
-            chainId: 4441,
-            net: NETWORKS[4441],
-            _fromDb: true,
-          };
-        });
-      } catch (_) {
-        return [];
-      }
-    }
-
-    // Fetch both chains simultaneously
     const [arcGames, litvmGames] = await Promise.all([
       arcCount > 0 ? fetchChainGames(arcRC, arcCount, 5042002) : [],
-      fetchLitvmGamesFromDB(),
+      litvmCount > 0 ? fetchChainGames(litvmRC, litvmCount, 4441) : [],
     ]);
 
     if (renderId !== lastGamesRender) {
@@ -1933,57 +1871,22 @@ async function loadGames() {
     allGames = [...arcGames, ...litvmGames];
     allGames.sort((a, b) => b.i - a.i || a.chainId - b.chainId);
 
-    // Save fresh onchain data to DB in background (non-blocking)
-    // This keeps DB in sync so LitVM games show correct player counts next load
-    setTimeout(async () => {
-      for (const { i, g, chainId: cid, net } of allGames) {
-        if (!g || g._fromDb) continue; // skip DB-only rows, only save fresh RPC data
-        try {
-          await fetch(`${BACKEND}/games/sync`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({
-              chainId: cid,
-              contractGameId: i,
-              creator: g[2],
-              name: g[1],
-              category: g[4],
-              difficulty: Number(g[5]),
-              entryFee: parseFloat(ethers.formatUnits(g[6], net.decimals)),
-              tokenSymbol: net.symbol,
-              maxPlayers: Number(g[7]),
-              prizePool: parseFloat(ethers.formatUnits(g[8], net.decimals)),
-              playerCount: Number(g[9]),
-              registrationEnd: Number(g[10]),
-              playDeadline: Number(g[11]),
-              finishedCount: Number(g[15]),
-              status: Number(g[14]),
-            }),
-          });
-        } catch (_) {}
-      }
-    }, 100);
-
-    // ── Stats ───────────────────────────────────────────────────────────
+    // ── Stats ──────────────────────────────────────────────────────────
     let arcPool = 0n,
       litvmPool = 0n,
       activeCount = 0;
     const nowSec = Math.floor(Date.now() / 1000);
 
-    for (const { g, net, _fromDb } of allGames) {
+    for (const { g, net } of allGames) {
       if (Number(g[14]) === 0) {
         if (net.decimals === 6) arcPool += BigInt(g[8]);
         else litvmPool += BigInt(g[8]);
-        // For DB-only LitVM rows, registrationEnd is 0 — count as active if status=0
-        if (_fromDb && net.decimals === 18) activeCount++;
-        else if (Number(g[11]) > nowSec) activeCount++;
+        if (Number(g[11]) > nowSec) activeCount++;
       }
     }
 
     document.getElementById("gActive").textContent = activeCount;
 
-    // Volume
     let dbArcVol = 0,
       dbLitvmVol = 0;
     try {
@@ -4697,7 +4600,7 @@ async function checkUnclaimedPrizes() {
   const claims = [];
 
   try {
-    // ── Arc: check onchain (Arc has no rate limit issues) ─────────────────
+    // Arc — fine, no rate limit
     const arcProvider = new ethers.JsonRpcProvider(
       "https://rpc.testnet.arc.network",
     );
@@ -4706,7 +4609,6 @@ async function checkUnclaimedPrizes() {
       ABI,
       arcProvider,
     );
-
     const arcCount = Number(await arcRC.gameCounter().catch(() => 0));
     if (arcCount > 0) {
       const checks = [];
@@ -4714,30 +4616,26 @@ async function checkUnclaimedPrizes() {
         checks.push(
           arcRC
             .getPlayerStatus(i, userAddress)
-            .then(async (statusResult) => {
-              const joined = statusResult[0];
-              const finished = statusResult[1];
-              const claimed = statusResult[2];
-              if (!joined || claimed || !finished) return null;
+            .then(async (s) => {
+              if (!s[0] || s[2] || !s[1]) return null;
               const g = await arcRC.getGame(i).catch(() => null);
               if (!g) return null;
-              const status = Number(g.status ?? g[14]);
-              if (status !== 1) return null;
-              const topPlayers = g.topPlayers ?? g[12];
-              const myPos = Array.from(topPlayers).findIndex(
+              if (Number(g.status ?? g[14]) !== 1) return null;
+              const top = g.topPlayers ?? g[12];
+              const pos = Array.from(top).findIndex(
                 (p) => p?.toLowerCase() === userAddress.toLowerCase(),
               );
-              if (myPos < 0) return null;
-              const prizePool = g.prizePool ?? g[8];
+              if (pos < 0) return null;
+              const pool = g.prizePool ?? g[8];
               const n = Number(g.playerCount ?? g[9]);
-              const dist = parseFloat(ethers.formatUnits(prizePool, 6)) * 0.95;
+              const dist = parseFloat(ethers.formatUnits(pool, 6)) * 0.95;
               const prizes =
                 n === 1
                   ? [dist]
                   : n === 2
                     ? [dist * 0.7, dist * 0.3]
                     : [dist * 0.6, dist * 0.25, dist * 0.15];
-              const prize = prizes[myPos] || 0;
+              const prize = prizes[pos] || 0;
               if (prize <= 0) return null;
               return {
                 gameId: i,
@@ -4745,74 +4643,65 @@ async function checkUnclaimedPrizes() {
                 net: NETWORKS[5042002],
                 name: g.name ?? g[1],
                 prize,
-                myPos,
+                myPos: pos,
                 type: "prize",
               };
             })
             .catch(() => null),
         );
       }
-      const arcResults = (await Promise.all(checks)).filter(Boolean);
-      claims.push(...arcResults);
+      claims.push(...(await Promise.all(checks)).filter(Boolean));
     }
 
-    // ── LitVM: use DB sessions to find potential prizes — NO mass RPC calls ──
-    // Only check games where user has a finished session
+    // LitVM — only check games user actually played, from DB history
     try {
-      const sessRes = await fetch(`${BACKEND}/history/${userAddress}`, {
+      const histRes = await fetch(`${BACKEND}/history/${userAddress}`, {
         credentials: "include",
       });
-      if (sessRes.ok) {
-        const sessions = await sessRes.json();
-        const litvmSessions = sessions.filter(
-          (s) => s.chain_id === 4441 && s.status === 1,
+      if (histRes.ok) {
+        const history = await histRes.json();
+        const litvmPlayed = history.filter(
+          (g) => g.chain_id === 4441 && g.status === 1,
         );
-
-        if (litvmSessions.length > 0) {
-          const litvmProvider = await getLitvmProvider();
-          const litvmRC = new ethers.Contract(
+        if (litvmPlayed.length > 0) {
+          const p = await getLitvmProvider();
+          const rc = new ethers.Contract(
             NETWORKS[4441].contractAddress,
             ABI,
-            litvmProvider,
+            p,
           );
-
-          // Only check games the user actually played — much fewer RPC calls
-          for (const sess of litvmSessions.slice(0, 10)) {
+          for (const row of litvmPlayed.slice(0, 5)) {
             try {
-              const gameId = sess.contract_game_id;
-              const [statusResult, g] = await Promise.all([
-                litvmRC.getPlayerStatus(gameId, userAddress),
-                litvmRC.getGame(gameId),
+              await new Promise((r) => setTimeout(r, 300)); // throttle
+              const [s, g] = await Promise.all([
+                rc.getPlayerStatus(row.contract_game_id, userAddress),
+                rc.getGame(row.contract_game_id),
               ]);
-              const joined = statusResult[0];
-              const finished = statusResult[1];
-              const claimed = statusResult[2];
-              if (!joined || claimed || !finished) continue;
-              const status = Number(g.status ?? g[14]);
-              if (status !== 1) continue;
-              const topPlayers = g.topPlayers ?? g[12];
-              const myPos = Array.from(topPlayers).findIndex(
+              if (!s[0] || s[2] || !s[1]) continue;
+              if (Number(g.status ?? g[14]) !== 1) continue;
+              const top = g.topPlayers ?? g[12];
+              const pos = Array.from(top).findIndex(
                 (p) => p?.toLowerCase() === userAddress.toLowerCase(),
               );
-              if (myPos < 0) continue;
-              const prizePool = g.prizePool ?? g[8];
+              if (pos < 0) continue;
+              const pool = g.prizePool ?? g[8];
               const n = Number(g.playerCount ?? g[9]);
-              const dist = parseFloat(ethers.formatUnits(prizePool, 18)) * 0.95;
+              const dist = parseFloat(ethers.formatUnits(pool, 18)) * 0.95;
               const prizes =
                 n === 1
                   ? [dist]
                   : n === 2
                     ? [dist * 0.7, dist * 0.3]
                     : [dist * 0.6, dist * 0.25, dist * 0.15];
-              const prize = prizes[myPos] || 0;
+              const prize = prizes[pos] || 0;
               if (prize <= 0) continue;
               claims.push({
-                gameId,
+                gameId: row.contract_game_id,
                 chainId: 4441,
                 net: NETWORKS[4441],
-                name: g.name ?? g[1],
+                name: row.name || `Game #${row.contract_game_id}`,
                 prize,
-                myPos,
+                myPos: pos,
                 type: "prize",
               });
             } catch (_) {}
@@ -4822,7 +4711,6 @@ async function checkUnclaimedPrizes() {
     } catch (_) {}
   } catch (_) {}
 
-  // Bets
   try {
     const res = await fetch(`${BACKEND}/bets/unclaimed/${userAddress}`, {
       credentials: "include",
