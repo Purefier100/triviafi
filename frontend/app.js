@@ -3804,30 +3804,40 @@ async function doJoin() {
     joinBtn.disabled = true;
     joinBtn.textContent = "⏳ Processing...";
   }
+
+  // Auto-release lock after 30s max — prevents permanent stuck state
+  const lockTimer = setTimeout(() => {
+    if (joinBtn) {
+      joinBtn.disabled = false;
+      joinBtn.textContent = `💰 Pay & Reserve Spot`;
+    }
+    toast("Request timed out. Please try again.", "error");
+  }, 30000);
+
   try {
     const entryFee = currentGame[6];
     if (activeNet.isNative) {
       toast("Joining with zkLTC...", "info");
       let joinGas = 200000n;
       try {
-        joinGas = await contract.joinGame.estimateGas(currentGameId, {
-          value: entryFee,
-        });
-        joinGas = (joinGas * 150n) / 100n;
-      } catch (_) {}
+        const est = await Promise.race([
+          contract.joinGame.estimateGas(currentGameId, { value: entryFee }),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 4000),
+          ),
+        ]);
+        joinGas = (BigInt(est) * 150n) / 100n;
+      } catch (_) {
+        joinGas = 300000n; // safe fallback for LitVM
+      }
       const tx = await contract.joinGame(currentGameId, {
         value: entryFee,
         gasLimit: joinGas,
       });
-      // Optimistic UI update — no refresh needed
       const newCount = Number(currentGame[9]) + 1;
-      document.querySelectorAll(".gmeta strong").forEach((el) => {
-        if (el.textContent.includes("/"))
-          el.textContent = `${newCount}/${currentGame[7]}`;
-      });
-      // Update allGames cache
       const entry = allGames.find((g) => g.i === currentGameId);
       if (entry) entry.g[9] = BigInt(newCount);
+      toast("⛓️ Confirming...", "info");
       await tx.wait();
     } else {
       const allowance = await usdcContract.allowance(
@@ -3836,28 +3846,46 @@ async function doJoin() {
       );
       if (allowance < entryFee) {
         toast("Step 1/2: Approving USDC...", "info");
-        const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee);
+        let approveGas = 100000n;
+        try {
+          const est = await Promise.race([
+            usdcContract.approve.estimateGas(CONTRACT_ADDRESS, entryFee),
+            new Promise((_, r) =>
+              setTimeout(() => r(new Error("timeout")), 4000),
+            ),
+          ]);
+          approveGas = (BigInt(est) * 150n) / 100n;
+        } catch (_) {
+          approveGas = 150000n;
+        }
+        const tx1 = await usdcContract.approve(CONTRACT_ADDRESS, entryFee, {
+          gasLimit: approveGas,
+        });
         await tx1.wait();
       }
       toast("Step 2/2: Joining game...", "info");
       let joinGas2 = 200000n;
       try {
-        joinGas2 = await contract.joinGame.estimateGas(currentGameId);
-        joinGas2 = (joinGas2 * 150n) / 100n;
-      } catch (_) {}
+        const est = await Promise.race([
+          contract.joinGame.estimateGas(currentGameId),
+          new Promise((_, r) =>
+            setTimeout(() => r(new Error("timeout")), 4000),
+          ),
+        ]);
+        joinGas2 = (BigInt(est) * 150n) / 100n;
+      } catch (_) {
+        joinGas2 = 300000n;
+      }
       const tx2 = await contract.joinGame(currentGameId, {
         gasLimit: joinGas2,
       });
-      // Optimistic update
       const newCount = Number(currentGame[9]) + 1;
-      document.querySelectorAll(".gmeta strong").forEach((el) => {
-        if (el.textContent.includes("/"))
-          el.textContent = `${newCount}/${currentGame[7]}`;
-      });
       const entry = allGames.find((g) => g.i === currentGameId);
       if (entry) entry.g[9] = BigInt(newCount);
+      toast("⛓️ Confirming...", "info");
       await tx2.wait();
     }
+    clearTimeout(lockTimer);
     toast("✅ Joined successfully!", "success");
     currentGame = await getGame(currentGameId);
     await openGame(
@@ -3867,9 +3895,6 @@ async function doJoin() {
     try {
       const updatedGame = await getGame(currentGameId);
       if (updatedGame) {
-        const newPool = parseFloat(
-          ethers.formatUnits(updatedGame[8], activeNet.decimals),
-        );
         await fetch(`${BACKEND}/games/save`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3887,19 +3912,22 @@ async function doJoin() {
             tokenSymbol: activeNet.symbol,
             maxPlayers: Number(updatedGame[7]),
             txHash: "",
-            prizePool: newPool,
+            prizePool: parseFloat(
+              ethers.formatUnits(updatedGame[8], activeNet.decimals),
+            ),
           }),
         });
       }
     } catch (_) {}
   } catch (e) {
+    clearTimeout(lockTimer);
     toast("Failed: " + (e.reason || e.message), "error");
     if (joinBtn) {
       joinBtn.disabled = false;
       joinBtn.textContent = `💰 Pay & Reserve Spot`;
     }
   }
-  loadGames(); // background refresh, non-blocking
+  loadGames();
 }
 
 async function doJoin_withGuestMode() {
