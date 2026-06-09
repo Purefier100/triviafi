@@ -2610,8 +2610,9 @@
 
     <!-- LOBBY -->
     <div class="screen active" id="screenLobby">
-      <section class="hero">
+      <section class="hero" id="heroSection">
 
+        <canvas id="heroCanvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0"></canvas>
         <div class="hero-glow"></div>
 
         <div class="hero-mini-badge">
@@ -3109,9 +3110,9 @@
       if (!row) return;
       const badges = [
         { icon: "⚡", label: "Network", val: "Arc Testnet", color: "#00e5ff", delay: "0s" },
-        { icon: "🔷", label: "Network", val: "LitVM Testnet", color: "#7b61ff", delay: ".5s" },
-        { icon: "💰", label: "Total Paid Out", val: '<span id="badgePaidOut">Loading...</span>', color: "#ffd166", delay: "1s" },
-        { icon: "🏆", label: "Tournaments", val: '<span id="badgeTournaments">— Finished</span>', color: "#06d6a0", delay: "1.5s" },
+        { icon: "🔷", label: "Network", val: "LitVM Testnet", color: "#7b61ff", delay: ".6s" },
+        { icon: "🎮", label: "Multichain", val: "Arc + LitVM", color: "#06d6a0", delay: "1.2s" },
+        { icon: "🔒", label: "Fully", val: "Onchain", color: "#ffd166", delay: "1.8s" },
       ];
       row.innerHTML = badges.map(b => `
         <div class="float-badge" style="animation-delay:${b.delay};border-color:${b.color}22;box-shadow:0 8px 32px rgba(0,0,0,.4),0 0 0 1px ${b.color}11">
@@ -3123,6 +3124,62 @@
         </div>`).join("");
     }
     initFloatingBadges();
+
+    // ── Particle canvas ───────────────────────────────────────────────
+    (function() {
+      const canvas = document.getElementById("heroCanvas");
+      const section = document.getElementById("heroSection");
+      if (!canvas || !section) return;
+      const ctx = canvas.getContext("2d");
+      let animId;
+      const setSize = () => {
+        canvas.width = section.offsetWidth;
+        canvas.height = section.offsetHeight;
+      };
+      setSize();
+      window.addEventListener("resize", setSize);
+      const pts = Array.from({length: 55}, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: Math.random() * 1.5 + 0.3,
+        dx: (Math.random() - 0.5) * 0.35,
+        dy: (Math.random() - 0.5) * 0.35,
+        op: Math.random() * 0.5 + 0.1,
+        col: Math.random() > 0.6 ? "#7b61ff" : Math.random() > 0.5 ? "#00e5ff" : "#ffd166"
+      }));
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        pts.forEach(p => {
+          p.x += p.dx; p.y += p.dy;
+          if (p.x < 0 || p.x > canvas.width) p.dx *= -1;
+          if (p.y < 0 || p.y > canvas.height) p.dy *= -1;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          ctx.fillStyle = p.col;
+          ctx.globalAlpha = p.op;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        });
+        for (let i = 0; i < pts.length; i++) {
+          for (let j = i+1; j < pts.length; j++) {
+            const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+            const d = Math.sqrt(dx*dx + dy*dy);
+            if (d < 90) {
+              ctx.beginPath();
+              ctx.moveTo(pts[i].x, pts[i].y);
+              ctx.lineTo(pts[j].x, pts[j].y);
+              ctx.strokeStyle = "#7b61ff";
+              ctx.globalAlpha = (1 - d/90) * 0.12;
+              ctx.lineWidth = 0.6;
+              ctx.stroke();
+              ctx.globalAlpha = 1;
+            }
+          }
+        }
+        animId = requestAnimationFrame(draw);
+      }
+      draw();
+    })();
   </script>
 
 <script src="app.js"></script>
