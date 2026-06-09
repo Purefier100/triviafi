@@ -2376,7 +2376,7 @@ async function renderGames() {
                     </div>
                     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin-left:8px;flex-shrink:0">
                       ${isLive ? `<span style="font-size:.62rem;font-weight:800;color:var(--red);background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.3);padding:1px 7px;border-radius:10px">🔴 LIVE</span>` : `<span style="font-size:.62rem;font-weight:800;color:var(--green);background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.25);padding:1px 7px;border-radius:10px">🟢 OPEN</span>`}
-                      <span style="font-size:.6rem;padding:1px 6px;border-radius:8px;background:${chainBg};color:${chainColor}">${sym === "zkLTC" ? "🔷 LitVM" : "⚡ Arc"}</span>
+                      ${!isWL ? `<span style="font-size:.6rem;padding:1px 6px;border-radius:8px;background:${chainBg};color:${chainColor}">${sym === "zkLTC" ? "🔷 LitVM" : "⚡ Arc"}</span>` : ""}
                     </div>
                   </div>
 
@@ -2430,10 +2430,6 @@ async function renderGames() {
                 <button class="btn btn-primary" style="width:auto;padding:8px 18px;font-size:.78rem;white-space:nowrap"
                   onclick="showScreen('screenTournaments');loadTournaments();showTournamentTypeModal()">
                   🚀 Create Tournament
-                </button>
-                <button class="btn btn-ghost btn-sm" style="font-size:.72rem;text-align:center"
-                  onclick="showScreen('screenTournaments');loadTournaments()">
-                  Browse Past →
                 </button>
               </div>
             </div>
@@ -2613,8 +2609,8 @@ async function renderGames() {
                         <span>🏆 <strong style="color:var(--green)">${pool}</strong> ${net.symbol}</span>
                         <span style="color:rgba(255,255,255,.2)">·</span>
                         <span>👥 <strong style="color:#fff">${n}/${max}</strong></span>
-                        ${s === 0 && hasDeadlines && regSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="color:var(--green);font-weight:700" data-deadline="${g[10]}" data-prefix="⏰ " data-expiredtext="Closed">⏰ ${fmtTime(regSecs)}</span>` : ""}
-                        ${s === 0 && hasDeadlines && regSecs <= 0 && playSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="color:var(--gold);font-weight:700" data-deadline="${g[11]}" data-prefix="🎮 " data-expiredtext="Ended">🎮 ${fmtTime(playSecs)}</span>` : ""}
+                        ${s === 0 && hasDeadlines && regSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.25);color:var(--green);font-weight:700;padding:1px 7px;border-radius:8px;font-size:.65rem" data-deadline="${g[10]}" data-prefix="Join closes: " data-expiredtext="Closed">🔓 Join: ${fmtTime(regSecs)}</span>` : ""}
+                        ${s === 0 && hasDeadlines && regSecs <= 0 && playSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.3);color:var(--gold);font-weight:700;padding:1px 7px;border-radius:8px;font-size:.65rem" data-deadline="${g[11]}" data-prefix="Play closes: " data-expiredtext="Ended">🎮 Play: ${fmtTime(playSecs)}</span>` : ""}
                       </div>
                       <div style="margin-top:7px;height:2px;background:rgba(255,255,255,.06);border-radius:1px;overflow:hidden">
                         <div style="height:100%;width:${fillPct}%;background:${fillPct >= 100 ? "var(--red)" : fillPct > 60 ? "var(--gold)" : "var(--green)"};border-radius:1px;transition:width .5s"></div>
