@@ -2173,6 +2173,32 @@
       }
     }
 
+    @keyframes popUp {
+      0%   { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
+      100% { opacity:0; transform:translateX(-50%) translateY(-28px) scale(1.6); }
+    }
+    @keyframes floatBadge {
+      from { transform: translateY(0px); }
+      to   { transform: translateY(-8px); }
+    }
+    .float-badge {
+      background:rgba(15,15,30,.85);
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:14px;
+      padding:10px 16px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      backdrop-filter:blur(12px);
+      animation:floatBadge 3s ease-in-out infinite alternate;
+      transition:transform .2s,box-shadow .2s;
+      min-width:140px;
+      cursor:default;
+    }
+    .float-badge:hover { transform:scale(1.05) !important; }
+    .fb-label { font-size:.62rem;color:#7a7a9a;text-transform:uppercase;letter-spacing:.8px;font-weight:700; }
+    .fb-val { font-size:.88rem;font-weight:800;line-height:1.2;margin-top:1px; }
+
     .rooms-footer {
       margin-top: 18px;
 
@@ -2603,6 +2629,9 @@
           and earn rewards fully onchain.
         </p>
 
+        <!-- Reaction bar -->
+        <div id="reactionBar" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:18px"></div>
+
       </section>
 
       <div class="stat-row">
@@ -3013,10 +3042,95 @@
     }
     setInterval(updateOnlineCount, 30000);
     updateOnlineCount();
+
+    // ── Reaction buttons ──────────────────────────────────────────────
+    function initReactions() {
+      const reactions = [
+        { emoji: "🔥", count: 284 }, { emoji: "⚡", count: 197 },
+        { emoji: "🏆", count: 152 }, { emoji: "🚀", count: 341 }, { emoji: "💎", count: 89 }
+      ];
+      const bar = document.getElementById("reactionBar");
+      if (!bar) return;
+      reactions.forEach(r => {
+        let count = r.count, reacted = false;
+        const btn = document.createElement("button");
+        const render = () => {
+          btn.innerHTML = `<span style="font-size:1rem;display:inline-block;transition:transform .15s;transform:${reacted?"scale(1.2)":"scale(1)"}">${r.emoji}</span> <span>${count}</span>`;
+          btn.style.cssText = `
+            background:${reacted?"rgba(123,97,255,.18)":"rgba(255,255,255,.04)"};
+            border:1px solid ${reacted?"rgba(123,97,255,.5)":"rgba(255,255,255,.08)"};
+            border-radius:20px;padding:6px 14px;
+            display:inline-flex;align-items:center;gap:6px;
+            cursor:pointer;color:${reacted?"#b8a4ff":"#a0a0c0"};
+            font-size:.78rem;font-weight:700;
+            transition:all .2s;font-family:inherit;
+            position:relative;overflow:visible`;
+        };
+        render();
+        btn.addEventListener("click", () => {
+          reacted = !reacted;
+          count += reacted ? 1 : -1;
+          btn.style.transform = "scale(1.2)";
+          setTimeout(() => { btn.style.transform = "scale(1)"; }, 200);
+          render();
+          // burst emoji float up
+          const burst = document.createElement("span");
+          burst.textContent = r.emoji;
+          burst.style.cssText = `position:fixed;font-size:1.4rem;pointer-events:none;z-index:9999;animation:popUp .5s ease forwards`;
+          const rect = btn.getBoundingClientRect();
+          burst.style.left = (rect.left + rect.width/2) + "px";
+          burst.style.top = (rect.top - 10) + "px";
+          document.body.appendChild(burst);
+          setTimeout(() => burst.remove(), 500);
+        });
+        bar.appendChild(btn);
+      });
+    }
+    initReactions();
+
+    // ── Animated counter ──────────────────────────────────────────────
+    function animateCounter(el, target, duration = 1400) {
+      if (!el || !target) return;
+      const start = performance.now();
+      const tick = (now) => {
+        const t = Math.min((now - start) / duration, 1);
+        const ease = 1 - Math.pow(1 - t, 3);
+        el.textContent = Math.floor(ease * target).toLocaleString();
+        if (t < 1) requestAnimationFrame(tick);
+        else el.textContent = target.toLocaleString();
+      };
+      requestAnimationFrame(tick);
+    }
+    window.animateCounter = animateCounter;
+
+    // ── Floating badges ───────────────────────────────────────────────
+    function initFloatingBadges() {
+      const row = document.getElementById("floatingBadgesRow");
+      if (!row) return;
+      const badges = [
+        { icon: "⚡", label: "Network", val: "Arc Testnet", color: "#00e5ff", delay: "0s" },
+        { icon: "🔷", label: "Network", val: "LitVM Testnet", color: "#7b61ff", delay: ".5s" },
+        { icon: "💰", label: "Total Paid Out", val: '<span id="badgePaidOut">Loading...</span>', color: "#ffd166", delay: "1s" },
+        { icon: "🏆", label: "Tournaments", val: '<span id="badgeTournaments">— Finished</span>', color: "#06d6a0", delay: "1.5s" },
+      ];
+      row.innerHTML = badges.map(b => `
+        <div class="float-badge" style="animation-delay:${b.delay};border-color:${b.color}22;box-shadow:0 8px 32px rgba(0,0,0,.4),0 0 0 1px ${b.color}11">
+          <span style="font-size:1.2rem">${b.icon}</span>
+          <div>
+            <div class="fb-label">${b.label}</div>
+            <div class="fb-val" style="color:${b.color}">${b.val}</div>
+          </div>
+        </div>`).join("");
+    }
+    initFloatingBadges();
   </script>
 
-  <script src="app.js"></script>
-  <footer class="app-footer">
+<script src="app.js"></script>
+
+<!-- Floating badges -->
+<div id="floatingBadgesRow" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;padding:8px 20px 0;max-width:1280px;margin:0 auto"></div>
+
+<footer class="app-footer">
 
     <div class="footer-left">
       <div class="footer-logo">
