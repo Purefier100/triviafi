@@ -2937,6 +2937,23 @@ async function openGame(gameId, gameChainId) {
               "https://rpc.testnet.arc.network",
               "https://rpc.drpc.testnet.arc.network",
             ];
+
+      if (targetChainId === 4441) {
+        try {
+          const testP = new ethers.JsonRpcProvider(
+            "https://liteforge.rpc.caldera.xyz/http",
+          );
+          await Promise.race([
+            testP.getBlockNumber(),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
+          ]);
+        } catch (_) {
+          toast(
+            "⚠️ LitVM network is slow right now — game may load slower than usual",
+            "info",
+          );
+        }
+      }
       let bestProvider = new ethers.JsonRpcProvider(rpcs[0]);
       for (const rpc of rpcs) {
         try {

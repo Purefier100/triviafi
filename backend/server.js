@@ -2037,10 +2037,27 @@ app.post("/game/start", async (req, res) => {
     }
 
     // Check joined onchain
-    const [joined] = await retryFn(
-      (c) => c.getPlayerStatus(gameId, wallet),
-      "getPlayerStatus",
-    );
+    let joined = false;
+    try {
+      const [joinedOnchain] = await retryFn(
+        (c) => c.getPlayerStatus(gameId, wallet),
+        "getPlayerStatus",
+      );
+      joined = joinedOnchain;
+    } catch (rpcErr) {
+      console.warn(
+        `[game/start] RPC unavailable, falling back to DB: ${rpcErr.message}`,
+      );
+      // If RPC is down, check if they have a pending/completed session in DB
+      // This means they already started once — allow them to continue
+      const existingSession = await pool.query(
+        "SELECT id FROM game_sessions WHERE user_id=$1 AND game_id=$2 AND chain_id=$3",
+        [req.user.id, gameId, chainId],
+      );
+      if (existingSession.rows.length > 0) {
+        joined = true; // They already joined in a previous session
+      }
+    }
     if (!joined) return res.status(403).json({ error: "Not joined onchain" });
 
     // ✅ Check if already started — don't re-fetch questions
@@ -2921,6 +2938,73 @@ if (process.env.NODE_ENV === "production") {
       } catch (e) {
         console.error("Auto-expire error:", e.message);
       }
+
+      // ── Process queued refunds ────────────────────────────────────────────
+      try {
+        const queued = await pool.query(
+          `SELECT * FROM game_refunds WHERE status='queued' LIMIT 10`,
+        );
+
+        for (const refund of queued.rows) {
+          try {
+            const isLitvm = refund.token_symbol === "zkLTC";
+            const decimals = isLitvm ? 18 : 6;
+
+            const amountWei = ethers.parseUnits(
+              parseFloat(refund.amount).toFixed(decimals),
+              decimals,
+            );
+
+            let txHash;
+
+            if (isLitvm) {
+              const fastProvider = await makeLitvmProviderFast();
+              const ws = verifierWallet.connect(fastProvider);
+
+              const tx = await ws.sendTransaction({
+                to: refund.wallet,
+                value: amountWei,
+                gasLimit: 21000,
+              });
+
+              await tx.wait();
+              txHash = tx.hash;
+            } else {
+              const ARC_USDC = "0x3600000000000000000000000000000000000000";
+
+              const ws = verifierWallet.connect(makeProvider());
+
+              const uc = new ethers.Contract(
+                ARC_USDC,
+                ["function transfer(address,uint256) external returns (bool)"],
+                ws,
+              );
+
+              const tx = await uc.transfer(refund.wallet, amountWei);
+
+              await tx.wait();
+              txHash = tx.hash;
+            }
+
+            await pool.query(
+              `UPDATE game_refunds
+               SET status='paid', tx_hash=$1
+               WHERE id=$2`,
+              [txHash, refund.id],
+            );
+
+            console.log(
+              `✅ Queued refund processed: ${refund.wallet} | TX: ${txHash}`,
+            );
+          } catch (retryErr) {
+            console.warn(
+              `⏳ Queued refund retry failed for ${refund.wallet}: ${retryErr.message}`,
+            );
+          }
+        }
+      } catch (e) {
+        console.error("Queued refund processor error:", e.message);
+      }
     },
     8 * 60 * 1000,
   );
@@ -3108,15 +3192,31 @@ app.post("/games/:gameId/refund", async (req, res) => {
         "refund-playerStatus",
       );
     } catch (e) {
-      return res
-        .status(503)
-        .json({ error: "Blockchain unavailable. Try again." });
+      console.warn(`[refund] RPC unavailable, checking DB: ${e.message}`);
+      // RPC down — check DB as fallback
+      // If they have a game_session entry, they joined
+      const sessionFallback = await pool.query(
+        `SELECT finished, score FROM game_sessions
+           WHERE user_id=$1 AND game_id=$2 AND chain_id=$3`,
+        [req.user.id, gameId, chainId],
+      );
+      if (sessionFallback.rows.length === 0) {
+        // No DB session either — check game_refunds for any prior refund attempts
+        const priorRefund = await pool.query(
+          `SELECT * FROM game_refunds WHERE game_id=$1 AND chain_id=$2 AND LOWER(wallet)=LOWER($3)`,
+          [gameId, chainId, wallet],
+        );
+        if (priorRefund.rows.length === 0) {
+          return res.status(503).json({
+            error:
+              "Network temporarily unavailable. Please try again in a few minutes.",
+          });
+        }
+      }
+      // DB says they have a session — allow refund to proceed
+      joined = true;
+      alreadyFinishedOnchain = sessionFallback.rows[0]?.finished || false;
     }
-
-    if (!joined)
-      return res
-        .status(400)
-        .json({ error: "You did not join this game onchain" });
 
     // ── 3. Check game is finished or past deadline (not still open) ───
     let gameStatus = null;
@@ -3313,7 +3413,15 @@ app.post("/games/:gameId/refund", async (req, res) => {
     } catch (payErr) {
       console.error("Game refund tx failed:", payErr.message, payErr.code);
 
-      // Specific error messages based on failure type
+      // Mark as queued — auto-retry processor will pick it up
+      await pool
+        .query(
+          `UPDATE game_refunds SET status='queued'
+         WHERE game_id=$1 AND chain_id=$2 AND LOWER(wallet)=LOWER($3)`,
+          [gameId, chainId, wallet],
+        )
+        .catch(() => {});
+
       let userMsg =
         "Refund transaction failed. Please try again or contact support.";
       if (
@@ -3323,19 +3431,19 @@ app.post("/games/:gameId/refund", async (req, res) => {
         userMsg =
           "Treasury temporarily low on funds. Your refund is queued — contact support with game ID: " +
           gameId;
-      } else if (payErr.message?.includes("timeout")) {
-        userMsg = "Network timeout. Please try again in a few minutes.";
+      } else if (
+        payErr.message?.includes("timeout") ||
+        payErr.message?.includes("unavailable")
+      ) {
+        userMsg =
+          "Network is temporarily slow. Your refund is queued and will be processed automatically within 10 minutes.";
       }
 
-      // Log for manual processing
       console.error(
-        `REFUND NEEDED: game=${gameId} chain=${chainId} wallet=${wallet} amount=${entryFee} ${tokenSymbol}`,
+        `REFUND QUEUED: game=${gameId} chain=${chainId} wallet=${wallet} amount=${entryFee} ${tokenSymbol}`,
       );
 
-      return res.status(500).json({
-        error: userMsg,
-        gameId,
-      });
+      return res.status(500).json({ error: userMsg, queued: true, gameId });
     }
   } catch (e) {
     console.error("Game refund error:", e.message);
