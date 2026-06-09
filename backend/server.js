@@ -907,20 +907,40 @@ app.get(
 
 app.get("/games", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT *
-      FROM games
-      ORDER BY created_at DESC
-      LIMIT 100
-    `);
-
+    const chainId = req.query.chainId ? parseInt(req.query.chainId) : null;
+    const limit = Math.min(parseInt(req.query.limit || "100"), 100);
+    let result;
+    if (chainId) {
+      result = await pool.query(
+        `SELECT * FROM games WHERE chain_id=$1 ORDER BY contract_game_id DESC LIMIT $2`,
+        [chainId, limit],
+      );
+    } else {
+      result = await pool.query(
+        `SELECT * FROM games ORDER BY created_at DESC LIMIT $1`,
+        [limit],
+      );
+    }
     res.json(result.rows);
   } catch (e) {
     console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
-    res.status(500).json({
-      error: e.message,
-    });
+// Add this right after:
+app.get("/games/count", async (req, res) => {
+  try {
+    const chainId = req.query.chainId ? parseInt(req.query.chainId) : null;
+    const result = chainId
+      ? await pool.query(
+          `SELECT COUNT(*) as count FROM games WHERE chain_id=$1`,
+          [chainId],
+        )
+      : await pool.query(`SELECT COUNT(*) as count FROM games`);
+    res.json({ count: parseInt(result.rows[0].count) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
