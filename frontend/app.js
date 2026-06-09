@@ -2201,6 +2201,7 @@ async function renderGames() {
   const grid = document.getElementById("gamesList");
   if (!grid) return;
 
+  // Default "all" only shows active games — cancelled/ended hidden unless explicitly filtered
   const filter =
     filterStatus === "0"
       ? "open"
@@ -2210,7 +2211,7 @@ async function renderGames() {
           ? "ended"
           : filterStatus === "2"
             ? "cancelled"
-            : "all";
+            : "active"; // new default — only open/live
   const nowSec = Math.floor(Date.now() / 1000);
 
   // ── Filter games ────────────────────────────────────────────────────
@@ -2222,7 +2223,8 @@ async function renderGames() {
     if (filter === "live") return s === 0 && regSecs <= 0 && playSecs > 0;
     if (filter === "ended") return s === 1;
     if (filter === "cancelled") return s === 2;
-    return true;
+    if (filter === "active") return s === 0; // default: only open/live, no ended/cancelled
+    return s === 0;
   });
 
   // ── Fetch tournaments for the banner section ─────────────────────────
@@ -2370,20 +2372,37 @@ async function renderGames() {
 
     html += `</div>
 
-    <!-- Divider -->
-    <div style="grid-column:1/-1;display:flex;align-items:center;gap:12px;margin:4px 0 12px">
-      <div style="flex:1;height:1px;background:var(--border)"></div>
-      <span style="font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:1.5px;color:var(--muted)">GAME ROOMS</span>
-      <div style="flex:1;height:1px;background:var(--border)"></div>
+    <!-- Divider + Game Rooms header -->
+    <div style="grid-column:1/-1;margin:8px 0 14px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+        <span style="font-family:'Bebas Neue',sans-serif;font-size:.85rem;letter-spacing:1.5px;color:var(--muted)">GAME ROOMS</span>
+        <div style="flex:1;height:1px;background:var(--border)"></div>
+      </div>
+      <div style="background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.12);
+        border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:1rem">🎮</span>
+        <div style="flex:1">
+          <span style="font-size:.78rem;color:var(--muted)">
+            Prefer to play solo? <strong style="color:var(--accent)">Game Rooms</strong> are open trivia matches — pay entry, answer 10 questions, top scorers split the prize pool.
+          </span>
+        </div>
+        <button class="btn btn-ghost btn-sm" style="width:auto;padding:5px 12px;font-size:.72rem;white-space:nowrap"
+          onclick="showCreateModal()">＋ Create Room</button>
+      </div>
     </div>`;
   }
 
   // ── GAME CARDS ───────────────────────────────────────────────────────
   if (filtered.length === 0) {
-    html += `<div style="grid-column:1/-1;text-align:center;padding:32px">
-      <div style="font-size:2rem;margin-bottom:10px">🎮</div>
-      <p style="color:var(--muted)">No games found.</p>
-      <button class="btn btn-ghost btn-sm" style="margin-top:12px;width:auto"
+    html += `<div style="grid-column:1/-1;background:rgba(0,229,255,.03);border:1px dashed rgba(0,229,255,.15);
+      border-radius:12px;padding:24px;text-align:center">
+      <div style="font-size:1.8rem;margin-bottom:8px">🎮</div>
+      <p style="color:var(--accent);font-weight:700;font-size:.9rem">No open game rooms right now</p>
+      <p style="color:var(--muted);font-size:.78rem;margin-top:4px;margin-bottom:14px">
+        New rooms open every hour — or create your own and invite friends to play
+      </p>
+      <button class="btn btn-ghost btn-sm" style="width:auto;padding:8px 20px"
         onclick="showCreateModal()">＋ Create a Game Room</button>
     </div>`;
   } else {
