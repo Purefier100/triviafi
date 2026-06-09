@@ -5000,13 +5000,21 @@ async function loadGlobalStats() {
       agentBar.dataset.loaded = `${players}-${games}-${scores}`;
     }
 
-    // Update header global bar
+    // Update header global bar — only update numbers, never rebuild the whole element
     const el = document.getElementById("globalStatsBar");
     if (!el) return;
-
-    if (el.dataset.loaded !== `${players}-${games}-${scores}`) {
-      el.innerHTML = statsHtml;
-      el.dataset.loaded = `${players}-${games}-${scores}`;
+    const key = `${players}-${games}-${scores}`;
+    if (el.dataset.loaded !== key) {
+      el.dataset.loaded = key;
+      // Only update if element already has content — prevents flash on first load
+      if (el.children.length > 0) {
+        const strongs = el.querySelectorAll("strong");
+        if (strongs[0]) strongs[0].textContent = players;
+        if (strongs[1]) strongs[1].textContent = games;
+        if (strongs[2]) strongs[2].textContent = scores;
+      } else {
+        el.innerHTML = statsHtml;
+      }
     }
   } catch (_) {}
 }
@@ -5598,7 +5606,7 @@ function renderTournaments() {
             </div>
           </div>
           <div style="text-align:right;flex-shrink:0">
-            <div style="font-size:.68rem;color:var(--muted)">${chainIcon} ${t.rounds} Rounds</div>
+            <div style="font-size:.68rem;color:var(--muted)">${isWL ? "" : chainIcon + " "}${t.rounds} Rounds</div>
             ${isLive ? `<div style="font-size:.68rem;color:var(--red);font-weight:700;margin-top:2px;animation:pulse 2s ease-in-out infinite">⚔️ Round ${t.current_round}</div>` : ""}
           </div>
         </div>
@@ -7818,7 +7826,7 @@ function showCreateTournamentModal() {
         </div>
         <a href="https://twitter.com/intent/tweet?text=${encodeURIComponent("🏆 I just created a tournament on @TriviaFi! Multi-round trivia · Win USDC & zkLTC · Join now: https://triviafi.vercel.app #TriviaFi #Web3Gaming")}"
           target="_blank"
-          onclick="setTimeout(()=>document.getElementById('tweetConfirmRow').style.display='flex',1000)"
+          onclick="setTimeout(()=>{const r=document.getElementById('tweetConfirmRow');if(r)r.style.display='flex'},800)"
           style="display:flex;align-items:center;justify-content:center;gap:8px;
           background:#1da1f2;color:#fff;padding:10px 20px;border-radius:20px;
           text-decoration:none;font-size:.82rem;font-weight:700;margin-bottom:10px">
@@ -7924,7 +7932,13 @@ function showCreateTournamentModal() {
     tweetCheck.addEventListener("change", function () {
       form.style.opacity = this.checked ? "1" : "0.35";
       form.style.pointerEvents = this.checked ? "auto" : "none";
+      form.style.filter = this.checked ? "none" : "blur(0.5px)";
     });
+    // Also wire the launch button now since it exists in DOM
+    const launchBtn2 = document.getElementById("btnLaunchTourney");
+    if (launchBtn2) {
+      launchBtn2.onclick = submitCreateTournament;
+    }
   }
 
   // Wire launch button
