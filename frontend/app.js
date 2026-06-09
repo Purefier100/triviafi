@@ -2400,7 +2400,25 @@ async function renderGames() {
                       <div style="font-size:.68rem;color:var(--muted)">Entry ${isWL ? "" : sym}</div>
                     </div>
                     <div style="background:rgba(0,0,0,.2);border-radius:7px;padding:6px 8px;text-align:center">
-                      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--green)">${isWL ? `${players} pts` : prizePool}</div>
+                      <div style="font-family:'Bebas Neue',sans-serif;font-size:1.1rem;color:var(--green)">${
+                        isWL
+                          ? (() => {
+                              const ws =
+                                t.winners && t.winners.length > 0
+                                  ? Math.max(
+                                      ...t.winners.map((w) =>
+                                        parseInt(w.total_score || w.score || 0),
+                                      ),
+                                    )
+                                  : 0;
+                              return (
+                                (parseInt(
+                                  t.top_score || t.highest_score || ws,
+                                ) || 0) + " pts"
+                              );
+                            })()
+                          : prizePool
+                      }</div>
                       <div style="font-size:.68rem;color:var(--muted)">${isWL ? "Top Score" : "Prize Pool"}</div>
                     </div>
                   </div>
