@@ -67,12 +67,13 @@ const LITVM_CONTRACT_ADDRESS =
   process.env.LITVM_CONTRACT_ADDRESS ||
   "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765";
 const LITVM_RPC_URL =
-  process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http";
+  process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http";
 
 const LITVM_RPCS_LIST = [
-  process.env.LITVM_RPC_URL || "https://liteforge.rpc.caldera.xyz/http",
+  process.env.LITVM_RPC_URL || "https://liteforge-testnet.rpc.caldera.xyz/http",
+  "https://liteforge-testnet.rpc.caldera.xyz/http",
   "https://liteforge.rpc.caldera.xyz/http",
-].filter(Boolean);
+].filter((v, i, a) => v && a.indexOf(v) === i); // dedupe
 
 const LITVM_RPCS = [LITVM_RPC_URL];
 const ARC_RPCS = [
@@ -129,13 +130,8 @@ const arcContract = new ethers.Contract(
 // ── LitVM provider ────────────────────────────────────────────────────────────
 function makeLitvmProvider(attempt = 0) {
   const rpc = LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length];
-
   console.log("LITVM RPC USED:", rpc);
-
-  return new ethers.JsonRpcProvider(rpc, {
-    chainId: 4441,
-    name: "litvm",
-  });
+  return new ethers.JsonRpcProvider(rpc, { chainId: 4441, name: "litvm" });
 }
 const litvmProvider = makeLitvmProvider();
 const litvmVerifierSigner = verifierWallet.connect(litvmProvider);
@@ -220,39 +216,26 @@ async function withRetry(fn, label = "rpc", retries = 6) {
   }
 }
 
-async function withLitvmRetry(fn, label = "litvm", retries = 6) {
+async function withLitvmRetry(fn, label = "litvm", retries = 4) {
   for (let i = 1; i <= retries; i++) {
     try {
       const provider = makeLitvmProvider(i - 1);
-
       const contract = new ethers.Contract(
         LITVM_CONTRACT_ADDRESS,
         CONTRACT_ABI,
         provider,
       );
-
       const result = await Promise.race([
         fn(contract, provider),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("LitVM timeout")), 25000),
+          setTimeout(() => reject(new Error("LitVM timeout")), 15000),
         ),
       ]);
-
       return result;
     } catch (e) {
-      console.warn(`[${label}] attempt ${i}/${retries}:`, e.message, e.code);
-
-      if (
-        e.message?.includes("429") ||
-        e.message?.includes("Too Many Requests")
-      ) {
-        console.warn("⏳ LitVM RPC rate limited, backing off...");
-        await new Promise((r) => setTimeout(r, 5000 * i));
-      } else {
-        await new Promise((r) => setTimeout(r, 2000 * i));
-      }
-
+      console.warn(`[${label}] attempt ${i}/${retries}: ${e.message}`);
       if (i === retries) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * i));
     }
   }
 }
@@ -3433,28 +3416,41 @@ app.post("/games/:gameId/refund", async (req, res) => {
     try {
       let txHash;
       if (isLitvm) {
-        console.log("REFUND DEBUG 1: Starting LitVM refund");
-        const fastProvider = await makeLitvmProviderFast();
-        console.log("REFUND DEBUG 2: Provider created");
-        const ws = verifierWallet.connect(fastProvider);
-        console.log("REFUND DEBUG 3: Wallet connected", ws.address);
-
-        const feeData = await fastProvider.getFeeData();
-
-        console.log("REFUND FEE DATA:", feeData);
-
-        const tx = await ws.sendTransaction({
-          to: wallet,
-          value: amountWei,
-          gasLimit: 21000,
-          maxFeePerGas: feeData.maxFeePerGas,
-          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-        });
-        console.log("REFUND DEBUG 5: TX SENT", tx.hash);
-
-        await tx.wait();
-        txHash = tx.hash;
-        console.log("REFUND DEBUG 6: TX CONFIRMED", tx.hash);
+        console.log(
+          "REFUND DEBUG 1: Starting LitVM refund, RPCs:",
+          LITVM_RPCS_LIST,
+        );
+        let txHash = null;
+        let lastErr = null;
+        for (let attempt = 0; attempt < LITVM_RPCS_LIST.length; attempt++) {
+          try {
+            const fastProvider = makeLitvmProvider(attempt);
+            console.log(
+              `REFUND DEBUG 2: Attempt ${attempt + 1} using RPC: ${LITVM_RPCS_LIST[attempt % LITVM_RPCS_LIST.length]}`,
+            );
+            const ws = verifierWallet.connect(fastProvider);
+            const feeData = await fastProvider.getFeeData();
+            console.log("REFUND FEE DATA:", feeData);
+            const tx = await ws.sendTransaction({
+              to: wallet,
+              value: amountWei,
+              gasLimit: 21000,
+              maxFeePerGas: feeData.maxFeePerGas,
+              maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+              chainId: 4441,
+            });
+            console.log("REFUND DEBUG 5: TX SENT", tx.hash);
+            await tx.wait(1);
+            txHash = tx.hash;
+            console.log("REFUND DEBUG 6: TX CONFIRMED", tx.hash);
+            break; // success — stop retrying
+          } catch (e) {
+            lastErr = e;
+            console.warn(`Refund attempt ${attempt + 1} failed: ${e.message}`);
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
+        if (!txHash) throw lastErr;
       } else {
         const ARC_USDC = "0x3600000000000000000000000000000000000000";
         const ws = verifierWallet.connect(makeProvider());
