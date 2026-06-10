@@ -2921,85 +2921,147 @@ if (process.env.NODE_ENV === "production") {
       // ── Auto-cancel AND refund expired open tournaments ───────────────
       try {
         // Find expired open tournaments with fewer players than max
-        const expired = await pool.query(`
-          SELECT t.*, 
-            (SELECT COUNT(*) FROM tournament_players WHERE tournament_id = t.id) AS player_count
-          FROM tournaments t
-          WHERE t.status = 'open'
-            AND t.tournament_type = 'paid'
-            AND t.deadline_at < NOW()
-        `);
+        // ── Auto-cancel expired open tournaments ─────────────────────────────
+        try {
+          const expired = await pool.query(`
+    SELECT t.*,
+      (SELECT COUNT(*) FROM tournament_players WHERE tournament_id = t.id) AS player_count
+    FROM tournaments t
+    WHERE t.status = 'open'
+      AND t.tournament_type = 'paid'
+      AND t.deadline_at < NOW()
+  `);
 
-        for (const t of expired.rows) {
-          console.log(`⏰ Auto-expiring tournament ${t.id}: ${t.name}`);
+          for (const t of expired.rows) {
+            console.log(
+              `⏰ Auto-expiring tournament ${t.id}: ${t.name} (${t.player_count} players)`,
+            );
 
-          // Mark as cancelled
-          await pool.query(
-            "UPDATE tournaments SET status='cancelled' WHERE id=$1",
-            [t.id],
-          );
+            // Step 1: Mark cancelled FIRST — tournament is never deleted
+            await pool.query(
+              "UPDATE tournaments SET status='cancelled' WHERE id=$1",
+              [t.id],
+            );
 
-          // Get all players who paid
-          const players = await pool.query(
-            `SELECT * FROM tournament_players WHERE tournament_id=$1 AND NOT refunded`,
-            [t.id],
-          );
+            // Step 2: Get all players who need refunds
+            const players = await pool.query(
+              `SELECT * FROM tournament_players 
+       WHERE tournament_id=$1 AND NOT refunded`,
+              [t.id],
+            );
 
-          const isLitvm = t.token_symbol === "zkLTC";
-          const decimals = isLitvm ? 18 : 6;
-          const refundAmount = parseFloat(t.entry_fee);
-
-          if (refundAmount <= 0) continue;
-
-          const amountWei = ethers.parseUnits(
-            refundAmount.toFixed(decimals),
-            decimals,
-          );
-
-          for (const p of players.rows) {
-            try {
-              let txHash;
-              if (isLitvm) {
-                const fastProvider = await makeLitvmProviderFast();
-                const ws = verifierWallet.connect(fastProvider);
-                const tx = await ws.sendTransaction({
-                  to: wallet,
-                  value: amountWei,
-                  gasLimit: 21000,
-                });
-                await tx.wait();
-                txHash = tx.hash;
-              } else {
-                const ARC_USDC = "0x3600000000000000000000000000000000000000";
-                const ws = verifierWallet.connect(makeProvider());
-                const uc = new ethers.Contract(
-                  ARC_USDC,
-                  [
-                    "function transfer(address,uint256) external returns (bool)",
-                  ],
-                  ws,
-                );
-                const tx = await uc.transfer(p.wallet, amountWei);
-                await tx.wait();
-                txHash = tx.hash;
-              }
-
-              await pool.query(
-                `UPDATE tournament_players
-                 SET refunded=TRUE, refunded_at=NOW(), refund_tx=$1
-                 WHERE id=$2`,
-                [txHash, p.id],
-              );
-
+            if (players.rows.length === 0) {
               console.log(
-                `✅ Auto-refunded: ${refundAmount} ${t.token_symbol} → ${p.wallet} | TX: ${txHash}`,
+                `Tournament ${t.id} cancelled — no players to refund`,
               );
-            } catch (refundErr) {
-              console.error(
-                `❌ Auto-refund failed for ${p.wallet}: ${refundErr.message}`,
-              );
+              continue;
+            }
+
+            const isLitvm = t.token_symbol === "zkLTC";
+            const decimals = isLitvm ? 18 : 6;
+            const refundAmount = parseFloat(t.entry_fee);
+
+            if (refundAmount <= 0) {
+              console.log(`Tournament ${t.id} — no entry fee to refund`);
+              continue;
+            }
+
+            const amountWei = ethers.parseUnits(
+              refundAmount.toFixed(decimals),
+              decimals,
+            );
+
+            // Step 3: Queue ALL refunds first — even if tx fails they are recorded
+            for (const p of players.rows) {
+              await pool
+                .query(
+                  `INSERT INTO game_refunds
+          (game_id, chain_id, wallet, amount, token_symbol, status, notes)
+         VALUES ($1, $2, LOWER($3), $4, $5, 'queued', 'auto-expire refund')
+         ON CONFLICT (game_id, chain_id, wallet) DO UPDATE
+           SET status = CASE 
+             WHEN game_refunds.status = 'paid' THEN 'paid'
+             ELSE 'queued'
+           END`,
+                  [
+                    t.id,
+                    isLitvm ? 4441 : 5042002,
+                    p.wallet,
+                    refundAmount,
+                    t.token_symbol,
+                  ],
+                )
+                .catch((e) =>
+                  console.error(
+                    `Failed to queue refund for ${p.wallet}:`,
+                    e.message,
+                  ),
+                );
+            }
+
+            // Step 4: Attempt to send refunds — failures stay as 'queued' for retry
+            for (const p of players.rows) {
+              try {
+                let txHash;
+
+                if (isLitvm) {
+                  const fastProvider = await makeLitvmProviderFast();
+                  const ws = verifierWallet.connect(fastProvider);
+                  const feeData = await fastProvider.getFeeData();
+                  const tx = await ws.sendTransaction({
+                    to: p.wallet,
+                    value: amountWei,
+                    gasLimit: 21000,
+                    maxFeePerGas: feeData.maxFeePerGas,
+                    maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+                    chainId: 4441,
+                  });
+                  await tx.wait(1);
+                  txHash = tx.hash;
+                } else {
+                  const ARC_USDC = "0x3600000000000000000000000000000000000000";
+                  const ws = verifierWallet.connect(makeProvider());
+                  const uc = new ethers.Contract(
+                    ARC_USDC,
+                    [
+                      "function transfer(address,uint256) external returns (bool)",
+                    ],
+                    ws,
+                  );
+                  const tx = await uc.transfer(p.wallet, amountWei);
+                  await tx.wait();
+                  txHash = tx.hash;
+                }
+
+                // Mark refund paid in game_refunds
+                await pool.query(
+                  `UPDATE game_refunds SET status='paid', tx_hash=$1
+           WHERE game_id=$2 AND chain_id=$3 AND LOWER(wallet)=LOWER($4)`,
+                  [txHash, t.id, isLitvm ? 4441 : 5042002, p.wallet],
+                );
+
+                // Mark player refunded
+                await pool.query(
+                  `UPDATE tournament_players
+           SET refunded=TRUE, refunded_at=NOW(), refund_tx=$1
+           WHERE id=$2`,
+                  [txHash, p.id],
+                );
+
+                console.log(
+                  `✅ Auto-refunded: ${refundAmount} ${t.token_symbol} → ${p.wallet} | TX: ${txHash}`,
+                );
+              } catch (refundErr) {
+                // Refund stays as 'queued' — the queued refund processor picks it up
+                console.error(
+                  `❌ Auto-refund failed for ${p.wallet} in tournament ${t.id}: ${refundErr.message}`,
+                );
+                console.error(`   Queued for retry — funds are safe`);
+              }
             }
           }
+        } catch (e) {
+          console.error("Auto-expire error:", e.message);
         }
       } catch (e) {
         console.error("Auto-expire error:", e.message);
@@ -3027,10 +3089,25 @@ if (process.env.NODE_ENV === "production") {
               const fastProvider = await makeLitvmProviderFast();
               const ws = verifierWallet.connect(fastProvider);
 
+              const feeData = await fastProvider.getFeeData();
+              let gasLimit = 21000n;
+              try {
+                const est = await fastProvider.estimateGas({
+                  to: p.wallet,
+                  value: amountWei,
+                  from: verifierWallet.address,
+                });
+                gasLimit = (BigInt(est) * 150n) / 100n;
+              } catch (_) {
+                gasLimit = 100000n;
+              }
               const tx = await ws.sendTransaction({
-                to: refund.wallet,
+                to: p.wallet,
                 value: amountWei,
-                gasLimit: 21000,
+                gasLimit,
+                maxFeePerGas: feeData.maxFeePerGas,
+                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+                chainId: 4441,
               });
 
               await tx.wait();
@@ -3163,10 +3240,25 @@ app.post("/admin/manual-refund", async (req, res) => {
     if (isLitvm) {
       const fastProvider = await makeLitvmProviderFast();
       const ws = verifierWallet.connect(fastProvider);
+      const feeData = await fastProvider.getFeeData();
+      let gasLimit = 21000n;
+      try {
+        const est = await fastProvider.estimateGas({
+          to: wallet,
+          value: amountWei,
+          from: verifierWallet.address,
+        });
+        gasLimit = (BigInt(est) * 150n) / 100n;
+      } catch (_) {
+        gasLimit = 100000n; // safe fallback for LitVM
+      }
       const tx = await ws.sendTransaction({
         to: wallet,
         value: amountWei,
-        gasLimit: 21000,
+        gasLimit,
+        maxFeePerGas: feeData.maxFeePerGas,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+        chainId: 4441,
       });
       await tx.wait();
       txHash = tx.hash;
@@ -3557,7 +3649,7 @@ app.get("/tournaments", async (req, res) => {
           '[]'::json
         ) AS winners
       FROM tournaments t
-      WHERE t.status != 'cancelled'
+      WHERE (t.status != 'cancelled' OR t.created_at > NOW() - INTERVAL '7 days')
       ORDER BY
         CASE t.status WHEN 'active' THEN 0 WHEN 'open' THEN 1 ELSE 2 END,
         t.created_at DESC
@@ -3646,10 +3738,25 @@ app.post("/admin/refund-expired-tournament", async (req, res) => {
         if (isLitvm) {
           const fastProvider = await makeLitvmProviderFast();
           const ws = verifierWallet.connect(fastProvider);
+          const feeData = await fastProvider.getFeeData();
+          let gasLimit = 21000n;
+          try {
+            const est = await fastProvider.estimateGas({
+              to: wallet,
+              value: amountWei,
+              from: verifierWallet.address,
+            });
+            gasLimit = (BigInt(est) * 150n) / 100n;
+          } catch (_) {
+            gasLimit = 100000n;
+          }
           const tx = await ws.sendTransaction({
             to: wallet,
             value: amountWei,
-            gasLimit: 21000,
+            gasLimit,
+            maxFeePerGas: feeData.maxFeePerGas,
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+            chainId: 4441,
           });
           await tx.wait();
           txHash = tx.hash;
@@ -4647,10 +4754,25 @@ app.post("/tournaments/:id/claim", csrfProtection, async (req, res) => {
       if (isLitvm) {
         const fastProvider = await makeLitvmProviderFast();
         const ws = verifierWallet.connect(fastProvider);
+        const feeData = await fastProvider.getFeeData();
+        let gasLimit = 21000n;
+        try {
+          const est = await fastProvider.estimateGas({
+            to: wallet,
+            value: amountWei,
+            from: verifierWallet.address,
+          });
+          gasLimit = (BigInt(est) * 150n) / 100n;
+        } catch (_) {
+          gasLimit = 100000n;
+        }
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
-          gasLimit: 21000,
+          gasLimit,
+          maxFeePerGas: feeData.maxFeePerGas,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+          chainId: 4441,
         });
         await tx.wait();
         txHash = tx.hash;
@@ -4769,10 +4891,25 @@ app.post("/tournaments/:id/refund", csrfProtection, async (req, res) => {
       if (isLitvm) {
         const fastProvider = await makeLitvmProviderFast();
         const ws = verifierWallet.connect(fastProvider);
+        const feeData = await fastProvider.getFeeData();
+        let gasLimit = 21000n;
+        try {
+          const est = await fastProvider.estimateGas({
+            to: wallet,
+            value: amountWei,
+            from: verifierWallet.address,
+          });
+          gasLimit = (BigInt(est) * 150n) / 100n;
+        } catch (_) {
+          gasLimit = 100000n;
+        }
         const tx = await ws.sendTransaction({
           to: wallet,
           value: amountWei,
-          gasLimit: 21000,
+          gasLimit,
+          maxFeePerGas: feeData.maxFeePerGas,
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+          chainId: 4441,
         });
         await tx.wait();
         txHash = tx.hash;
