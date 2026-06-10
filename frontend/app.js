@@ -1493,9 +1493,19 @@ async function connectWallet() {
 
     const message = `Login to ${activeNet.name}`;
     const signature = await signer.signMessage(message);
+
+    // Fetch CSRF token before wallet auth
+    let csrfToken = "";
+    try {
+      const ct = await fetch(`${BACKEND}/csrf-token`, {
+        credentials: "include",
+      });
+      csrfToken = (await ct.json()).csrfToken || "";
+    } catch (_) {}
+
     const authRes = await fetch(`${BACKEND}/auth/wallet`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
       credentials: "include",
       body: JSON.stringify({
         wallet: userAddress,
