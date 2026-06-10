@@ -7201,7 +7201,6 @@ async function claimTournamentRefund(tournamentId, tokenSymbol) {
 async function joinTournament(id) {
   if (!contract || !userAddress) return toast("Connect wallet first", "error");
 
-  // ── GUARD 1: Prevent double-click / double-execution ──────────────────
   if (window._joiningTournament === id) {
     return toast("Already processing your registration...", "error");
   }
@@ -7213,123 +7212,187 @@ async function joinTournament(id) {
     joinBtn.textContent = "⏳ Processing...";
   }
 
+  // ── Auto-release lock after 60s max ──────────────────────────────────
+  const lockTimer = setTimeout(() => {
+    window._joiningTournament = null;
+    if (joinBtn) {
+      joinBtn.disabled = false;
+      joinBtn.textContent = `💰 Pay & Enter Tournament`;
+    }
+    toast("Request timed out. Please try again.", "error");
+  }, 60000);
+
   try {
-    // ── GUARD 2: Verify auth session is alive BEFORE touching wallet ──────
+    // ── Auth check ────────────────────────────────────────────────────
     const authCheck = await fetch(`${BACKEND}/auth/me`, {
       credentials: "include",
     });
     const authData = await authCheck.json();
     if (!authData.user) {
-      toast(
-        "⚠️ Your session expired. Please reconnect your wallet and try again.",
-        "error",
-      );
-      // Force re-auth
+      toast("⚠️ Session expired. Please reconnect wallet.", "error");
       provider = signer = contract = usdcContract = null;
       userAddress = null;
       renderAuthState();
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
       return;
     }
 
-    // ── GUARD 3: Check already registered (idempotent) ────────────────────
+    // ── Fetch tournament ──────────────────────────────────────────────
     const tourneyRes = await fetch(`${BACKEND}/tournaments/${id}`);
     const { tournament: t, players } = await tourneyRes.json();
 
-    const alreadyJoined = players.some(
-      (p) => p.wallet?.toLowerCase() === userAddress.toLowerCase(),
-    );
-    if (alreadyJoined) {
-      toast("You are already registered in this tournament!", "error");
+    if (
+      players.some((p) => p.wallet?.toLowerCase() === userAddress.toLowerCase())
+    ) {
+      toast("You are already registered!", "info");
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
       await openTournament(id);
       return;
     }
-
     if (t.status !== "open") {
       toast("Tournament is no longer open.", "error");
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
       await openTournament(id);
       return;
     }
-
     if (players.length >= t.max_players) {
       toast("Tournament is full.", "error");
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
       await openTournament(id);
       return;
     }
 
     const isZkLTC = t.token_symbol === "zkLTC";
+    const targetChainId = isZkLTC ? 4441 : 5042002;
+    const targetNet = NETWORKS[targetChainId];
     const decimals = isZkLTC ? 18 : 6;
     const entryFee = ethers.parseUnits(
       parseFloat(t.entry_fee).toFixed(decimals),
       decimals,
     );
 
-    const PLATFORM = TREASURY_ADDRESS;
-    if (!PLATFORM || !/^0x[a-fA-F0-9]{40}$/i.test(PLATFORM)) {
-      return toast("Treasury address not loaded. Try again.", "error");
+    // ── CRITICAL: Always switch to correct network FIRST ─────────────
+    const currentChainId = provider
+      ? Number((await provider.getNetwork()).chainId)
+      : null;
+    if (currentChainId !== targetChainId) {
+      toast(`Switching to ${targetNet.name}...`, "info");
+      if (joinBtn) joinBtn.textContent = "⏳ Switching network...";
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: targetNet.hexChainId }],
+        });
+      } catch (e) {
+        if (e.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{ chainId: targetNet.hexChainId, ...targetNet.addParams }],
+          });
+        } else {
+          throw new Error(
+            `Please switch to ${targetNet.name} manually and try again`,
+          );
+        }
+      }
+      // Wait for MetaMask to fully switch — critical for signer rebuild
+      await new Promise((r) => setTimeout(r, 1200));
+      // Rebuild everything on the new network
+      activeNet = targetNet;
+      CONTRACT_ADDRESS = activeNet.contractAddress;
+      USDC_ADDRESS = activeNet.tokenAddress;
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      usdcContract = activeNet.isNative
+        ? null
+        : new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+      updateNetBar();
+      toast(`✅ Switched to ${targetNet.name}`, "success");
     }
 
-    const tasksPassed = await checkTasksGate("join");
-    if (!tasksPassed) return;
+    // ── Verify we are now on the correct chain ────────────────────────
+    const verifyChain = Number((await provider.getNetwork()).chainId);
+    if (verifyChain !== targetChainId) {
+      throw new Error(
+        `Still on wrong network. Please manually switch to ${targetNet.name} and try again.`,
+      );
+    }
 
-    // ── PAYMENT — only happens after all checks pass ──────────────────────
+    const PLATFORM = TREASURY_ADDRESS;
+    if (!PLATFORM || !/^0x[a-fA-F0-9]{40}$/i.test(PLATFORM)) {
+      throw new Error(
+        "Treasury address not loaded. Please refresh and try again.",
+      );
+    }
+
+    const tasksPassedCreate = await checkTasksGate("join");
+    if (!tasksPassedCreate) {
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
+      return;
+    }
+
     let paymentTxHash = null;
 
     if (isZkLTC) {
       toast("Paying entry in zkLTC...", "info");
+      if (joinBtn) joinBtn.textContent = "⏳ Confirm in MetaMask...";
+      let gasLimit = 200000n;
+      try {
+        const est = await Promise.race([
+          provider.estimateGas({
+            to: PLATFORM,
+            value: entryFee,
+            from: userAddress,
+          }),
+          new Promise((_, r) => setTimeout(() => r(new Error("t")), 4000)),
+        ]);
+        gasLimit = (BigInt(est) * 150n) / 100n;
+      } catch (_) {
+        gasLimit = 300000n;
+      }
+
       const tx = await signer.sendTransaction({
         to: PLATFORM,
         value: entryFee,
-        gasLimit: 50000, // higher than 21000 — covers LitVM testnet overhead
+        gasLimit,
       });
+      if (joinBtn) joinBtn.textContent = "⏳ Confirming onchain...";
       toast("⛓️ Confirming zkLTC payment...", "info");
       const receipt = await tx.wait();
-      if (!receipt || receipt.status !== 1) {
+      if (!receipt || receipt.status !== 1)
         throw new Error("Payment transaction failed onchain");
-      }
       paymentTxHash = tx.hash;
-      // Save immediately so recovery works if registration fails
       localStorage.setItem(
-        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+        `tourney_paid_${id}_${userAddress.toLowerCase()}`,
         paymentTxHash,
       );
       toast("✅ zkLTC payment confirmed!", "success");
     } else {
       // Arc USDC path
       const arcUsdcAddress = NETWORKS[5042002].tokenAddress;
-      const currentChainId = provider
-        ? Number((await provider.getNetwork()).chainId)
-        : null;
-
-      if (currentChainId !== 5042002) {
-        toast("Switching to Arc network for USDC payment...", "info");
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: NETWORKS[5042002].hexChainId }],
-          });
-          await new Promise((r) => setTimeout(r, 500));
-          activeNet = NETWORKS[5042002];
-          CONTRACT_ADDRESS = activeNet.contractAddress;
-          USDC_ADDRESS = activeNet.tokenAddress;
-          provider = new ethers.BrowserProvider(window.ethereum);
-          signer = await provider.getSigner();
-          contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-          usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-          updateNetBar();
-        } catch (e) {
-          throw new Error("Please switch to Arc network to pay with USDC");
-        }
-      }
-
       const freshUsdc = new ethers.Contract(arcUsdcAddress, USDC_ABI, signer);
+
       const allowance = await freshUsdc.allowance(userAddress, PLATFORM);
       if (allowance < entryFee) {
-        toast("Step 1/2: Approving USDC transfer...", "info");
+        toast("Step 1/2: Approving USDC...", "info");
+        if (joinBtn) joinBtn.textContent = "⏳ Approve in MetaMask...";
         let approveGas = 100000n;
         try {
-          approveGas = await freshUsdc.approve.estimateGas(PLATFORM, entryFee);
-          approveGas = (approveGas * 150n) / 100n;
-        } catch (_) {}
+          const est = await Promise.race([
+            freshUsdc.approve.estimateGas(PLATFORM, entryFee),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 4000)),
+          ]);
+          approveGas = (BigInt(est) * 150n) / 100n;
+        } catch (_) {
+          approveGas = 150000n;
+        }
         const approveTx = await freshUsdc.approve(PLATFORM, entryFee, {
           gasLimit: approveGas,
         });
@@ -7339,6 +7402,7 @@ async function joinTournament(id) {
       }
 
       toast("Step 2/2: Transferring entry fee...", "info");
+      if (joinBtn) joinBtn.textContent = "⏳ Confirm in MetaMask...";
       const usdcW = new ethers.Contract(
         arcUsdcAddress,
         ["function transfer(address,uint256) external returns (bool)"],
@@ -7346,45 +7410,43 @@ async function joinTournament(id) {
       );
       let transferGas = 100000n;
       try {
-        transferGas = await usdcW.transfer.estimateGas(PLATFORM, entryFee);
-        transferGas = (transferGas * 150n) / 100n; // add 50% buffer
-      } catch (_) {}
+        const est = await Promise.race([
+          usdcW.transfer.estimateGas(PLATFORM, entryFee),
+          new Promise((_, r) => setTimeout(() => r(new Error("t")), 4000)),
+        ]);
+        transferGas = (BigInt(est) * 150n) / 100n;
+      } catch (_) {
+        transferGas = 150000n;
+      }
       const transferTx = await usdcW.transfer(PLATFORM, entryFee, {
         gasLimit: transferGas,
       });
+      if (joinBtn) joinBtn.textContent = "⏳ Confirming onchain...";
       toast("⛓️ Confirming payment...", "info");
       const transferReceipt = await transferTx.wait();
-      if (!transferReceipt || transferReceipt.status !== 1) {
+      if (!transferReceipt || transferReceipt.status !== 1)
         throw new Error("Payment transaction failed onchain");
-      }
       paymentTxHash = transferTx.hash;
       localStorage.setItem(
-        `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
+        `tourney_paid_${id}_${userAddress.toLowerCase()}`,
         paymentTxHash,
       );
       toast("✅ Entry fee sent!", "success");
     }
 
-    // ── BACKEND REGISTRATION — with payment tx proof ──────────────────────
-    // Re-verify auth one more time before registering (session could expire
-    // during the signing flow which can take 30-60 seconds)
+    // ── Re-verify auth before backend registration ────────────────────
     const authCheck2 = await fetch(`${BACKEND}/auth/me`, {
       credentials: "include",
     });
     const authData2 = await authCheck2.json();
     if (!authData2.user) {
-      // Payment went through but session expired mid-flow.
-      // Record the orphaned payment so admin can refund manually.
       console.error(
-        `ORPHANED PAYMENT: tournament=${id} wallet=${userAddress} ` +
-          `txHash=${paymentTxHash} amount=${t.entry_fee} ${t.token_symbol}`,
+        `ORPHANED PAYMENT: tournament=${id} wallet=${userAddress} txHash=${paymentTxHash}`,
       );
       toast(
-        `⚠️ Payment sent (TX: ${paymentTxHash?.slice(0, 12)}...) but session expired. ` +
-          `Please reconnect wallet — your registration will be recovered.`,
+        `⚠️ Payment sent (TX: ${paymentTxHash?.slice(0, 12)}...) but session expired. Reconnect wallet — your registration will be recovered.`,
         "error",
       );
-      // Attempt backend recovery with tx hash proof
       await fetch(`${BACKEND}/tournaments/${id}/recover-payment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7395,9 +7457,13 @@ async function joinTournament(id) {
           tokenSymbol: t.token_symbol,
         }),
       }).catch(() => {});
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
       return;
     }
 
+    // ── Backend registration ──────────────────────────────────────────
+    if (joinBtn) joinBtn.textContent = "⏳ Registering...";
     let csrfToken = "";
     try {
       const ct = await fetch(`${BACKEND}/csrf-token`, {
@@ -7408,55 +7474,45 @@ async function joinTournament(id) {
 
     const joinRes = await fetch(`${BACKEND}/tournaments/${id}/join`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "CSRF-Token": csrfToken,
-      },
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
       credentials: "include",
-      body: JSON.stringify({
-        wallet: userAddress,
-        txHash: paymentTxHash,
-      }),
+      body: JSON.stringify({ wallet: userAddress, txHash: paymentTxHash }),
     });
     const data = await joinRes.json();
-
     if (!joinRes.ok) {
-      // Payment went through but registration failed
       if (data.error?.includes("already")) {
         toast("You are already registered!", "info");
       } else {
         console.error(
-          `REGISTRATION FAILED AFTER PAYMENT: tournament=${id} ` +
-            `wallet=${userAddress} txHash=${paymentTxHash} error=${data.error}`,
+          `REGISTRATION FAILED AFTER PAYMENT: tournament=${id} wallet=${userAddress} txHash=${paymentTxHash} error=${data.error}`,
         );
         toast(
-          `⚠️ Payment confirmed (TX: ${paymentTxHash?.slice(0, 12)}...) but registration failed: ${data.error}. ` +
-            `Contact support with your TX hash.`,
+          `⚠️ Payment confirmed (TX: ${paymentTxHash?.slice(0, 12)}...) but registration failed: ${data.error}. Use "Already paid?" link to recover.`,
           "error",
         );
       }
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
       await openTournament(id);
       return;
     }
 
-    localStorage.removeItem(
-      `tourney_paid_${tournamentId}_${userAddress.toLowerCase()}`,
-    );
+    localStorage.removeItem(`tourney_paid_${id}_${userAddress.toLowerCase()}`);
+    clearTimeout(lockTimer);
+    window._joiningTournament = null;
     toast("🏆 Successfully entered tournament!", "success");
     await openTournament(id);
   } catch (e) {
-    // User rejected wallet prompt — no funds lost
+    clearTimeout(lockTimer);
+    window._joiningTournament = null;
     if (e.code === 4001 || e.message?.includes("user rejected")) {
       toast("Transaction cancelled.", "info");
     } else {
       toast("Failed: " + (e.reason || e.message), "error");
     }
-  } finally {
-    // Always release the lock
-    window._joiningTournament = null;
     if (joinBtn) {
       joinBtn.disabled = false;
-      joinBtn.textContent = `💰 Pay ${""} & Enter Tournament`;
+      joinBtn.textContent = `💰 Pay & Enter Tournament`;
     }
   }
 }
