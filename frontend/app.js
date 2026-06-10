@@ -961,8 +961,8 @@ function startAutoRefresh() {
     try {
       if (typeof loadGames === "function") await loadGames();
       if (typeof loadGlobalStats === "function") await loadGlobalStats();
-      if (userAddress && typeof loadUnclaimedPrizes === "function")
-        await loadUnclaimedPrizes();
+      if (userAddress && typeof checkUnclaimedPrizes === "function")
+        await checkUnclaimedPrizes();
 
       const historyScreen = document.getElementById("screenHistory");
       if (
@@ -4314,8 +4314,7 @@ function pickAnswer(idx) {
   const q = questions[currentQ];
   const selected = q.answers[idx];
   const isCorrect = selected === q.correct;
-  const speed = isCorrect ? Math.floor((timeLeft / 15) * 50) : 0;
-  const pts = isCorrect ? 100 + speed : 0;
+  const pts = isCorrect ? 100 : 0;
   score += pts;
 
   answers.push({
@@ -4348,7 +4347,7 @@ function pickAnswer(idx) {
   if (isCorrect) {
     fb.style.cssText =
       "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
-    fb.textContent = `✓ Correct! +${pts} pts${speed > 0 ? " (⚡ speed bonus!)" : ""}`;
+    fb.textContent = `✓ Correct! +${pts} pts`;
   } else {
     fb.style.cssText =
       "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
@@ -4682,15 +4681,23 @@ async function refreshResults() {
   const gameSymbol = gameNet.symbol;
   const dp = gameDecimals === 18 ? 4 : 2;
   if (!currentGameId) return;
+
   try {
     const g = await getGame(currentGameId);
     const [, , , , , , , , prizePool, playerCount, , , topPlayers, , status] =
       g;
     const s = Number(status),
       n = Number(playerCount);
-    if (prevStatus !== undefined && prevStatus === 0 && s === 1) {
+
+    if (
+      refreshResults._prevStatus !== undefined &&
+      refreshResults._prevStatus === 0 &&
+      s === 1
+    ) {
       toast("🏁 Game has ended! Showing final results.", "success");
     }
+    refreshResults._prevStatus = s;
+
     const myPos = userAddress
       ? Array.from(topPlayers).findIndex(
           (p) => p?.toLowerCase() === userAddress?.toLowerCase(),
@@ -4712,20 +4719,23 @@ async function refreshResults() {
         : [false, false, false];
       const claimed_ = claimStatusRes[2];
       document.getElementById("winnerBanner").innerHTML =
-        `<div class="winner-banner"><h3>${
-          medals[myPos]
-        } — YOU WON!</h3><div class="winner-prize">${prize} ${gameSymbol}</div>${
+        `<div class="winner-banner"><h3>${medals[myPos]} — YOU WON!</h3>
+        <div class="winner-prize">${prize} ${gameSymbol}</div>${
           !claimed_
             ? `<button class="btn btn-gold" onclick="doClaimPrize()" style="margin-top:10px;width:auto;padding:12px 32px">💰 Claim Prize</button>`
             : `<p style="color:var(--green);margin-top:8px;font-weight:600">✅ Prize Claimed!</p>`
         }</div>`;
     } else if (s === 1) {
       document.getElementById("winnerBanner").innerHTML =
-        `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px"><p style="color:var(--muted)">Game ended. See leaderboard below.</p></div>`;
+        `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px">
+        <p style="color:var(--muted)">Game ended. See leaderboard below.</p></div>`;
     } else if (s === 0) {
       document.getElementById("winnerBanner").innerHTML =
-        `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px"><p style="color:var(--accent)">⏳ Waiting for all players to finish...</p><p style="color:var(--muted);font-size:.8rem;margin-top:6px">Auto-refreshing every 12s</p></div>`;
+        `<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;margin-bottom:16px">
+        <p style="color:var(--accent)">⏳ Waiting for all players to finish...</p>
+        <p style="color:var(--muted);font-size:.8rem;margin-top:6px">Auto-refreshing every 12s</p></div>`;
     }
+
     const [addrs, scoreList, finished, claimedList] =
       await readContract.getLeaderboard(currentGameId);
     if (!addrs.length) return;
@@ -4753,24 +4763,22 @@ async function refreshResults() {
             ? "lb-winner"
             : ""
         }">
-      <span class="lb-rank">${
-        i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)
-      }</span>
-      <span class="lb-addr">${fmt(r.a)}${
-        r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
-      }</span>
-      <span class="lb-score">${r.sc > 0 ? r.sc + " pts" : "—"}</span>
-      ${
-        i < 3 && s === 1 && prizes[i] > 0
-          ? `<span style="color:var(--gold);font-size:.73rem">${prizes[
-              i
-            ].toFixed(dp)} ${gameSymbol}</span>`
-          : ""
-      }
-      <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
-        r.fin ? "Done" : "Playing"
-      }</span>
-    </div>`,
+        <span class="lb-rank">${
+          i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "#" + (i + 1)
+        }</span>
+        <span class="lb-addr">${fmt(r.a)}${
+          r.a.toLowerCase() === userAddress?.toLowerCase() ? " (you)" : ""
+        }</span>
+        <span class="lb-score">${r.sc > 0 ? r.sc + " pts" : "—"}</span>
+        ${
+          i < 3 && s === 1 && prizes[i] > 0
+            ? `<span style="color:var(--gold);font-size:.73rem">${prizes[i].toFixed(dp)} ${gameSymbol}</span>`
+            : ""
+        }
+        <span class="lb-tag ${r.fin ? "lb-done" : "lb-wait"}">${
+          r.fin ? "Done" : "Playing"
+        }</span>
+      </div>`,
       )
       .join("");
   } catch (e) {
@@ -7174,9 +7182,17 @@ async function claimTournamentRefund(tournamentId, tokenSymbol) {
     btn.textContent = "⏳ Processing refund...";
   }
   try {
+    let csrfToken = "";
+    try {
+      const ct = await fetch(`${BACKEND}/csrf-token`, {
+        credentials: "include",
+      });
+      csrfToken = (await ct.json()).csrfToken || "";
+    } catch (_) {}
+
     const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/refund`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
       credentials: "include",
       body: JSON.stringify({ wallet: userAddress }),
     });
@@ -7897,9 +7913,17 @@ async function claimTournamentPrize(tournamentId, tokenSymbol) {
     btn.textContent = "⏳ Sending prize...";
   }
   try {
+    let csrfToken = "";
+    try {
+      const ct = await fetch(`${BACKEND}/csrf-token`, {
+        credentials: "include",
+      });
+      csrfToken = (await ct.json()).csrfToken || "";
+    } catch (_) {}
+
     const res = await fetch(`${BACKEND}/tournaments/${tournamentId}/claim`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "CSRF-Token": csrfToken },
       credentials: "include",
       body: JSON.stringify({ wallet: userAddress }),
     });

@@ -7,16 +7,6 @@ const cors = require("cors");
 const { Pool } = require("pg");
 const { ethers } = require("ethers");
 const rateLimit = require("express-rate-limit");
-const walletCooldowns = new Map();
-setInterval(() => {
-  const cutoff = Date.now() - 3600000;
-
-  for (const [k, v] of walletCooldowns.entries()) {
-    if (v < cutoff) {
-      walletCooldowns.delete(k);
-    }
-  }
-}, 3600000);
 const sanitizeHtml = require("sanitize-html");
 const csrf = require("csurf");
 const cookieParser = require("cookie-parser");
@@ -647,6 +637,13 @@ async function initDB() {
       )
       .catch(() => {});
 
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS submission_cooldowns (
+          wallet      TEXT PRIMARY KEY,
+          last_submit TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+
     // =========================================================================
     // GAME QUESTIONS
     // =========================================================================
@@ -1123,7 +1120,7 @@ app.get("/auth/me", (req, res) => {
 // ── Wallet login / register ───────────────────────────────────────────────────
 // Called after MetaMask connect. Signs in the user by wallet.
 // If a Google session already exists, links the wallet to that account.
-app.post("/auth/wallet", async (req, res) => {
+app.post("/auth/wallet", csrfProtection, async (req, res) => {
   const { wallet, signature } = req.body;
 
   if (!wallet || !signature)
@@ -2203,10 +2200,8 @@ app.post("/game/start", async (req, res) => {
         return res.json({ ok: true, questions: [] });
       }
 
-      // ... server-side OpenTDB fetch (unchanged) ...
-      // At the end, after inserting all questions:
       await dbClient.query("COMMIT");
-      return res.json({ ok: true, questions: clientQuestions });
+      return res.json({ ok: true, questions: [] });
     } catch (e) {
       await dbClient.query("ROLLBACK");
       throw e;
@@ -2251,22 +2246,23 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
 
   const now = Date.now();
 
-  const last = walletCooldowns.get(wallet) || 0;
-
-  if (now - last < 10000) {
-    return res.status(429).json({
-      error: "Slow down",
-    });
+  const cooldownRow = await pool.query(
+    `SELECT last_submit FROM submission_cooldowns WHERE wallet=LOWER($1)`,
+    [wallet],
+  );
+  if (cooldownRow.rows.length > 0) {
+    const elapsed =
+      Date.now() - new Date(cooldownRow.rows[0].last_submit).getTime();
+    if (elapsed < 10000) {
+      return res.status(429).json({ error: "Slow down" });
+    }
   }
-
-  const sessionStartTime = walletCooldowns.get(wallet + "_start") || now;
-  const duration = now - sessionStartTime;
-  if (duration > 0 && duration < 5000) {
-    return res.status(400).json({ error: "Too fast" });
-  }
-  walletCooldowns.set(wallet + "_start", now);
-
-  walletCooldowns.set(wallet, now);
+  await pool.query(
+    `INSERT INTO submission_cooldowns (wallet, last_submit)
+   VALUES (LOWER($1), NOW())
+   ON CONFLICT (wallet) DO UPDATE SET last_submit=NOW()`,
+    [wallet],
+  );
 
   const effectiveWallet = (req.user.wallet || wallet || "").toLowerCase();
   if (!effectiveWallet || !/^0x[a-fA-F0-9]{40}$/.test(effectiveWallet))
@@ -2635,18 +2631,12 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
         }
 
         if (userAnswer.selected === stored.correct_answer) {
-          const tl = Math.max(
-            0,
-            Math.min(15, Number(userAnswer.timeLeft || 0)),
-          );
-
-          // 100 base + max 50 speed bonus
-          score += 100 + Math.floor((tl / 15) * 50);
+          score += 100;
         }
       }
 
       // Prevent impossible scores
-      score = Math.min(score, 1500);
+      score = Math.min(score, storedQs.rows.length * 100);
 
       // Ensure at least one answer submitted
       if (answers.filter((a) => a.selected).length === 0) {
@@ -4150,7 +4140,7 @@ app.post("/tournaments/:id/recover-payment", async (req, res) => {
 });
 
 // 11. JOIN paid tournament
-app.post("/tournaments/:id/join", async (req, res) => {
+app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet, txHash } = req.body;
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
@@ -4259,82 +4249,86 @@ app.post("/tournaments/:id/join", async (req, res) => {
 });
 
 // 12. SUBMIT round score
-app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const { wallet, answers, timeTaken } = req.body;
-  if (!wallet || !Array.isArray(answers))
-    return res.status(400).json({ error: "Invalid input" });
-  try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
-    const tournament = t.rows[0];
-    if (tournament.status !== "active")
-      return res.status(400).json({ error: "Not active" });
+app.post(
+  "/tournaments/:id/submit",
+  scoreLimiter,
+  csrfProtection,
+  async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Not logged in" });
+    const { wallet, answers, timeTaken } = req.body;
+    if (!wallet || !Array.isArray(answers))
+      return res.status(400).json({ error: "Invalid input" });
+    try {
+      const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+        req.params.id,
+      ]);
+      if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+      const tournament = t.rows[0];
+      if (tournament.status !== "active")
+        return res.status(400).json({ error: "Not active" });
 
-    const roundRes = await pool.query(
-      "SELECT * FROM tournament_rounds WHERE tournament_id=$1 AND round_number=$2",
-      [req.params.id, tournament.current_round],
-    );
-    if (!roundRes.rows.length)
-      return res.status(400).json({ error: "No active round" });
-    const round = roundRes.rows[0];
-
-    const playerRes = await pool.query(
-      "SELECT * FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-      [req.params.id, wallet],
-    );
-    if (!playerRes.rows.length)
-      return res.status(403).json({ error: "Not in tournament" });
-    if (playerRes.rows[0].eliminated)
-      return res.status(400).json({ error: "Eliminated" });
-
-    const existing = await pool.query(
-      "SELECT id FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)",
-      [req.params.id, round.id, wallet],
-    );
-    if (existing.rows.length)
-      return res.status(400).json({ error: "Already submitted this round" });
-
-    const score = Math.min(
-      answers.filter((a) => a.correct === true).length * 100,
-      1000,
-    );
-
-    // Clamp time to a sane range (0–600s) to prevent manipulation
-    const cleanTime = Math.max(0, Math.min(600, parseInt(timeTaken) || 0));
-    await pool.query(
-      "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken) VALUES ($1,$2,LOWER($3),$4,$5)",
-      [req.params.id, round.id, wallet, score, cleanTime],
-    );
-    await pool.query(
-      "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
-      [score, req.params.id, wallet],
-    );
-
-    // Check if all active players submitted
-    const activePlayers = await pool.query(
-      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated",
-      [req.params.id],
-    );
-    const submissions = await pool.query(
-      "SELECT COUNT(*) FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2",
-      [req.params.id, round.id],
-    );
-
-    if (
-      parseInt(submissions.rows[0].count) >=
-      parseInt(activePlayers.rows[0].count)
-    ) {
-      await pool.query(
-        "UPDATE tournament_rounds SET status='finished', finished_at=NOW() WHERE id=$1",
-        [round.id],
+      const roundRes = await pool.query(
+        "SELECT * FROM tournament_rounds WHERE tournament_id=$1 AND round_number=$2",
+        [req.params.id, tournament.current_round],
       );
-      // Rank: highest score wins; on a tie, fastest cumulative time wins;
-      // join order is the final fallback. Rewards skill over registration timing.
-      const ranked = await pool.query(
-        `SELECT tp.wallet, tp.total_score,
+      if (!roundRes.rows.length)
+        return res.status(400).json({ error: "No active round" });
+      const round = roundRes.rows[0];
+
+      const playerRes = await pool.query(
+        "SELECT * FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+        [req.params.id, wallet],
+      );
+      if (!playerRes.rows.length)
+        return res.status(403).json({ error: "Not in tournament" });
+      if (playerRes.rows[0].eliminated)
+        return res.status(400).json({ error: "Eliminated" });
+
+      const existing = await pool.query(
+        "SELECT id FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)",
+        [req.params.id, round.id, wallet],
+      );
+      if (existing.rows.length)
+        return res.status(400).json({ error: "Already submitted this round" });
+
+      const score = Math.min(
+        answers.filter((a) => a.correct === true).length * 100,
+        1000,
+      );
+
+      // Clamp time to a sane range (0–600s) to prevent manipulation
+      const cleanTime = Math.max(0, Math.min(600, parseInt(timeTaken) || 0));
+      await pool.query(
+        "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken) VALUES ($1,$2,LOWER($3),$4,$5)",
+        [req.params.id, round.id, wallet, score, cleanTime],
+      );
+      await pool.query(
+        "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
+        [score, req.params.id, wallet],
+      );
+
+      // Check if all active players submitted
+      const activePlayers = await pool.query(
+        "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated",
+        [req.params.id],
+      );
+      const submissions = await pool.query(
+        "SELECT COUNT(*) FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2",
+        [req.params.id, round.id],
+      );
+
+      if (
+        parseInt(submissions.rows[0].count) >=
+        parseInt(activePlayers.rows[0].count)
+      ) {
+        await pool.query(
+          "UPDATE tournament_rounds SET status='finished', finished_at=NOW() WHERE id=$1",
+          [round.id],
+        );
+        // Rank: highest score wins; on a tie, fastest cumulative time wins;
+        // join order is the final fallback. Rewards skill over registration timing.
+        const ranked = await pool.query(
+          `SELECT tp.wallet, tp.total_score,
                 COALESCE(SUM(ts.time_taken), 0) AS total_time
          FROM tournament_players tp
          LEFT JOIN tournament_scores ts
@@ -4343,79 +4337,80 @@ app.post("/tournaments/:id/submit", scoreLimiter, async (req, res) => {
          WHERE tp.tournament_id=$1 AND NOT tp.eliminated
          GROUP BY tp.wallet, tp.total_score, tp.joined_at
          ORDER BY tp.total_score DESC, total_time ASC, tp.joined_at ASC`,
-        [req.params.id],
-      );
-      const activeCount = ranked.rows.length;
-
-      // ── FINAL: 2 or fewer remain — this round decides 1st & 2nd ──────────
-      if (activeCount <= 2) {
-        const winner = ranked.rows[0]?.wallet;
-        const runnerUp = ranked.rows[1]?.wallet;
-        await pool.query(
-          "UPDATE tournaments SET status='finished', finished_at=NOW(), winner=$1 WHERE id=$2",
-          [winner, req.params.id],
+          [req.params.id],
         );
-        if (winner)
+        const activeCount = ranked.rows.length;
+
+        // ── FINAL: 2 or fewer remain — this round decides 1st & 2nd ──────────
+        if (activeCount <= 2) {
+          const winner = ranked.rows[0]?.wallet;
+          const runnerUp = ranked.rows[1]?.wallet;
           await pool.query(
-            "UPDATE tournament_players SET prize_position=0 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-            [req.params.id, winner],
+            "UPDATE tournaments SET status='finished', finished_at=NOW(), winner=$1 WHERE id=$2",
+            [winner, req.params.id],
           );
-        if (runnerUp)
+          if (winner)
+            await pool.query(
+              "UPDATE tournament_players SET prize_position=0 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+              [req.params.id, winner],
+            );
+          if (runnerUp)
+            await pool.query(
+              "UPDATE tournament_players SET prize_position=1 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+              [req.params.id, runnerUp],
+            );
+          // 3rd place was assigned when the field dropped from 3→2 (below)
+          return res.json({
+            ok: true,
+            score,
+            roundFinished: true,
+            tournamentFinished: true,
+            winner,
+          });
+        }
+
+        // ── Otherwise eliminate exactly ONE — the lowest active scorer ───────
+        const loser = ranked.rows[ranked.rows.length - 1].wallet;
+        await pool.query(
+          "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+          [req.params.id, loser],
+        );
+
+        // If exactly 3 were active, the eliminated player takes 3rd place
+        if (activeCount === 3) {
           await pool.query(
-            "UPDATE tournament_players SET prize_position=1 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-            [req.params.id, runnerUp],
+            "UPDATE tournament_players SET prize_position=2 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+            [req.params.id, loser],
           );
-        // 3rd place was assigned when the field dropped from 3→2 (below)
+        }
+
+        const nextRound = tournament.current_round + 1;
+        await pool.query(
+          "UPDATE tournaments SET current_round=$1 WHERE id=$2",
+          [nextRound, req.params.id],
+        );
+        await pool.query(
+          `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
+         VALUES ($1,$2,'active',NOW())
+         ON CONFLICT (tournament_id,round_number) DO NOTHING`,
+          [req.params.id, nextRound],
+        );
+
         return res.json({
           ok: true,
           score,
           roundFinished: true,
-          tournamentFinished: true,
-          winner,
+          tournamentFinished: false,
+          nextRound,
+          eliminated: [loser],
         });
       }
-
-      // ── Otherwise eliminate exactly ONE — the lowest active scorer ───────
-      const loser = ranked.rows[ranked.rows.length - 1].wallet;
-      await pool.query(
-        "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-        [req.params.id, loser],
-      );
-
-      // If exactly 3 were active, the eliminated player takes 3rd place
-      if (activeCount === 3) {
-        await pool.query(
-          "UPDATE tournament_players SET prize_position=2 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-          [req.params.id, loser],
-        );
-      }
-
-      const nextRound = tournament.current_round + 1;
-      await pool.query("UPDATE tournaments SET current_round=$1 WHERE id=$2", [
-        nextRound,
-        req.params.id,
-      ]);
-      await pool.query(
-        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
-         VALUES ($1,$2,'active',NOW())
-         ON CONFLICT (tournament_id,round_number) DO NOTHING`,
-        [req.params.id, nextRound],
-      );
-
-      return res.json({
-        ok: true,
-        score,
-        roundFinished: true,
-        tournamentFinished: false,
-        nextRound,
-        eliminated: [loser],
-      });
+      res.json({ ok: true, score, roundFinished: false });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
-    res.json({ ok: true, score, roundFinished: false });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  },
+);
 
 app.post("/games/sync", async (req, res) => {
   try {
@@ -4570,7 +4565,7 @@ app.get("/games/display/:chainId/:gameId", async (req, res) => {
 });
 
 // 13. CLAIM prize
-app.post("/tournaments/:id/claim", async (req, res) => {
+app.post("/tournaments/:id/claim", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
@@ -4710,7 +4705,7 @@ app.post("/tournaments/:id/claim", async (req, res) => {
 });
 
 // ── REFUND for registered-but-never-played tournament players ─────────────
-app.post("/tournaments/:id/refund", async (req, res) => {
+app.post("/tournaments/:id/refund", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet } = req.body;
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
