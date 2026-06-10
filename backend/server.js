@@ -3008,10 +3008,21 @@ if (process.env.NODE_ENV === "production") {
                   const fastProvider = await makeLitvmProviderFast();
                   const ws = verifierWallet.connect(fastProvider);
                   const feeData = await fastProvider.getFeeData();
+                  let gasLimit = 21000n;
+                  try {
+                    const est = await fastProvider.estimateGas({
+                      to: p.wallet,
+                      value: amountWei,
+                      from: verifierWallet.address,
+                    });
+                    gasLimit = (BigInt(est) * 150n) / 100n;
+                  } catch (_) {
+                    gasLimit = 100000n;
+                  }
                   const tx = await ws.sendTransaction({
                     to: p.wallet,
                     value: amountWei,
-                    gasLimit: 21000,
+                    gasLimit,
                     maxFeePerGas: feeData.maxFeePerGas,
                     maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
                     chainId: 4441,
@@ -3519,10 +3530,21 @@ app.post("/games/:gameId/refund", async (req, res) => {
             const ws = verifierWallet.connect(fastProvider);
             const feeData = await fastProvider.getFeeData();
             console.log("REFUND FEE DATA:", feeData);
+            let gasLimit = 21000n;
+            try {
+              const est = await fastProvider.estimateGas({
+                to: wallet,
+                value: amountWei,
+                from: verifierWallet.address,
+              });
+              gasLimit = (BigInt(est) * 150n) / 100n;
+            } catch (_) {
+              gasLimit = 100000n;
+            }
             const tx = await ws.sendTransaction({
               to: wallet,
               value: amountWei,
-              gasLimit: 21000,
+              gasLimit,
               maxFeePerGas: feeData.maxFeePerGas,
               maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
               chainId: 4441,
