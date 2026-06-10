@@ -8264,39 +8264,31 @@ function showCreateTournamentModal() {
         </div>
       </div>
 
-      <!-- Twitter Share Gate -->
+      <!-- Twitter Share (optional, no longer gates the form) -->
       <div style="background:rgba(29,161,242,.05);border:1px solid rgba(29,161,242,.2);
         border-radius:12px;padding:14px;margin-bottom:18px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
           <span style="font-size:1.3rem">𝕏</span>
           <div>
             <div style="font-size:.83rem;font-weight:700;color:#1da1f2">
-              Required: Share on X to unlock
+              Share on X (optional)
             </div>
             <div style="font-size:.72rem;color:var(--muted)">
-              Post about your tournament to activate creation
+              Help spread the word about your tournament
             </div>
           </div>
         </div>
         <a href="https://twitter.com/intent/tweet?text=${encodeURIComponent("🏆 I just created a tournament on @TriviaFi! Multi-round trivia · Win USDC & zkLTC · Join now: https://triviafi.vercel.app #TriviaFi #Web3Gaming")}"
           target="_blank"
-          onclick="setTimeout(()=>{const r=document.getElementById('tweetConfirmRow');if(r)r.style.display='flex'},800)"
           style="display:flex;align-items:center;justify-content:center;gap:8px;
           background:#1da1f2;color:#fff;padding:10px 20px;border-radius:20px;
-          text-decoration:none;font-size:.82rem;font-weight:700;margin-bottom:10px">
+          text-decoration:none;font-size:.82rem;font-weight:700">
           𝕏 Share on Twitter/X
         </a>
-        <div id="tweetConfirmRow" style="display:none;align-items:center;gap:8px">
-          <input type="checkbox" id="tweetDoneCheck"
-            style="width:16px;height:16px;cursor:pointer;accent-color:var(--accent)">
-          <label for="tweetDoneCheck" style="font-size:.78rem;color:var(--muted);cursor:pointer">
-            ✓ I've shared the tweet — unlock tournament creation
-          </label>
-        </div>
       </div>
 
-      <!-- Form (locked until tweet done) -->
-      <div id="createTourneyForm" style="opacity:.35;pointer-events:none;transition:opacity .3s">
+      <!-- Form — always unlocked -->
+      <div id="createTourneyForm">
 
         <div class="ig" style="margin-bottom:12px">
           <label class="il" style="font-size:.73rem;color:var(--muted);text-transform:uppercase;
@@ -8373,33 +8365,14 @@ function showCreateTournamentModal() {
             Cancel
           </button>
         </div>
-      </div>
 
+      </div>
     </div>`;
 
   document.body.appendChild(modal);
 
-  // Unlock form when tweet checkbox checked
-  const tweetCheck = document.getElementById("tweetDoneCheck");
-  const form = document.getElementById("createTourneyForm");
-  if (tweetCheck && form) {
-    tweetCheck.addEventListener("change", function () {
-      form.style.opacity = this.checked ? "1" : "0.35";
-      form.style.pointerEvents = this.checked ? "auto" : "none";
-      form.style.filter = this.checked ? "none" : "blur(0.5px)";
-    });
-    // Also wire the launch button now since it exists in DOM
-    const launchBtn2 = document.getElementById("btnLaunchTourney");
-    if (launchBtn2) {
-      launchBtn2.onclick = submitCreateTournament;
-    }
-  }
-
-  // Wire launch button
-  const launchBtn = document.getElementById("btnLaunchTourney");
-  if (launchBtn) {
-    launchBtn.addEventListener("click", submitCreateTournament);
-  }
+  // Wire launch button directly after appending to DOM
+  document.getElementById("btnLaunchTourney").onclick = submitCreateTournament;
 
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.remove();
