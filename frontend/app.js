@@ -5560,10 +5560,6 @@ function renderTournaments() {
       const timer = fmtTournamentTime(t);
 
       const winnersArr = Array.isArray(t.winners) ? t.winners : [];
-      const hasWinners =
-        isFinished &&
-        winnersArr.length > 0 &&
-        winnersArr.some((w) => w && w.prize_position >= 0);
 
       // ── Type-specific styling ─────────────────────────────────────────
       const typeConfig = isWL
@@ -5597,14 +5593,23 @@ function renderTournaments() {
           };
 
       // ── Status pill ───────────────────────────────────────────────────
-      const statusPill = isLive
-        ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.4);border-radius:20px;padding:3px 10px">
+
+      // Detect de-facto finished: all players present AND winners exist OR all rounds done
+      const hasWinners =
+        winnersArr.length > 0 &&
+        winnersArr.some((w) => w && w.prize_position >= 0);
+      const allPlayersScored =
+        parseInt(t.player_count) >= t.max_players && hasWinners;
+      const effectivelyFinished = isFinished || allPlayersScored;
+
+      const statusPill = effectivelyFinished
+        ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--green)">✅ FINISHED</span>
+        </div>`
+        : isLive
+          ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.4);border-radius:20px;padding:3px 10px">
           <span style="width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block;animation:pulse 1s ease-in-out infinite"></span>
           <span style="font-size:.65rem;font-weight:800;color:var(--red)">LIVE</span>
-        </div>`
-        : isFinished
-          ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.25);border-radius:20px;padding:3px 10px">
-          <span style="font-size:.65rem;font-weight:800;color:var(--green)">✅ FINISHED</span>
         </div>`
           : isCancelled
             ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,157,58,.1);border:1px solid rgba(255,157,58,.3);border-radius:20px;padding:3px 10px">
@@ -5694,7 +5699,7 @@ function renderTournaments() {
         transition:all .2s;
         position:relative;
         overflow:hidden;
-        ${isLive ? "box-shadow:0 0 24px rgba(239,71,111,.2);" : ""}
+        ${effectivelyFinished ? "box-shadow:0 0 18px rgba(6,214,160,.1);" : isLive ? "box-shadow:0 0 24px rgba(239,71,111,.2);" : ""}
         ${isCancelled ? "opacity:.7;" : ""}
       "
       onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 32px rgba(0,0,0,.3)'"
