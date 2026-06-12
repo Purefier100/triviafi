@@ -5,7 +5,7 @@ TriviaFi is a fully onchain trivia game where players compete across **Arc Testn
 
 🌐 **Live:** https://triviafi.vercel.app  
 🐦 **Twitter:** [@Purefier1](https://x.com/Purefier1)  
-💬 **Telegram:** https://t.me/purefier100
+💬 **Telegram:** https://t.me/triviafi
 
 ---
 
