@@ -97,6 +97,10 @@ nav{
 .hero{
   position:relative;z-index:10;
   padding:28px 32px 20px 56px;
+  min-height:300px;
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-start;
 }
 .hero-title{
   font-family:'Bebas Neue',sans-serif;
@@ -546,6 +550,39 @@ window.addEventListener('scroll',()=>{
   secs.forEach((s,i)=>{if(y>=s)active=i;});
   dots.forEach((d,i)=>d.classList.toggle('active',i===active));
 });
+
+// Fetch live stats from backend
+async function loadLandingStats() {
+  try {
+    const [statsRes, tourneyRes] = await Promise.all([
+      fetch('https://name-triviafi-backend.onrender.com/stats/global'),
+      fetch('https://name-triviafi-backend.onrender.com/tournaments/stats')
+    ]);
+    const stats = await statsRes.json();
+    const tourney = await tourneyRes.json();
+
+    // Games created
+    const gTotal = document.getElementById('gTotal');
+    if(gTotal) gTotal.textContent = stats.totalGamesPlayed || '—';
+
+    // Active rooms — use games played as fallback
+    const gActive = document.getElementById('gActive');
+    if(gActive) gActive.textContent = tourney.live_count || '0';
+
+    // Total volume
+    const gPool = document.getElementById('gPool');
+    if(gPool) gPool.innerHTML = `
+      <span style="color:#ff6b00;font-size:14px;display:block">${parseFloat(stats.arcVolume||0).toFixed(2)} USDC</span>
+      <span style="color:#ff6b00;font-size:14px;display:block">${parseFloat(stats.litvmVolume||0).toFixed(4)} zkLTC</span>
+    `;
+  } catch(e) {
+    console.warn('Stats load failed:', e.message);
+  }
+}
+
+// Load on page open then refresh every 24 hours
+loadLandingStats();
+setInterval(loadLandingStats, 24 * 60 * 60 * 1000);
 </script>
 
 </body>
