@@ -367,7 +367,7 @@ footer{
 <nav>
   <div class="nav-logo">TriviaFi</div>
   <div class="nav-links">
-    <span onclick="document.getElementById('s-modes').scrollIntoView({behavior:'smooth'})">Game Modes</span>
+    <span onclick="if(typeof showScreen==='function'){showScreen('screenLobby');if(typeof loadGames==='function')loadGames();}">Game Modes</span>
     <span onclick="document.getElementById('s-networks').scrollIntoView({behavior:'smooth'})">Networks</span>
     <span onclick="document.getElementById('s-prizes').scrollIntoView({behavior:'smooth'})">Prizes</span>
     <span onclick="window.open('https://t.me/triviafi','_blank')">Community</span>
@@ -385,8 +385,8 @@ footer{
     Top 3 split the prize pool automatically.
   </div>
   <div class="hero-actions">
-    <a href="#screenLobby" class="btn-play" onclick="event.preventDefault();document.getElementById('screenLobby')?.scrollIntoView()">PLAY NOW ↗</a>
-    <button class="btn-ghost" onclick="document.getElementById('s-modes').scrollIntoView({behavior:'smooth'})">VIEW TOURNAMENTS</button>
+    <a href="#" class="btn-play" onclick="event.preventDefault();if(typeof showScreen==='function'){showScreen('screenLobby');if(typeof loadGames==='function')loadGames();}">PLAY NOW ↗</a>
+    <button class="btn-ghost" onclick="if(typeof showScreen==='function'){showScreen('screenTournaments');if(typeof loadTournaments==='function')loadTournaments();}">VIEW TOURNAMENTS</button>
   </div>
 </section>
 
