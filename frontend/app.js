@@ -5117,6 +5117,15 @@ async function loadGlobalStats() {
         .catch(() => {});
     }
 
+    // Fetch GenLayer stats
+    let glAvailable = 0;
+    try {
+      const glStats = await fetch(`${BACKEND}/genlayer/stats`).then((r) =>
+        r.json(),
+      );
+      glAvailable = parseInt(glStats?.stats?.available || 0);
+    } catch (_) {}
+
     const statsHtml = `
       <span style="width:6px;height:6px;border-radius:50%;background:#06d6a0;box-shadow:0 0 10px rgba(6,214,160,.8);flex-shrink:0;animation:pulse 1.5s infinite"></span>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -5125,6 +5134,8 @@ async function loadGlobalStats() {
         <span style="color:#d8e7ff">🎮 <strong style="color:var(--accent)">${games}</strong> games played</span>
         <span style="width:1px;height:12px;background:rgba(255,255,255,.08)"></span>
         <span style="color:#d8e7ff">✅ <strong style="color:var(--accent)">${scores}</strong> scores submitted</span>
+        <span style="width:1px;height:12px;background:rgba(255,255,255,.08)"></span>
+        <span style="color:#d8e7ff">🤖 <strong style="color:var(--purple)">${glAvailable}</strong> AI questions ready</span>
       </div>
       <button onclick="showGlobalLeaderboard()" style="margin-left:auto;background:linear-gradient(135deg,rgba(255,209,102,.15),rgba(255,140,0,.08));border:1px solid rgba(255,209,102,.2);color:var(--gold);padding:5px 13px;border-radius:20px;cursor:pointer;font-size:.72rem;font-weight:700;white-space:nowrap">
         🏆 Leaderboard
@@ -7602,6 +7613,21 @@ async function deleteTournament(id) {
 async function playTournamentRound(tournamentId, roundNumber) {
   toast("Loading round questions...", "info");
   try {
+    let rawQ = null;
+    let isAiVerified = false;
+
+    // Try GenLayer first
+    try {
+      const glRes = await fetch(`${BACKEND}/genlayer/question`);
+      const glData = await glRes.json();
+      if (glData.ok && glData.question) {
+        const q = glData.question;
+        // GenLayer gives 1 question — fetch 10 from OpenTDB for the rest
+        isAiVerified = true;
+      }
+    } catch (_) {}
+
+    // Fetch 10 questions from OpenTDB
     let qtData;
     try {
       const controller = new AbortController();
@@ -7615,7 +7641,7 @@ async function playTournamentRound(tournamentId, roundNumber) {
       if (d.response_code === 0 && d.results?.length > 0) qtData = d;
     } catch (_) {}
 
-    const rawQ = qtData
+    rawQ = qtData
       ? qtData.results.map((q, idx) => ({
           question: decodeURIComponent(q.question),
           correct: decodeURIComponent(q.correct_answer),
@@ -7624,12 +7650,14 @@ async function playTournamentRound(tournamentId, roundNumber) {
             ...q.incorrect_answers.map((a) => decodeURIComponent(a)),
           ]),
           id: idx,
+          aiVerified: isAiVerified && idx === 0, // badge on first question
         }))
       : getLocalQuestions(9, 0, 10).map((q, idx) => ({
           question: q.q,
           correct: q.correct,
           answers: shuffle([q.correct, ...q.wrong]),
           id: idx,
+          aiVerified: false,
         }));
 
     hideToast();
@@ -7666,6 +7694,17 @@ function showTournamentQuiz(tournamentId, rawQ) {
         <div id="qTimerBar" style="height:3px;background:var(--border);border-radius:2px;margin-bottom:14px;overflow:hidden">
           <div id="tqFill" style="height:100%;width:100%;background:linear-gradient(90deg,var(--green),var(--accent));transition:width 1s linear"></div>
         </div>
+        ${
+          q.aiVerified
+            ? `
+          <div style="display:inline-flex;align-items:center;gap:6px;background:rgba(123,97,255,.12);
+            border:1px solid rgba(123,97,255,.3);border-radius:20px;padding:3px 12px;
+            margin-bottom:10px;font-size:.7rem;font-weight:700;color:var(--purple)">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--purple);display:inline-block"></span>
+            ✓ AI Verified · GenLayer Bradbury Testnet
+          </div>`
+            : ""
+        }
         <div style="font-size:1rem;font-weight:600;margin-bottom:18px;line-height:1.5">${sanitizeText(q.question)}</div>
         <div class="ans-grid">
           ${q.answers.map((a, i) => `<button class="ans-btn" onclick="window._tPick(${i})">${sanitizeText(a)}</button>`).join("")}

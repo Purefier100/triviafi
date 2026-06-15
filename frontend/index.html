@@ -383,7 +383,7 @@ footer{
   <div class="hero-title">
     <span class="word-plain" id="w1">TRIVIA</span><span class="word-highlight" id="w2">Fi</span>
   </div>
-  <div class="hero-tag">⚡ FULLY ONCHAIN · ARC + LITVM · SKILL BASED CRYPTO GAMING</div>
+  <div class="hero-tag">⚡ FULLY ONCHAIN · ARC + LITVM + GENLAYER · SKILL BASED CRYPTO GAMING</div>
   <div class="hero-desc">
     Answer 10 questions. Outscore everyone.<br>
     Top 3 split the prize pool automatically.
@@ -409,8 +409,8 @@ footer{
   </div>
   <div class="stat">
     <div>
-      <div class="stat-num">2</div>
-      <div class="stat-lbl">Live<br>Networks</div>
+      <div class="stat-num" id="glQuestions">—</div>
+      <div class="stat-lbl">AI Questions<br>Ready</div>
     </div>
   </div>
   <div class="stat">
@@ -435,7 +435,7 @@ footer{
       <div class="card-meta"><span>NO. 01</span><span>LIVE 24/7</span></div>
       <div class="card-title">AI Agent Rooms</div>
       <div class="card-line"></div>
-      <div class="card-desc">Auto-created every hour. Pay entry, answer 10 questions, top scorers split the pool.</div>
+      <div class="card-desc">Auto-created every hour. Pay entry, answer 10 questions, top scorers split the pool. Tournament questions are <span style="color:#7b61ff;font-weight:700">✓ AI Verified</span> on GenLayer.</div>
     </div>
     <div class="card">
       <div class="card-meta"><span>NO. 02</span><span>LIVE</span></div>
@@ -461,7 +461,7 @@ footer{
 <section class="section" id="s-networks">
   <div class="sec-eyebrow">02 / NETWORKS</div>
   <div class="sec-title">PLAY ON BOTH CHAINS</div>
-  <div class="net-grid">
+  <div class="net-grid" style="grid-template-columns:1fr 1fr 1fr"></div>
     <div class="net-card">
       <div class="net-badge">⚡ ARC TESTNET</div>
       <div class="net-name">WIN USDC</div>
@@ -483,6 +483,18 @@ footer{
         Prize pools in zkLTC<br>
         Auto-distributed to top 3
       </div>
+    </div>
+  </div>
+
+  <div class="net-card" style="border-left:2px solid rgba(123,97,255,.3)">
+    <div class="net-badge" style="border-color:rgba(123,97,255,.4);color:#7b61ff">🤖 GENLAYER BRADBURY</div>
+    <div class="net-name" style="color:#7b61ff">AI VERIFIED</div>
+    <div class="net-token">Onchain AI · ChainID: 4221</div>
+    <div class="net-detail">
+      Contract: 0x33D5f2...C48d55<br>
+      Questions verified by 5 AI models<br>
+      Consensus on Bradbury Testnet<br>
+      <span style="color:#7b61ff;font-weight:700">✓ AI Verified badge on questions</span>
     </div>
   </div>
 </section>
@@ -580,9 +592,38 @@ async function loadLandingStats() {
   }
 }
 
-// Load on page open then refresh every 24 hours
+async function loadLandingStats() {
+  try {
+    const [statsRes, tourneyRes, glRes] = await Promise.all([
+      fetch('https://name-triviafi-backend.onrender.com/stats/global'),
+      fetch('https://name-triviafi-backend.onrender.com/tournaments/stats'),
+      fetch('https://name-triviafi-backend.onrender.com/genlayer/stats')
+    ]);
+    const stats = await statsRes.json();
+    const tourney = await tourneyRes.json();
+    const gl = await glRes.json();
+
+    const gTotal = document.getElementById('gTotal');
+    if(gTotal) gTotal.textContent = stats.totalGamesPlayed || '—';
+
+    const gActive = document.getElementById('gActive');
+    if(gActive) gActive.textContent = tourney.live_count || '0';
+
+    const glQuestions = document.getElementById('glQuestions');
+    if(glQuestions) glQuestions.textContent = gl?.stats?.available || '0';
+
+    const gPool = document.getElementById('gPool');
+    if(gPool) gPool.innerHTML = `
+      <span style="color:#ff6b00;font-size:14px;display:block">${parseFloat(stats.arcVolume||0).toFixed(2)} USDC</span>
+      <span style="color:#ff6b00;font-size:14px;display:block">${parseFloat(stats.litvmVolume||0).toFixed(4)} zkLTC</span>
+    `;
+  } catch(e) {
+    console.warn('Stats load failed:', e.message);
+  }
+}
+
 loadLandingStats();
-setInterval(loadLandingStats, 24 * 60 * 60 * 1000);
+setInterval(loadLandingStats, 60 * 60 * 1000);
 </script>
 
 </body>
