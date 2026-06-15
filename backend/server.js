@@ -19,84 +19,6 @@ const csrfProtection = csrf({
   },
 });
 
-// GenLayer Integration
-const { createClient, createAccount, http } = require("genlayer-js");
-const { bradbury } = require("genlayer-js/chains");
-
-// GenLayer client pointing to Bradbury Testnet
-const genLayerClient = createClient({
-  chain: bradbury,
-  transport: http(),
-  account: createAccount(process.env.GENLAYER_PRIVATE_KEY),
-});
-
-const TRIVIAFI_GL_CONTRACT = "0x33D5f25b341a12D6c06eA7D20681821c39C48d55";
-
-// Pre-generate GenLayer questions every 30 minutes
-const GL_CATEGORIES = [
-  "crypto",
-  "blockchain",
-  "web3",
-  "defi",
-  "nft",
-  "bitcoin",
-  "ethereum",
-  "general",
-];
-const GL_DIFFICULTIES = ["easy", "medium", "hard"];
-
-async function preGenerateGenLayerQuestions() {
-  console.log("🤖 GenLayer: Pre-generating questions...");
-
-  try {
-    // Check how many unused questions we have
-    const countRes = await pool.query(
-      "SELECT COUNT(*) FROM genlayer_questions WHERE used = FALSE",
-    );
-    const unused = parseInt(countRes.rows[0].count);
-
-    // Only generate if we have less than 30 unused questions
-    if (unused >= 30) {
-      console.log(`GenLayer: ${unused} questions ready, skipping generation`);
-      return;
-    }
-
-    // Generate 5 questions across random categories
-    const toGenerate = Math.min(5, 30 - unused);
-    console.log(`GenLayer: Generating ${toGenerate} new questions...`);
-
-    for (let i = 0; i < toGenerate; i++) {
-      const cat =
-        GL_CATEGORIES[Math.floor(Math.random() * GL_CATEGORIES.length)];
-      const diff =
-        GL_DIFFICULTIES[Math.floor(Math.random() * GL_DIFFICULTIES.length)];
-
-      const question = await generateGenLayerQuestion(cat, diff);
-
-      if (question) {
-        await pool.query(
-          "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
-          [cat, diff, JSON.stringify(question)],
-        );
-        console.log(`✅ GenLayer question saved: ${cat}/${diff}`);
-      }
-
-      // Small delay between calls
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-
-    console.log("🤖 GenLayer: Pre-generation complete");
-  } catch (err) {
-    console.error("GenLayer pre-generation error:", err.message);
-  }
-}
-
-// Run every 30 minutes
-setInterval(preGenerateGenLayerQuestions, 30 * 60 * 1000);
-
-// Also run once on startup after 30 seconds
-setTimeout(preGenerateGenLayerQuestions, 30000);
-
 const app = express();
 app.set("trust proxy", 1);
 
@@ -3294,111 +3216,6 @@ app.get("/admin/reconcile-volume", async (req, res) => {
   }
 });
 
-// Call GenLayer contract to generate a question
-async function generateGenLayerQuestion(category, difficulty) {
-  try {
-    // Write transaction to generate question
-    const txHash = await genLayerClient.writeContract({
-      address: TRIVIAFI_GL_CONTRACT,
-      functionName: "get_question",
-      args: [category, difficulty],
-      leaderOnly: true, // Fast mode
-    });
-
-    console.log(`GenLayer TX submitted: ${txHash}`);
-
-    // Wait for finalization
-    const receipt = await genLayerClient.waitForTransactionReceipt({
-      hash: txHash,
-      timeout: 120000, // 2 minutes max
-    });
-
-    if (receipt.status !== "FINALIZED") {
-      throw new Error(`TX not finalized: ${receipt.status}`);
-    }
-
-    // Read the result
-    const result = await genLayerClient.readContract({
-      address: TRIVIAFI_GL_CONTRACT,
-      functionName: "get_result",
-      args: [],
-    });
-
-    return JSON.parse(result);
-  } catch (err) {
-    console.error("GenLayer question generation failed:", err.message);
-    return null;
-  }
-}
-
-// Get a GenLayer AI-generated question
-app.get("/genlayer/question", async (req, res) => {
-  const { category = "crypto", difficulty = "medium" } = req.query;
-
-  try {
-    // Try to get from pre-generated pool first
-    const cached = await pool.query(
-      `SELECT id, data FROM genlayer_questions 
-       WHERE used = FALSE 
-       AND (category = $1 OR $1 = 'any')
-       AND (difficulty = $2 OR $2 = 'any')
-       ORDER BY RANDOM() LIMIT 1`,
-      [category, difficulty],
-    );
-
-    if (cached.rows.length > 0) {
-      // Mark as used
-      await pool.query(
-        "UPDATE genlayer_questions SET used = TRUE WHERE id = $1",
-        [cached.rows[0].id],
-      );
-      return res.json({
-        ok: true,
-        question: cached.rows[0].data,
-        source: "genlayer_cached",
-      });
-    }
-
-    // No cached question — generate live
-    console.log("GenLayer: No cached question, generating live...");
-    const question = await generateGenLayerQuestion(category, difficulty);
-
-    if (!question) {
-      return res.json({ ok: false, error: "GenLayer unavailable" });
-    }
-
-    res.json({
-      ok: true,
-      question,
-      source: "genlayer_live",
-    });
-  } catch (err) {
-    res.json({ ok: false, error: err.message });
-  }
-});
-
-// Admin endpoint to manually trigger pre-generation
-app.post("/admin/genlayer/generate", async (req, res) => {
-  preGenerateGenLayerQuestions();
-  res.json({ ok: true, message: "Generation started" });
-});
-
-// Stats endpoint
-app.get("/genlayer/stats", async (req, res) => {
-  try {
-    const stats = await pool.query(`
-      SELECT 
-        COUNT(*) FILTER (WHERE used = FALSE) as available,
-        COUNT(*) FILTER (WHERE used = TRUE) as used,
-        COUNT(*) as total
-      FROM genlayer_questions
-    `);
-    res.json({ ok: true, stats: stats.rows[0] });
-  } catch (err) {
-    res.json({ ok: false, error: err.message });
-  }
-});
-
 // ── ADMIN: Manual refund to a wallet ─────────────────────────────────────
 app.post("/admin/manual-refund", async (req, res) => {
   // Only callable with your admin secret key — never exposed to frontend
@@ -5585,4 +5402,118 @@ app.use((err, req, res, next) => {
   }
   console.error("Unhandled error:", err.message);
   res.status(500).json({ error: err.message });
+});
+// ============================================================
+
+// ── GenLayer AI Question Generation ──────────────────────────────────────
+let genLayerClient = null;
+
+async function initGenLayer() {
+  try {
+    const { createClient, createAccount, http } = await import('genlayer-js');
+    const { studionet } = await import('genlayer-js/chains');
+    genLayerClient = createClient({
+      chain: studionet,
+      transport: http(),
+      account: createAccount(process.env.GENLAYER_PRIVATE_KEY)
+    });
+    console.log('✅ GenLayer client initialized');
+  } catch (err) {
+    console.error('❌ GenLayer init failed:', err.message);
+    genLayerClient = null;
+  }
+}
+
+async function generateGenLayerQuestion(category, difficulty) {
+  if (!genLayerClient) return null;
+  try {
+    const txHash = await genLayerClient.writeContract({
+      address: process.env.GENLAYER_CONTRACT,
+      functionName: 'get_question',
+      args: [category, difficulty],
+      leaderOnly: true
+    });
+    await new Promise(r => setTimeout(r, 20000));
+    const result = await genLayerClient.readContract({
+      address: process.env.GENLAYER_CONTRACT,
+      functionName: 'get_result',
+      args: []
+    });
+    return typeof result === 'string' ? JSON.parse(result) : result;
+  } catch (err) {
+    console.error('GenLayer question error:', err.message);
+    return null;
+  }
+}
+
+async function preGenerateGenLayerQuestions() {
+  if (!genLayerClient) return;
+  try {
+    const countRes = await pool.query(
+      'SELECT COUNT(*) FROM genlayer_questions WHERE used = FALSE'
+    );
+    const unused = parseInt(countRes.rows[0].count);
+    if (unused >= 20) return;
+    const categories = ['crypto','blockchain','web3','defi','nft','bitcoin','ethereum'];
+    const difficulties = ['easy','medium','hard'];
+    const toGenerate = Math.min(3, 20 - unused);
+    for (let i = 0; i < toGenerate; i++) {
+      const cat = categories[Math.floor(Math.random() * categories.length)];
+      const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
+      const question = await generateGenLayerQuestion(cat, diff);
+      if (question) {
+        await pool.query(
+          'INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)',
+          [cat, diff, JSON.stringify(question)]
+        );
+        console.log('✅ GenLayer saved: ' + cat + '/' + diff);
+      }
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  } catch (err) {
+    console.error('GenLayer pre-gen error:', err.message);
+  }
+}
+
+initGenLayer().then(() => {
+  setTimeout(preGenerateGenLayerQuestions, 60000);
+  setInterval(preGenerateGenLayerQuestions, 30 * 60 * 1000);
+});
+
+app.get('/genlayer/stats', async (req, res) => {
+  try {
+    const stats = await pool.query(`
+      SELECT 
+        COUNT(*) FILTER (WHERE used = FALSE) as available,
+        COUNT(*) FILTER (WHERE used = TRUE) as used,
+        COUNT(*) as total
+      FROM genlayer_questions
+    `);
+    res.json({ ok: true, stats: stats.rows[0] });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/genlayer/question', async (req, res) => {
+  const { category = 'crypto', difficulty = 'medium' } = req.query;
+  try {
+    const cached = await pool.query(
+      'SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1'
+    );
+    if (cached.rows.length > 0) {
+      await pool.query('UPDATE genlayer_questions SET used = TRUE WHERE id = $1', [cached.rows[0].id]);
+      return res.json({ ok: true, question: cached.rows[0].data, source: 'cached' });
+    }
+    const question = await generateGenLayerQuestion(category, difficulty);
+    if (!question) return res.json({ ok: false, error: 'GenLayer unavailable' });
+    res.json({ ok: true, question, source: 'live' });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/admin/genlayer/generate', async (req, res) => {
+  preGenerateGenLayerQuestions();
+  res.json({ ok: true, message: 'Generation started in background' });
 });
