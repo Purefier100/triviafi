@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TriviaFi</title>
+  <title>TriviaFi — Onchain Trivia Game</title>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet"/>
   <style>
     :root {
@@ -954,24 +954,6 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
   <div id="ticker"><span id="tickerInner">⚡ Loading live leaderboard data...</span></div>
 
   <header>
-
-    <!-- Favicon -->
-     <link rel="icon" type="image/x-icon" href="/favicon.ico">
-     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
-     <link rel="icon" type="image/png" sizes="16x16" href="/favicon.png">
-     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-     
-     
-     <title>TriviaFi — Onchain Trivia Game</title>
-     
-     <meta property="og:title" content="TriviaFi — Win Crypto By Being Smart">
-     <meta property="og:description" content="Onchain multichain trivia game. Win USDC on Arc and zkLTC on LitVM. Play now.">
-     <meta property="og:image" content="https://triviafi.xyz/preview.png">
-     <meta property="og:url" content="https://triviafi.xyz">
-     <meta name="twitter:card" content="summary_large_image">
-     <meta name="twitter:image" content="https://triviafi.xyz/preview.png">
-     <meta name="twitter:title" content="TriviaFi — Win Crypto By Being Smart">
-     <meta name="twitter:description" content="Onchain trivia game. Win USDC and zkLTC prizes.">
     
     <div class="logo">TRIVIA</div>
 
@@ -1174,7 +1156,7 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
   </section>
   
   <!-- Subtitle + badge + reactions BELOW the canvas, not inside it -->
-  <div style="text-align:center;padding:10px 20px 18px;background:var(--bg);position:relative;z-index:2;margin-top:-4px"></div>
+  <div style="text-align:center;padding:10px 20px 18px;background:var(--bg);position:relative;z-index:2;margin-top:-4px">
     <div class="hero-mini-badge" style="display:inline-flex;margin-bottom:10px">
       ⚡ Fully Onchain • Arc + LitVM
     </div>
@@ -1183,7 +1165,7 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
       and earn rewards fully onchain.
     </p>
     <div id="reactionBar" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px"></div>
-  </div>
+</div>
 
       <div class="stat-row">
         <div class="stat-box">
@@ -1693,10 +1675,11 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
     const ORANGE='#ff6b00', CYAN='#00e5ff', WHITE='#e8eaf6', PURPLE='#7b61ff';
 
     function resize(){
-      W = canvas.width = section.offsetWidth;
-      H = canvas.height = section.offsetHeight;
-      buildDots();
+        W = canvas.width = Math.max(section.offsetWidth, 320);
+        H = canvas.height = Math.max(section.offsetHeight, 200);
+        buildDots();
     }
+
     
     
     function buildDots(){
@@ -1823,16 +1806,10 @@ window.addEventListener('DOMContentLoaded', () => {
     <div class="footer-right">
 
       <!-- Telegram -->
-      <a href="https://t.me/triviafi" target="_blank" class="footer-social"></a>
-
+      <a href="https://t.me/triviafi" target="_blank" class="footer-social">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-
-          <path
-            d="M21.9 4.6c.2-1-.4-1.4-1.2-1.1L3.2 10.1c-1.2.5-1.2 1.1-.2 1.4l4.5 1.4 1.7 5.3c.2.6.1.9.8.9.5 0 .7-.2 1-.5l2.4-2.3 5 3.7c.9.5 1.5.3 1.8-.8L21.9 4.6z"
-            fill="currentColor" />
-
+          <path d="M21.9 4.6c.2-1-.4-1.4-1.2-1.1L3.2 10.1c-1.2.5-1.2 1.1-.2 1.4l4.5 1.4 1.7 5.3c.2.6.1.9.8.9.5 0 .7-.2 1-.5l2.4-2.3 5 3.7c.9.5 1.5.3 1.8-.8L21.9 4.6z" fill="currentColor"/>
         </svg>
-
       </a>
 
       <!-- X -->
