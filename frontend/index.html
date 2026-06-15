@@ -460,43 +460,120 @@ footer{
 
 <section class="section" id="s-networks">
   <div class="sec-eyebrow">02 / NETWORKS</div>
-  <div class="sec-title">PLAY ON BOTH CHAINS</div>
-  <div class="net-grid" style="grid-template-columns:1fr 1fr 1fr"></div>
-    <div class="net-card">
-      <div class="net-badge">⚡ ARC TESTNET</div>
-      <div class="net-name">WIN USDC</div>
-      <div class="net-token">Token: USDC · ChainID: 5042002</div>
-      <div class="net-detail">
-        Contract: 0x52F6dE...DCF21E50<br>
-        Entry fees in USDC<br>
-        Prize pools in USDC<br>
-        Auto-distributed to top 3
+  <div class="sec-title">PLAY ON 3 CHAINS</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border)">
+
+    <!-- Arc -->
+    <div style="background:var(--bg);padding:24px;position:relative;overflow:hidden;transition:background .2s;cursor:pointer"
+      onmouseover="this.style.background='rgba(0,229,255,0.04)'"
+      onmouseout="this.style.background='var(--bg)'">
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,#00e5ff,transparent)"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <div style="width:36px;height:36px;border-radius:8px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);display:flex;align-items:center;justify-content:center;font-size:1.1rem">⚡</div>
+        <div>
+          <div style="font-family:'Space Mono',monospace;font-size:9px;color:#00e5ff;letter-spacing:2px;text-transform:uppercase">Arc Testnet</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;line-height:1">WIN USDC</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">ChainID</span>
+          <span style="font-family:'Space Mono',monospace;font-size:9px;color:#00e5ff;font-weight:700">5042002</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">Token</span>
+          <span style="font-family:'Space Mono',monospace;font-size:9px;color:#00e5ff;font-weight:700">USDC</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(0,229,255,.04);border:1px solid rgba(0,229,255,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">Contract</span>
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.5)">0x52F6...E50</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.15);color:#00e5ff">✓ Live</span>
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.15);color:#00e5ff">✓ Auto Payout</span>
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.15);color:#00e5ff">✓ Tournaments</span>
       </div>
     </div>
-    <div class="net-card">
-      <div class="net-badge">🔷 LITVM LITEFORGE</div>
-      <div class="net-name">WIN zkLTC</div>
-      <div class="net-token">Token: zkLTC · ChainID: 4441</div>
-      <div class="net-detail">
-        Contract: 0xf829c7...C7F765<br>
-        Entry fees in zkLTC<br>
-        Prize pools in zkLTC<br>
-        Auto-distributed to top 3
+
+    <!-- LitVM -->
+    <div style="background:var(--bg);padding:24px;position:relative;overflow:hidden;transition:background .2s;cursor:pointer"
+      onmouseover="this.style.background='rgba(123,97,255,0.04)'"
+      onmouseout="this.style.background='var(--bg)'">
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,#7b61ff,transparent)"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <div style="width:36px;height:36px;border-radius:8px;background:rgba(123,97,255,.08);border:1px solid rgba(123,97,255,.2);display:flex;align-items:center;justify-content:center;font-size:1.1rem">🔷</div>
+        <div>
+          <div style="font-family:'Space Mono',monospace;font-size:9px;color:#7b61ff;letter-spacing:2px;text-transform:uppercase">LitVM Testnet</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;line-height:1">WIN zkLTC</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(123,97,255,.04);border:1px solid rgba(123,97,255,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">ChainID</span>
+          <span style="font-family:'Space Mono',monospace;font-size:9px;color:#7b61ff;font-weight:700">4441</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(123,97,255,.04);border:1px solid rgba(123,97,255,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">Token</span>
+          <span style="font-family:'Space Mono',monospace;font-size:9px;color:#7b61ff;font-weight:700">zkLTC</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(123,97,255,.04);border:1px solid rgba(123,97,255,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">Contract</span>
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.5)">0xf829...765</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.15);color:#7b61ff">✓ Live</span>
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.15);color:#7b61ff">✓ Native Gas</span>
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(123,97,255,.06);border:1px solid rgba(123,97,255,.15);color:#7b61ff">✓ Tournaments</span>
       </div>
     </div>
+
+    <!-- GenLayer -->
+    <div style="background:var(--bg);padding:24px;position:relative;overflow:hidden;transition:background .2s;cursor:pointer"
+      onmouseover="this.style.background='rgba(6,214,160,0.04)'"
+      onmouseout="this.style.background='var(--bg)'">
+      <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,#06d6a0,transparent)"></div>
+      <div style="position:absolute;top:10px;right:10px;font-family:'Space Mono',monospace;font-size:8px;background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.25);color:#06d6a0;padding:2px 7px;letter-spacing:1px">NEW</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+        <div style="width:36px;height:36px;border-radius:8px;background:rgba(6,214,160,.08);border:1px solid rgba(6,214,160,.2);display:flex;align-items:center;justify-content:center;font-size:1.1rem">🤖</div>
+        <div>
+          <div style="font-family:'Space Mono',monospace;font-size:9px;color:#06d6a0;letter-spacing:2px;text-transform:uppercase">GenLayer Bradbury</div>
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;line-height:1">AI VERIFIED</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(6,214,160,.04);border:1px solid rgba(6,214,160,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">ChainID</span>
+          <span style="font-family:'Space Mono',monospace;font-size:9px;color:#06d6a0;font-weight:700">4221</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(6,214,160,.04);border:1px solid rgba(6,214,160,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">AI Models</span>
+          <span style="font-family:'Space Mono',monospace;font-size:9px;color:#06d6a0;font-weight:700">5 Validators</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;background:rgba(6,214,160,.04);border:1px solid rgba(6,214,160,.08)">
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1px">Contract</span>
+          <span style="font-family:'Space Mono',monospace;font-size:8px;color:rgba(255,255,255,.5)">0x33D5...d55</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.15);color:#06d6a0">✓ Live</span>
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.15);color:#06d6a0">✓ AI Consensus</span>
+        <span style="font-family:'Space Mono',monospace;font-size:8px;padding:3px 8px;background:rgba(6,214,160,.06);border:1px solid rgba(6,214,160,.15);color:#06d6a0">✓ Questions</span>
+      </div>
+    </div>
+
   </div>
 
-  <div class="net-card" style="border-left:2px solid rgba(123,97,255,.3)">
-    <div class="net-badge" style="border-color:rgba(123,97,255,.4);color:#7b61ff">🤖 GENLAYER BRADBURY</div>
-    <div class="net-name" style="color:#7b61ff">AI VERIFIED</div>
-    <div class="net-token">Onchain AI · ChainID: 4221</div>
-    <div class="net-detail">
-      Contract: 0x33D5f2...C48d55<br>
-      Questions verified by 5 AI models<br>
-      Consensus on Bradbury Testnet<br>
-      <span style="color:#7b61ff;font-weight:700">✓ AI Verified badge on questions</span>
-    </div>
-  </div>
+  <!-- Also add mobile fix -->
+  <style>
+    @media(max-width:700px){
+      #s-networks > div[style*="grid-template-columns"]{
+        grid-template-columns:1fr !important;
+      }
+    }
+  </style>
 </section>
 
 <section class="section" id="s-prizes">
@@ -562,35 +639,6 @@ window.addEventListener('scroll',()=>{
   secs.forEach((s,i)=>{if(y>=s)active=i;});
   dots.forEach((d,i)=>d.classList.toggle('active',i===active));
 });
-
-// Fetch live stats from backend
-async function loadLandingStats() {
-  try {
-    const [statsRes, tourneyRes] = await Promise.all([
-      fetch('https://name-triviafi-backend.onrender.com/stats/global'),
-      fetch('https://name-triviafi-backend.onrender.com/tournaments/stats')
-    ]);
-    const stats = await statsRes.json();
-    const tourney = await tourneyRes.json();
-
-    // Games created
-    const gTotal = document.getElementById('gTotal');
-    if(gTotal) gTotal.textContent = stats.totalGamesPlayed || '—';
-
-    // Active rooms — use games played as fallback
-    const gActive = document.getElementById('gActive');
-    if(gActive) gActive.textContent = tourney.live_count || '0';
-
-    // Total volume
-    const gPool = document.getElementById('gPool');
-    if(gPool) gPool.innerHTML = `
-      <span style="color:#ff6b00;font-size:14px;display:block">${parseFloat(stats.arcVolume||0).toFixed(2)} USDC</span>
-      <span style="color:#ff6b00;font-size:14px;display:block">${parseFloat(stats.litvmVolume||0).toFixed(4)} zkLTC</span>
-    `;
-  } catch(e) {
-    console.warn('Stats load failed:', e.message);
-  }
-}
 
 async function loadLandingStats() {
   try {
