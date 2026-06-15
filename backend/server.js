@@ -5405,19 +5405,20 @@ app.use((err, req, res, next) => {
 });
 // ============================================================
 
-// ── GenLayer AI Question Generation ──────────────────────────────────────
+// ── GenLayer AI Question Generation (Bradbury Testnet) ────────────────────
 let genLayerClient = null;
 
 async function initGenLayer() {
   try {
-    const { createClient, createAccount, http } = await import('genlayer-js');
-    const { studionet } = await import('genlayer-js/chains');
+    const { createClient, createAccount } = await import('genlayer-js');
+    const { testnetBradbury } = await import('genlayer-js/chains');
+
     genLayerClient = createClient({
-      chain: studionet,
-      transport: http(),
+      chain: testnetBradbury,
       account: createAccount(process.env.GENLAYER_PRIVATE_KEY)
     });
-    console.log('✅ GenLayer client initialized');
+
+    console.log('✅ GenLayer client initialized on Bradbury Testnet');
   } catch (err) {
     console.error('❌ GenLayer init failed:', err.message);
     genLayerClient = null;
@@ -5427,19 +5428,34 @@ async function initGenLayer() {
 async function generateGenLayerQuestion(category, difficulty) {
   if (!genLayerClient) return null;
   try {
+    const { TransactionStatus } = await import('genlayer-js/types');
+
     const txHash = await genLayerClient.writeContract({
       address: process.env.GENLAYER_CONTRACT,
       functionName: 'get_question',
       args: [category, difficulty],
-      leaderOnly: true
+      value: BigInt(0)
     });
-    await new Promise(r => setTimeout(r, 20000));
+
+    console.log('GenLayer TX:', txHash);
+
+    const receipt = await genLayerClient.waitForTransactionReceipt({
+      hash: txHash,
+      status: TransactionStatus.ACCEPTED,
+      interval: 5000,
+      retries: 24
+    });
+
+    console.log('GenLayer receipt status:', receipt.status);
+
     const result = await genLayerClient.readContract({
       address: process.env.GENLAYER_CONTRACT,
       functionName: 'get_result',
       args: []
     });
+
     return typeof result === 'string' ? JSON.parse(result) : result;
+
   } catch (err) {
     console.error('GenLayer question error:', err.message);
     return null;
@@ -5454,9 +5470,13 @@ async function preGenerateGenLayerQuestions() {
     );
     const unused = parseInt(countRes.rows[0].count);
     if (unused >= 20) return;
+
     const categories = ['crypto','blockchain','web3','defi','nft','bitcoin','ethereum'];
     const difficulties = ['easy','medium','hard'];
     const toGenerate = Math.min(3, 20 - unused);
+
+    console.log('🤖 GenLayer: Generating ' + toGenerate + ' questions on Bradbury...');
+
     for (let i = 0; i < toGenerate; i++) {
       const cat = categories[Math.floor(Math.random() * categories.length)];
       const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
@@ -5489,7 +5509,7 @@ app.get('/genlayer/stats', async (req, res) => {
         COUNT(*) as total
       FROM genlayer_questions
     `);
-    res.json({ ok: true, stats: stats.rows[0] });
+    res.json({ ok: true, stats: stats.rows[0], network: 'bradbury' });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
@@ -5503,11 +5523,11 @@ app.get('/genlayer/question', async (req, res) => {
     );
     if (cached.rows.length > 0) {
       await pool.query('UPDATE genlayer_questions SET used = TRUE WHERE id = $1', [cached.rows[0].id]);
-      return res.json({ ok: true, question: cached.rows[0].data, source: 'cached' });
+      return res.json({ ok: true, question: cached.rows[0].data, source: 'genlayer_bradbury' });
     }
     const question = await generateGenLayerQuestion(category, difficulty);
     if (!question) return res.json({ ok: false, error: 'GenLayer unavailable' });
-    res.json({ ok: true, question, source: 'live' });
+    res.json({ ok: true, question, source: 'genlayer_live' });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
@@ -5515,5 +5535,5 @@ app.get('/genlayer/question', async (req, res) => {
 
 app.post('/admin/genlayer/generate', async (req, res) => {
   preGenerateGenLayerQuestions();
-  res.json({ ok: true, message: 'Generation started in background' });
+  res.json({ ok: true, message: 'Generation started on Bradbury testnet' });
 });
