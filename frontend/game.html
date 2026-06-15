@@ -297,7 +297,7 @@ main{
 /* ── HERO ── */
 .hero{
   position:relative;
-  min-height:200px;
+  min-height:180px;
   overflow:hidden;
   padding:0;
 }
@@ -341,11 +341,13 @@ main{
 }
  
 .hero-sub{
-  font-size:.95rem;
+  font-size:.88rem;
   color:var(--muted);
-  max-width:520px;
-  line-height:1.7;
+  max-width:480px;
+  line-height:1.8;
   font-family:'Space Mono',monospace;
+  text-align:center;
+  margin:0 auto;
 }
  
 /* ── STATS BAR ── */
@@ -1156,15 +1158,15 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
   </section>
   
   <!-- Subtitle + badge + reactions BELOW the canvas, not inside it -->
-  <div style="text-align:center;padding:10px 20px 18px;background:var(--bg);position:relative;z-index:2;margin-top:-4px">
-    <div class="hero-mini-badge" style="display:inline-flex;margin-bottom:10px">
+  <div style="display:flex;flex-direction:column;align-items:center;padding:18px 20px 20px;background:var(--bg);position:relative;z-index:2;text-align:center">
+    <div class="hero-mini-badge" style="display:inline-flex;margin-bottom:12px">
       ⚡ Fully Onchain • Arc + LitVM
     </div>
-    <p class="hero-sub">
-      Join live trivia battles, compete in real-time,
+    <p class="hero-sub" style="text-align:center;margin:0 auto">
+      Join live trivia battles, compete in real-time,<br>
       and earn rewards fully onchain.
     </p>
-    <div id="reactionBar" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px"></div>
+    <div id="reactionBar" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:16px"></div>
 </div>
 
       <div class="stat-row">
