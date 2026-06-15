@@ -5469,11 +5469,11 @@ async function preGenerateGenLayerQuestions() {
       'SELECT COUNT(*) FROM genlayer_questions WHERE used = FALSE'
     );
     const unused = parseInt(countRes.rows[0].count);
-    if (unused >= 20) return;
+    if (unused >= 50) return;
 
     const categories = ['crypto','blockchain','web3','defi','nft','bitcoin','ethereum'];
     const difficulties = ['easy','medium','hard'];
-    const toGenerate = Math.min(3, 20 - unused);
+    const toGenerate = Math.min(10, 50 - unused);
 
     console.log('🤖 GenLayer: Generating ' + toGenerate + ' questions on Bradbury...');
 
