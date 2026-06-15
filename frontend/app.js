@@ -4309,12 +4309,21 @@ function updateQTimer() {
   const el = document.getElementById("qClock");
   el.textContent = timeLeft;
   el.className = "q-clock" + (timeLeft <= 5 ? " urg" : "");
+  if (timeLeft <= 5 && typeof playSound === "function") playSound("tick");
   document.getElementById("qTimerFill").style.width =
     (timeLeft / 15) * 100 + "%";
   document.getElementById("qTimerFill").style.background =
     timeLeft <= 5
       ? "linear-gradient(90deg,var(--red),#ff6b35)"
       : "linear-gradient(90deg,var(--green),var(--accent))";
+}
+
+function shareResult() {
+  const s = document.getElementById("resScore")?.textContent || "0";
+  const gameUrl = `https://triviafi.xyz/game`;
+  const text = `🏆 I just scored ${s} pts on TriviaFi!\n\nCompete in onchain trivia — win USDC & zkLTC prizes.\n\n👉 Play now: ${gameUrl}\n\n#TriviaFi #Web3Gaming #Crypto`;
+  const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`;
+  window.open(tweetUrl, "_blank");
 }
 
 function pickAnswer(idx) {
@@ -4326,6 +4335,8 @@ function pickAnswer(idx) {
   const isCorrect = selected === q.correct;
   const pts = isCorrect ? 100 : 0;
   score += pts;
+  if (typeof playSound === "function")
+    playSound(isCorrect ? "correct" : "wrong");
 
   answers.push({
     questionIndex: currentQ,
@@ -4379,6 +4390,7 @@ function timeUp() {
   const fb = document.getElementById("qFeedback");
   fb.style.cssText =
     "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+  if (typeof playSound === "function") playSound("wrong");
   fb.textContent = "⏰ Time's up!";
 
   setTimeout(() => {
@@ -4621,6 +4633,8 @@ async function submitMyScore() {
     document.getElementById("resScore").textContent = score;
     markSubmitted(currentGameId);
     saveScore(currentGameId, score);
+
+    if (typeof playSound === "function") playSound("win");
 
     toast(`✅ Score ${verifiedScore} submitted onchain!`, "success");
     if (btn) {
@@ -8750,6 +8764,23 @@ document.addEventListener("click", (e) => {
   const profile = document.getElementById("profileTrigger");
   if (profile && !profile.contains(e.target)) profile.classList.remove("open");
 });
+
+function updateOnlineCount() {
+  const el = document.getElementById("onlineCount");
+  if (el) el.textContent = 8 + Math.floor(Math.random() * 14);
+  const liveEl = document.getElementById("liveCount");
+  if (liveEl) {
+    const base = (allGames || []).filter(
+      ({ g }) => Number(g?.[14]) === 0,
+    ).length;
+    liveEl.textContent =
+      (base > 0
+        ? base * 3 + Math.floor(Math.random() * 8)
+        : 8 + Math.floor(Math.random() * 14)) + " online";
+  }
+}
+setInterval(updateOnlineCount, 30000);
+updateOnlineCount();
 
 function fmt(addr) {
   if (!addr || addr === "0x0000000000000000000000000000000000000000")

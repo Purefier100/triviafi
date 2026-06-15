@@ -957,9 +957,18 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
 
   <header>
     
-    <div class="logo">TRIVIA</div>
+    <div class="logo">TRIVIAFI</div>
 
     <div class="hdr-r">
+
+         <!-- Live Count -->
+          <div style="font-family:'Space Mono',monospace;font-size:.72rem;color:var(--green);
+          display:flex;align-items:center;gap:5px;border:1px solid rgba(6,214,160,.2);
+          padding:4px 10px;border-radius:6px;background:rgba(6,214,160,.04)">
+          <span style="width:5px;height:5px;border-radius:50%;background:var(--green);
+          animation:pulse 1.5s infinite;display:inline-block"></span>
+          <span id="liveCount">— online</span>
+        </div>
 
       <!-- Network Switcher -->
       <div class="network-switcher" style="position:relative">
@@ -1346,10 +1355,12 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
         <div id="leaderboard">
           <p style="color:var(--muted);font-size:.83rem">Submit your score to appear here.</p>
         </div>
-        <div style="display:flex;gap:10px;margin-top:16px">
-          <button class="btn btn-ghost" style="flex:1" onclick="showScreen('screenLobby');loadGames()">← Lobby</button>
-          <button class="btn btn-ghost" style="flex:1" onclick="refreshResults()">🔄 Refresh</button>
-        </div>
+        <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+            <button class="btn btn-ghost" style="flex:1" onclick="showScreen('screenLobby');loadGames()">← Lobby</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="refreshResults()">🔄 Refresh</button>
+            <button class="btn btn-primary" style="flex:1;background:linear-gradient(135deg,#1da1f2,#0d8bd9)"
+              onclick="shareResult()">𝕏 Share Result</button>
+          </div>
       </div>
     </div>
 
@@ -1837,6 +1848,68 @@ window.addEventListener('DOMContentLoaded', () => {
     </div>
 
   </footer>
+
+  <script>
+    // ── Sound effects using Web Audio API ──
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let _actx = null;
+    function getACtx() {
+      if (!_actx) _actx = new AudioCtx();
+      return _actx;
+    }
+    
+    function playSound(type) {
+      try {
+        const ctx = getACtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+    
+        if (type === 'correct') {
+          osc.frequency.setValueAtTime(523, ctx.currentTime);       // C5
+          osc.frequency.setValueAtTime(659, ctx.currentTime + 0.1); // E5
+          osc.frequency.setValueAtTime(784, ctx.currentTime + 0.2); // G5
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.4);
+        } else if (type === 'wrong') {
+          osc.frequency.setValueAtTime(200, ctx.currentTime);
+          osc.frequency.setValueAtTime(150, ctx.currentTime + 0.15);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+        } else if (type === 'click') {
+          osc.frequency.setValueAtTime(800, ctx.currentTime);
+          gain.gain.setValueAtTime(0.1, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.05);
+        } else if (type === 'win') {
+          const freqs = [523,659,784,1047];
+          freqs.forEach((f, i) => {
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.connect(g); g.connect(ctx.destination);
+            o.frequency.value = f;
+            g.gain.setValueAtTime(0.2, ctx.currentTime + i*0.12);
+            g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i*0.12 + 0.3);
+            o.start(ctx.currentTime + i*0.12);
+            o.stop(ctx.currentTime + i*0.12 + 0.3);
+          });
+        } else if (type === 'tick') {
+          osc.frequency.setValueAtTime(1000, ctx.currentTime);
+          gain.gain.setValueAtTime(0.05, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.04);
+        }
+      } catch(_) {}
+    }
+    window.playSound = playSound;
+    </script>
 </body>
 
 </html>
