@@ -297,7 +297,7 @@ main{
 /* ── HERO ── */
 .hero{
   position:relative;
-  min-height:260px;
+  min-height:200px;
   overflow:hidden;
   padding:0;
 }
@@ -1174,7 +1174,7 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
   </section>
   
   <!-- Subtitle + badge + reactions BELOW the canvas, not inside it -->
-  <div style="text-align:center;padding:16px 20px 20px;background:var(--bg);position:relative;z-index:2">
+  <div style="text-align:center;padding:10px 20px 18px;background:var(--bg);position:relative;z-index:2;margin-top:-4px"></div>
     <div class="hero-mini-badge" style="display:inline-flex;margin-bottom:10px">
       ⚡ Fully Onchain • Arc + LitVM
     </div>
@@ -1689,70 +1689,81 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
     if(!canvas||!section) return;
     const ctx = canvas.getContext('2d');
     let W, H, dots = [], mouse = {x:-999,y:-999};
-    const SPACING=7, BASE_R=2.2;
-    const ORANGE='#ff6b00', CYAN='#00e5ff', WHITE='#ffffff', PURPLE='#7b61ff';
+    const SPACING=6, BASE_R=2.0;
+    const ORANGE='#ff6b00', CYAN='#00e5ff', WHITE='#e8eaf6', PURPLE='#7b61ff';
 
     function resize(){
       W = canvas.width = section.offsetWidth;
       H = canvas.height = section.offsetHeight;
       buildDots();
     }
-
+    
+    
     function buildDots(){
-      dots=[];
-      const off=document.createElement('canvas');
-      off.width=W; off.height=H;
-      const g=off.getContext('2d');
-      g.fillStyle='#fff';
-      const fs=Math.min(W*0.18,H*0.72);
-      g.font=`900 ${fs}px Arial,Impact,sans-serif`;
-      g.textAlign='center'; g.textBaseline='middle';
-      g.fillText('TRIVIAFI',W/2,H/2);
-      const px=g.getImageData(0,0,W,H).data;
-      for(let y=0;y<H;y+=SPACING){
-        for(let x=0;x<W;x+=SPACING){
-          const i=(y*W+x)*4;
-          const bright=px[i]/255;
-          if(bright>0.15){
-            const rnd=Math.random();
-            let col=WHITE;
-            if(rnd<0.06)col=ORANGE;
-            else if(rnd<0.10)col=CYAN;
-            else if(rnd<0.12)col=PURPLE;
-            dots.push({ox:x,oy:y,x,y,r:BASE_R*(0.6+bright*0.8),col,bright,
-              phase:Math.random()*Math.PI*2,speed:0.3+Math.random()*0.5});
-          }
+        dots=[];
+        const off=document.createElement('canvas');
+        off.width=W; off.height=H;
+        const g=off.getContext('2d');
+        g.fillStyle='#fff';
+        /* tighter font scale so text fills width cleanly */
+        const fs=Math.min(W*0.155, H*0.62);
+        g.font=`900 ${fs}px Arial,Impact,sans-serif`;
+        g.textAlign='center'; g.textBaseline='middle';
+        g.fillText('TRIVIAFI',W/2,H/2);
+        const px=g.getImageData(0,0,W,H).data;
+        for(let y=0;y<H;y+=SPACING){
+            for(let x=0;x<W;x+=SPACING){
+                const i=(y*W+x)*4;
+                const bright=px[i]/255;
+                if(bright>0.2){
+                    const rnd=Math.random();
+                    let col=WHITE;
+                    /* much fewer accent dots — 3% orange, 2% cyan, 1% purple */
+                    if(rnd<0.03) col=ORANGE;
+                    else if(rnd<0.05) col=CYAN;
+                    else if(rnd<0.06) col=PURPLE;
+                    dots.push({
+                        ox:x, oy:y, x, y,
+                        r:BASE_R*(0.7+bright*0.5),
+                        col, bright,
+                        phase:Math.random()*Math.PI*2,
+                        speed:0.2+Math.random()*0.3
+                    });
+                }
+            }
         }
-      }
     }
 
     function draw(t){
-      ctx.clearRect(0,0,W,H);
-      const mx=mouse.x, my=mouse.y, RIPPLE=85;
-      for(const d of dots){
-        const dx=d.ox-mx, dy=d.oy-my;
-        const dist=Math.sqrt(dx*dx+dy*dy);
-        let tx=d.ox, ty=d.oy, r=d.r, alpha=0.55+d.bright*0.45, col=d.col;
-        if(dist<RIPPLE){
-          const force=1-dist/RIPPLE;
-          const angle=Math.atan2(dy,dx);
-          tx=d.ox+Math.cos(angle)*force*28;
-          ty=d.oy+Math.sin(angle)*force*28;
-          r=d.r*(1+force*2.2); alpha=1;
-          col=force>0.6?ORANGE:force>0.3?CYAN:col;
-        }
-        const wobble=Math.sin(t*0.001*d.speed+d.phase)*0.6;
-        d.x+=(tx-d.x)*0.18+wobble*0.05;
-        d.y+=(ty-d.y)*0.18;
-        ctx.beginPath();
-        ctx.arc(d.x,d.y,r,0,Math.PI*2);
-        ctx.globalAlpha=alpha;
-        ctx.fillStyle=col;
-        ctx.fill();
-      }
-      ctx.globalAlpha=1;
-      requestAnimationFrame(draw);
+  ctx.clearRect(0,0,W,H);
+  const mx=mouse.x, my=mouse.y, RIPPLE=90;
+  for(const d of dots){
+    const dx=d.ox-mx, dy=d.oy-my;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    let tx=d.ox, ty=d.oy, r=d.r, col=d.col;
+    /* base alpha: white dots bright, accent dots slightly dimmer for contrast */
+    let alpha = col===WHITE ? 0.82+d.bright*0.18 : 0.65+d.bright*0.2;
+    if(dist<RIPPLE){
+      const force=1-dist/RIPPLE;
+      const angle=Math.atan2(dy,dx);
+      tx=d.ox+Math.cos(angle)*force*32;
+      ty=d.oy+Math.sin(angle)*force*32;
+      r=d.r*(1+force*1.8);
+      alpha=1;
+      col=force>0.55?ORANGE:force>0.25?CYAN:col;
     }
+    const wobble=Math.sin(t*0.0008*d.speed+d.phase)*0.4;
+    d.x+=(tx-d.x)*0.15+wobble*0.03;
+    d.y+=(ty-d.y)*0.15;
+    ctx.beginPath();
+    ctx.arc(d.x,d.y,r,0,Math.PI*2);
+    ctx.globalAlpha=alpha;
+    ctx.fillStyle=col;
+    ctx.fill();
+  }
+  ctx.globalAlpha=1;
+  requestAnimationFrame(draw);
+}
 
     canvas.addEventListener('mousemove',e=>{
       const rect=canvas.getBoundingClientRect();
