@@ -642,20 +642,31 @@ window.addEventListener('scroll',()=>{
 
 async function loadLandingStats() {
   try {
-    const [statsRes, tourneyRes, glRes] = await Promise.all([
+    const [statsRes, tourneyRes, glRes, activeRes] = await Promise.all([
       fetch('https://name-triviafi-backend.onrender.com/stats/global'),
       fetch('https://name-triviafi-backend.onrender.com/tournaments/stats'),
-      fetch('https://name-triviafi-backend.onrender.com/genlayer/stats')
+      fetch('https://name-triviafi-backend.onrender.com/genlayer/stats'),
+      fetch('https://name-triviafi-backend.onrender.com/games/active-count'),
     ]);
+
     const stats = await statsRes.json();
     const tourney = await tourneyRes.json();
     const gl = await glRes.json();
+
+    // Active count — try dedicated endpoint first, fallback to stats
+    let activeCount = 0;
+    try {
+      const activeData = await activeRes.json();
+      activeCount = activeData.count || activeData.active || 0;
+    } catch(_) {
+      activeCount = stats.activeGames || stats.activeRooms || 0;
+    }
 
     const gTotal = document.getElementById('gTotal');
     if(gTotal) gTotal.textContent = stats.totalGamesPlayed || '—';
 
     const gActive = document.getElementById('gActive');
-    if(gActive) gActive.textContent = tourney.live_count || '0';
+    if(gActive) gActive.textContent = activeCount || '0';
 
     const glQuestions = document.getElementById('glQuestions');
     if(glQuestions) glQuestions.textContent = gl?.stats?.available || '0';

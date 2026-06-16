@@ -5168,6 +5168,20 @@ app.get("/tournaments/:id/my-application", async (req, res) => {
   }
 });
 
+app.get("/games/active-count", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("games")
+      .select("id", { count: "exact" })
+      .eq("status", 0)
+      .gt("play_deadline", Math.floor(Date.now() / 1000));
+
+    res.json({ count: data?.length || 0, active: data?.length || 0 });
+  } catch (e) {
+    res.json({ count: 0 });
+  }
+});
+
 // ── APPLICATIONS: creator gets all applications ───────────────────────────
 app.get("/tournaments/:id/applications", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
@@ -5410,17 +5424,17 @@ let genLayerClient = null;
 
 async function initGenLayer() {
   try {
-    const { createClient, createAccount } = await import('genlayer-js');
-    const { testnetBradbury } = await import('genlayer-js/chains');
+    const { createClient, createAccount } = await import("genlayer-js");
+    const { testnetBradbury } = await import("genlayer-js/chains");
 
     genLayerClient = createClient({
       chain: testnetBradbury,
-      account: createAccount(process.env.GENLAYER_PRIVATE_KEY)
+      account: createAccount(process.env.GENLAYER_PRIVATE_KEY),
     });
 
-    console.log('✅ GenLayer client initialized on Bradbury Testnet');
+    console.log("✅ GenLayer client initialized on Bradbury Testnet");
   } catch (err) {
-    console.error('❌ GenLayer init failed:', err.message);
+    console.error("❌ GenLayer init failed:", err.message);
     genLayerClient = null;
   }
 }
@@ -5428,36 +5442,35 @@ async function initGenLayer() {
 async function generateGenLayerQuestion(category, difficulty) {
   if (!genLayerClient) return null;
   try {
-    const { TransactionStatus } = await import('genlayer-js/types');
+    const { TransactionStatus } = await import("genlayer-js/types");
 
     const txHash = await genLayerClient.writeContract({
       address: process.env.GENLAYER_CONTRACT,
-      functionName: 'get_question',
+      functionName: "get_question",
       args: [category, difficulty],
-      value: BigInt(0)
+      value: BigInt(0),
     });
 
-    console.log('GenLayer TX:', txHash);
+    console.log("GenLayer TX:", txHash);
 
     const receipt = await genLayerClient.waitForTransactionReceipt({
       hash: txHash,
       status: TransactionStatus.ACCEPTED,
       interval: 5000,
-      retries: 24
+      retries: 24,
     });
 
-    console.log('GenLayer receipt status:', receipt.status);
+    console.log("GenLayer receipt status:", receipt.status);
 
     const result = await genLayerClient.readContract({
       address: process.env.GENLAYER_CONTRACT,
-      functionName: 'get_result',
-      args: []
+      functionName: "get_result",
+      args: [],
     });
 
-    return typeof result === 'string' ? JSON.parse(result) : result;
-
+    return typeof result === "string" ? JSON.parse(result) : result;
   } catch (err) {
-    console.error('GenLayer question error:', err.message);
+    console.error("GenLayer question error:", err.message);
     return null;
   }
 }
@@ -5466,32 +5479,43 @@ async function preGenerateGenLayerQuestions() {
   if (!genLayerClient) return;
   try {
     const countRes = await pool.query(
-      'SELECT COUNT(*) FROM genlayer_questions WHERE used = FALSE'
+      "SELECT COUNT(*) FROM genlayer_questions WHERE used = FALSE",
     );
     const unused = parseInt(countRes.rows[0].count);
     if (unused >= 50) return;
 
-    const categories = ['crypto','blockchain','web3','defi','nft','bitcoin','ethereum'];
-    const difficulties = ['easy','medium','hard'];
+    const categories = [
+      "crypto",
+      "blockchain",
+      "web3",
+      "defi",
+      "nft",
+      "bitcoin",
+      "ethereum",
+    ];
+    const difficulties = ["easy", "medium", "hard"];
     const toGenerate = Math.min(10, 50 - unused);
 
-    console.log('🤖 GenLayer: Generating ' + toGenerate + ' questions on Bradbury...');
+    console.log(
+      "🤖 GenLayer: Generating " + toGenerate + " questions on Bradbury...",
+    );
 
     for (let i = 0; i < toGenerate; i++) {
       const cat = categories[Math.floor(Math.random() * categories.length)];
-      const diff = difficulties[Math.floor(Math.random() * difficulties.length)];
+      const diff =
+        difficulties[Math.floor(Math.random() * difficulties.length)];
       const question = await generateGenLayerQuestion(cat, diff);
       if (question) {
         await pool.query(
-          'INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)',
-          [cat, diff, JSON.stringify(question)]
+          "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
+          [cat, diff, JSON.stringify(question)],
         );
-        console.log('✅ GenLayer saved: ' + cat + '/' + diff);
+        console.log("✅ GenLayer saved: " + cat + "/" + diff);
       }
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 5000));
     }
   } catch (err) {
-    console.error('GenLayer pre-gen error:', err.message);
+    console.error("GenLayer pre-gen error:", err.message);
   }
 }
 
@@ -5500,7 +5524,7 @@ initGenLayer().then(() => {
   setInterval(preGenerateGenLayerQuestions, 30 * 60 * 1000);
 });
 
-app.get('/genlayer/stats', async (req, res) => {
+app.get("/genlayer/stats", async (req, res) => {
   try {
     const stats = await pool.query(`
       SELECT 
@@ -5509,31 +5533,39 @@ app.get('/genlayer/stats', async (req, res) => {
         COUNT(*) as total
       FROM genlayer_questions
     `);
-    res.json({ ok: true, stats: stats.rows[0], network: 'bradbury' });
+    res.json({ ok: true, stats: stats.rows[0], network: "bradbury" });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
 });
 
-app.get('/genlayer/question', async (req, res) => {
-  const { category = 'crypto', difficulty = 'medium' } = req.query;
+app.get("/genlayer/question", async (req, res) => {
+  const { category = "crypto", difficulty = "medium" } = req.query;
   try {
     const cached = await pool.query(
-      'SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1'
+      "SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1",
     );
     if (cached.rows.length > 0) {
-      await pool.query('UPDATE genlayer_questions SET used = TRUE WHERE id = $1', [cached.rows[0].id]);
-      return res.json({ ok: true, question: cached.rows[0].data, source: 'genlayer_bradbury' });
+      await pool.query(
+        "UPDATE genlayer_questions SET used = TRUE WHERE id = $1",
+        [cached.rows[0].id],
+      );
+      return res.json({
+        ok: true,
+        question: cached.rows[0].data,
+        source: "genlayer_bradbury",
+      });
     }
     const question = await generateGenLayerQuestion(category, difficulty);
-    if (!question) return res.json({ ok: false, error: 'GenLayer unavailable' });
-    res.json({ ok: true, question, source: 'genlayer_live' });
+    if (!question)
+      return res.json({ ok: false, error: "GenLayer unavailable" });
+    res.json({ ok: true, question, source: "genlayer_live" });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
 });
 
-app.post('/admin/genlayer/generate', async (req, res) => {
+app.post("/admin/genlayer/generate", async (req, res) => {
   preGenerateGenLayerQuestions();
-  res.json({ ok: true, message: 'Generation started on Bradbury testnet' });
+  res.json({ ok: true, message: "Generation started on Bradbury testnet" });
 });
