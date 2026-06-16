@@ -1445,34 +1445,63 @@ async function reconnectContracts() {
 }
 
 async function connectWallet() {
+  const chosen = await showWalletModal();
+  if (!chosen) return;
+
   try {
-    const providerOptions = {
-      walletconnect: {
-        package:
-          window.WalletConnectProvider?.default || window.WalletConnectProvider,
-        options: {
-          rpc: {
-            5042002: "https://rpc.testnet.arc.network",
-            4441: "https://liteforge.rpc.caldera.xyz/http",
-          },
+    let instance;
+
+    if (chosen === "walletconnect") {
+      const WCP =
+        window.WalletConnectProvider?.default || window.WalletConnectProvider;
+      instance = new WCP({
+        rpc: {
+          5042002: "https://rpc.testnet.arc.network",
+          4441: "https://liteforge.rpc.caldera.xyz/http",
         },
-      },
-    };
+      });
+      await instance.enable();
+    } else {
+      // All injected wallets
+      const providerMap = {
+        metamask: () =>
+          window.ethereum?.providers?.find((p) => p.isMetaMask) ||
+          (window.ethereum?.isMetaMask ? window.ethereum : null),
+        coinbase: () =>
+          window.ethereum?.providers?.find((p) => p.isCoinbaseWallet) ||
+          window.coinbaseWalletExtension ||
+          (window.ethereum?.isCoinbaseWallet ? window.ethereum : null),
+        rabby: () => (window.ethereum?.isRabby ? window.ethereum : null),
+        okx: () => window.okxwallet || null,
+        trust: () =>
+          window.trustwallet ||
+          (window.ethereum?.isTrust ? window.ethereum : null),
+        brave: () => (window.ethereum?.isBraveWallet ? window.ethereum : null),
+        phantom: () => window.phantom?.ethereum || null,
+        bybit: () => window.bybitWallet || null,
+      };
 
-    const WM = window.Web3Modal?.default || window.Web3Modal;
-    const web3Modal = new WM({
-      cacheProvider: false,
-      providerOptions,
-      theme: {
-        background: "#0f0f0f",
-        main: "#ffffff",
-        secondary: "rgba(255,255,255,0.4)",
-        border: "rgba(255,255,255,0.08)",
-        hover: "rgba(255,107,0,0.08)",
-      },
-    });
+      const getProvider = providerMap[chosen];
+      instance = getProvider?.();
 
-    const instance = await web3Modal.connect();
+      if (!instance) {
+        const installLinks = {
+          metamask: "https://metamask.io/download/",
+          coinbase: "https://www.coinbase.com/wallet/downloads",
+          rabby: "https://rabby.io",
+          okx: "https://www.okx.com/web3",
+          trust: "https://trustwallet.com/browser-extension",
+          brave: "https://brave.com/wallet/",
+          phantom: "https://phantom.app",
+          bybit: "https://www.bybit.com/web3",
+        };
+        window.open(installLinks[chosen], "_blank");
+        return;
+      }
+
+      await instance.request({ method: "eth_requestAccounts" });
+    }
+
     provider = new ethers.BrowserProvider(instance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
@@ -1483,21 +1512,20 @@ async function connectWallet() {
     if (NETWORKS[chainId]) {
       activeNet = NETWORKS[chainId];
     } else {
-      const chosen = await showNetworkPicker();
-      if (!chosen) return;
-      activeNet = NETWORKS[chosen];
+      const picked = await showNetworkPicker();
+      if (!picked) return;
+      activeNet = NETWORKS[picked];
       try {
         await instance.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: activeNet.hexChainId }],
         });
       } catch (e) {
-        if (e.code === 4902) {
+        if (e.code === 4902)
           await instance.request({
             method: "wallet_addEthereumChain",
             params: [{ chainId: activeNet.hexChainId, ...activeNet.addParams }],
           });
-        }
       }
       provider = new ethers.BrowserProvider(instance);
       signer = await provider.getSigner();
@@ -1507,13 +1535,8 @@ async function connectWallet() {
     CONTRACT_ADDRESS = activeNet.contractAddress;
     USDC_ADDRESS = activeNet.tokenAddress;
     contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-    if (!activeNet.isNative) {
+    if (!activeNet.isNative)
       usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-    }
-
-    const netBadge = document.querySelector(".pd-online");
-    if (netBadge)
-      netBadge.innerHTML = `<span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span> Online · ${activeNet.name}`;
 
     try {
       platformAddress = await readContract.platform();
@@ -1542,10 +1565,7 @@ async function connectWallet() {
     });
     const authData = await authRes.json();
     if (authData.error === "wallet_google_taken") {
-      toast(
-        "⚠️ This wallet is already linked to a Google account. Sign in with Google first.",
-        "error",
-      );
+      toast("⚠️ This wallet is already linked to a Google account.", "error");
       userAddress = null;
       provider = signer = contract = usdcContract = null;
       return;
@@ -1561,47 +1581,284 @@ async function connectWallet() {
     if (meData.user) currentProfile = meData.user;
     if (authData.user) currentProfile = authData.user;
 
-    const activeScreen = document.querySelector(".screen.active");
-    if (activeScreen?.id === "screenJoin" && currentGameId)
-      await openGame(currentGameId);
-
     renderAuthState();
     toast("✅ Wallet connected!", "success");
     await loadGames();
     loadMyStats();
     checkUnclaimedPrizes();
+    updateNetBar();
     if (currentGameId) openGame(currentGameId);
     if (window.pendingGameId) {
       openGame(window.pendingGameId);
       window.pendingGameId = null;
     }
-    updateNetBar();
 
-    instance.on("disconnect", () => {
+    instance.on?.("disconnect", () => {
       provider = signer = contract = usdcContract = null;
       userAddress = null;
       renderAuthState();
-      toast("Wallet disconnected", "info");
     });
-
-    instance.on("accountsChanged", (accounts) => {
-      if (accounts.length === 0) {
+    instance.on?.("accountsChanged", (accounts) => {
+      if (!accounts.length) {
         provider = signer = contract = usdcContract = null;
         userAddress = null;
         renderAuthState();
-      } else {
-        connectWallet();
-      }
+      } else connectWallet();
     });
   } catch (e) {
     if (
-      e === "Modal closed by user" ||
-      e?.message?.includes("closed") ||
-      e?.message?.includes("User closed")
+      e.code === 4001 ||
+      e?.message?.includes("User closed") ||
+      e?.message?.includes("rejected")
     )
       return;
-    toast("Connection failed: " + e.message, "error");
+    console.error(e);
+    toast("Connection failed: " + (e.message || "Unknown error"), "error");
   }
+}
+
+function showWalletModal() {
+  return new Promise((resolve) => {
+    const existing = document.getElementById("walletModal");
+    if (existing) existing.remove();
+
+    const wallets = [
+      {
+        id: "metamask",
+        name: "MetaMask",
+        desc: "Available everywhere",
+        detected: !!window.ethereum?.isMetaMask,
+        popular: true,
+        icon: `<svg width="36" height="36" viewBox="0 0 35 33"><path d="M32.9 1L19.4 10.7l2.5-5.9L32.9 1z" fill="#E17726"/><path d="M2.1 1l13.4 9.8-2.4-5.9L2.1 1z" fill="#E27625"/><path d="M28.2 23.5l-3.6 5.5 7.7 2.1 2.2-7.5-6.3-.1z" fill="#E27625"/><path d="M1.5 23.6l2.2 7.5 7.7-2.1-3.6-5.5-6.3.1z" fill="#E27625"/><path d="M10.9 14.5l-2.1 3.2 7.5.3-.3-8-5.1 4.5z" fill="#E27625"/><path d="M24.1 14.5l-5.2-4.6-.2 8.1 7.5-.3-2.1-3.2z" fill="#E27625"/><path d="M11.4 29l4.5-2.2-3.9-3-.6 5.2z" fill="#E27625"/><path d="M19.1 26.8l4.5 2.2-.7-5.2-3.8 3z" fill="#E27625"/></svg>`,
+      },
+      {
+        id: "coinbase",
+        name: "Coinbase Wallet",
+        desc: "By Coinbase exchange",
+        detected: !!(
+          window.ethereum?.isCoinbaseWallet || window.coinbaseWalletExtension
+        ),
+        popular: true,
+        icon: `<svg width="36" height="36" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#0052FF"/><path d="M16 7C11 7 7 11 7 16s4 9 9 9 9-4 9-9-4-9-9-9zm0 4a5 5 0 110 10A5 5 0 0116 11zm-2.5 3.5v3h5v-3h-5z" fill="white"/></svg>`,
+      },
+      {
+        id: "walletconnect",
+        name: "WalletConnect",
+        desc: "400+ wallets via QR",
+        detected: true,
+        popular: true,
+        icon: `<svg width="36" height="36" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#3B99FC"/><path d="M9.6 12.8c3.5-3.5 9.3-3.5 12.8 0l.4.4c.2.2.2.5 0 .7l-1.4 1.4c-.1.1-.3.1-.4 0l-.6-.6c-2.5-2.5-6.5-2.5-9 0l-.6.6c-.1.1-.3.1-.4 0L8.8 14c-.2-.2-.2-.5 0-.7l.8-.5zm15.8 3l1.3 1.3c.2.2.2.5 0 .7l-5.7 5.7c-.2.2-.5.2-.7 0L16 19.4l-4.3 4.3c-.2.2-.5.2-.7 0L5.3 18c-.2-.2-.2-.5 0-.7l1.3-1.3c.2-.2.5-.2.7 0L11.6 20l4.3-4.3c.2-.2.5-.2.7 0l4.3 4.3 4.2-4.2c.2-.2.5-.2.7 0z" fill="white"/></svg>`,
+      },
+      {
+        id: "rabby",
+        name: "Rabby",
+        desc: "Best for DeFi power users",
+        detected: !!window.ethereum?.isRabby,
+        icon: `<svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="18" fill="#8697FF"/><text x="8" y="25" font-size="18" fill="white">🐰</text></svg>`,
+      },
+      {
+        id: "okx",
+        name: "OKX Wallet",
+        desc: "By OKX exchange",
+        detected: !!window.okxwallet,
+        icon: `<svg width="36" height="36" viewBox="0 0 36 36"><rect width="36" height="36" rx="8" fill="#000"/><rect x="6" y="6" width="10" height="10" fill="white"/><rect x="20" y="6" width="10" height="10" fill="white"/><rect x="6" y="20" width="10" height="10" fill="white"/><rect x="20" y="20" width="10" height="10" fill="white"/></svg>`,
+      },
+      {
+        id: "trust",
+        name: "Trust Wallet",
+        desc: "Mobile-first wallet",
+        detected: !!(window.trustwallet || window.ethereum?.isTrust),
+        icon: `<svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="18" fill="#3375BB"/><path d="M18 7l9 4v8C27 24.5 23 29 18 31c-5-2-9-6.5-9-12v-8l9-4z" fill="white"/></svg>`,
+      },
+      {
+        id: "phantom",
+        name: "Phantom",
+        desc: "Popular on Solana + EVM",
+        detected: !!window.phantom?.ethereum,
+        icon: `<svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="18" fill="#AB9FF2"/><path d="M28 18c0-5.5-4.5-10-10-10S8 12.5 8 18c0 4.6 3.1 8.5 7.4 9.7-.1-.5-.2-1-.2-1.5 0-2.7 2.2-4.9 4.9-4.9 1.8 0 3.3.9 4.2 2.3C26.4 22.6 28 20.5 28 18z" fill="white"/></svg>`,
+      },
+      {
+        id: "bybit",
+        name: "Bybit Wallet",
+        desc: "By Bybit exchange",
+        detected: !!window.bybitWallet,
+        icon: `<svg width="36" height="36" viewBox="0 0 36 36"><rect width="36" height="36" rx="8" fill="#F7A600"/><text x="7" y="25" font-size="16" font-weight="bold" fill="black">BB</text></svg>`,
+      },
+    ];
+
+    const detected = wallets.filter((w) => w.detected);
+    const notDetected = wallets.filter((w) => !w.detected);
+
+    const modal = document.createElement("div");
+    modal.id = "walletModal";
+    modal.style.cssText = `
+      position:fixed;inset:0;z-index:10010;
+      display:flex;align-items:center;justify-content:center;
+      background:rgba(0,0,0,0.75);backdrop-filter:blur(16px);
+      animation:fadeIn .15s ease;
+    `;
+
+    modal.innerHTML = `
+      <style>
+        @keyframes slideUp { from{transform:translateY(30px);opacity:0} to{transform:translateY(0);opacity:1} }
+        @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+        .wm-card {
+          background:#0d0d0d;
+          border:1px solid rgba(255,255,255,0.08);
+          border-radius:20px;
+          width:95%;max-width:420px;
+          padding:0;overflow:hidden;
+          animation:slideUp .2s cubic-bezier(.175,.885,.32,1.275);
+          box-shadow:0 24px 64px rgba(0,0,0,0.6);
+        }
+        .wm-header {
+          padding:22px 22px 16px;
+          border-bottom:1px solid rgba(255,255,255,0.06);
+          display:flex;align-items:center;justify-content:space-between;
+        }
+        .wm-title { font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:2px;color:#fff; }
+        .wm-subtitle { font-size:.72rem;color:rgba(255,255,255,0.35);margin-top:2px;font-family:'Space Mono',monospace; }
+        .wm-close {
+          width:30px;height:30px;border-radius:8px;
+          background:rgba(255,255,255,0.06);border:none;
+          color:rgba(255,255,255,0.5);cursor:pointer;font-size:1rem;
+          display:flex;align-items:center;justify-content:center;
+          transition:.15s;
+        }
+        .wm-close:hover { background:rgba(255,255,255,0.12);color:#fff; }
+        .wm-section-label {
+          font-family:'Space Mono',monospace;font-size:.62rem;
+          color:rgba(255,255,255,0.25);text-transform:uppercase;
+          letter-spacing:1.5px;padding:14px 22px 8px;
+        }
+        .wm-list { padding:0 12px 12px; display:flex;flex-direction:column;gap:4px; }
+        .wm-item {
+          display:flex;align-items:center;gap:14px;
+          padding:11px 12px;border-radius:12px;
+          cursor:pointer;border:1px solid transparent;
+          transition:.15s;position:relative;
+        }
+        .wm-item:hover {
+          background:rgba(255,107,0,0.06);
+          border-color:rgba(255,107,0,0.2);
+        }
+        .wm-icon {
+          width:42px;height:42px;border-radius:12px;
+          overflow:hidden;flex-shrink:0;
+          display:flex;align-items:center;justify-content:center;
+          background:rgba(255,255,255,0.04);
+          border:1px solid rgba(255,255,255,0.06);
+        }
+        .wm-name { font-size:.88rem;font-weight:700;color:#fff; }
+        .wm-desc { font-size:.68rem;color:rgba(255,255,255,0.3);margin-top:1px;font-family:'Space Mono',monospace; }
+        .wm-badge-detected {
+          font-family:'Space Mono',monospace;font-size:.58rem;font-weight:700;
+          background:rgba(6,214,160,0.1);color:#06d6a0;
+          border:1px solid rgba(6,214,160,0.25);
+          padding:2px 8px;border-radius:20px;margin-left:auto;flex-shrink:0;
+        }
+        .wm-badge-install {
+          font-family:'Space Mono',monospace;font-size:.58rem;
+          color:rgba(255,255,255,0.2);
+          margin-left:auto;flex-shrink:0;
+        }
+        .wm-popular-dot {
+          position:absolute;top:8px;right:10px;
+          width:5px;height:5px;border-radius:50%;
+          background:var(--orange);
+        }
+        .wm-footer {
+          padding:12px 22px 16px;
+          border-top:1px solid rgba(255,255,255,0.05);
+          font-family:'Space Mono',monospace;
+          font-size:.65rem;color:rgba(255,255,255,0.2);
+          text-align:center;line-height:1.7;
+        }
+        .wm-divider {
+          height:1px;background:rgba(255,255,255,0.05);
+          margin:4px 12px;
+        }
+      </style>
+
+      <div class="wm-card">
+        <div class="wm-header">
+          <div>
+            <div class="wm-title">Connect Wallet</div>
+            <div class="wm-subtitle">Choose how you want to connect</div>
+          </div>
+          <button class="wm-close" id="wmClose">✕</button>
+        </div>
+
+        ${
+          detected.length > 0
+            ? `
+          <div class="wm-section-label">Detected in your browser</div>
+          <div class="wm-list">
+            ${detected
+              .map(
+                (w) => `
+              <div class="wm-item" data-wallet="${w.id}">
+                <div class="wm-icon">${w.icon}</div>
+                <div>
+                  <div class="wm-name">${w.name}</div>
+                  <div class="wm-desc">${w.desc}</div>
+                </div>
+                <span class="wm-badge-detected">● Connected</span>
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
+          <div class="wm-divider"></div>
+        `
+            : ""
+        }
+
+        <div class="wm-section-label">${detected.length > 0 ? "Other wallets" : "Choose a wallet"}</div>
+        <div class="wm-list" style="max-height:280px;overflow-y:auto">
+          ${notDetected
+            .map(
+              (w) => `
+            <div class="wm-item" data-wallet="${w.id}">
+              <div class="wm-icon">${w.icon}</div>
+              <div>
+                <div class="wm-name">${w.name}</div>
+                <div class="wm-desc">${w.desc}</div>
+              </div>
+              <span class="wm-badge-install">Install →</span>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
+
+        <div class="wm-footer">
+          By connecting you agree to our terms.<br>
+          TriviaFi never stores your private keys.
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Events
+    document.getElementById("wmClose").onclick = () => {
+      modal.remove();
+      resolve(null);
+    };
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) {
+        modal.remove();
+        resolve(null);
+      }
+    });
+    modal.querySelectorAll(".wm-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        modal.remove();
+        resolve(item.dataset.wallet);
+      });
+    });
+  });
 }
 
 function updateNetBar() {
