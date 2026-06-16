@@ -1288,19 +1288,25 @@ async function createProvider(chainId) {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
-  // ✅ Show dashes temporarily, then load — prevents hanging UI
   document.getElementById("gTotal").textContent = "...";
   document.getElementById("gActive").textContent = "...";
-  // ✅ Don't let provider creation block the whole page
   try {
+    // Suppress console errors during provider init
+    const originalError = console.error;
+    console.error = (...args) => {
+      if (args[0]?.toString?.().includes("JsonRpcProvider failed")) return;
+      originalError.apply(console, args);
+    };
     readProvider = await Promise.race([
       createProvider(),
       new Promise((_, r) => setTimeout(() => r(new Error("timeout")), 4000)),
     ]);
+    console.error = originalError;
   } catch (_) {
-    // Fallback to default RPC without waiting
     readProvider = new ethers.JsonRpcProvider(
       "https://rpc.testnet.arc.network",
+      { chainId: 5042002, name: "arc-testnet" },
+      { staticNetwork: true },
     );
   }
   readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider);
@@ -1442,7 +1448,8 @@ async function connectWallet() {
   try {
     const providerOptions = {
       walletconnect: {
-        package: WalletConnectProvider,
+        package:
+          window.WalletConnectProvider?.default || window.WalletConnectProvider,
         options: {
           rpc: {
             5042002: "https://rpc.testnet.arc.network",
@@ -1452,7 +1459,8 @@ async function connectWallet() {
       },
     };
 
-    const web3Modal = new Web3Modal({
+    const WM = window.Web3Modal?.default || window.Web3Modal;
+    const web3Modal = new WM({
       cacheProvider: false,
       providerOptions,
       theme: {
