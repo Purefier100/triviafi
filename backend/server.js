@@ -5476,13 +5476,32 @@ async function generateGenLayerQuestion(category, difficulty) {
 }
 
 async function preGenerateGenLayerQuestions() {
-  if (!genLayerClient) return;
+  if (!genLayerClient) {
+    console.log("⚠️ GenLayer client not ready, skipping generation");
+    return;
+  }
   try {
     const countRes = await pool.query(
       "SELECT COUNT(*) FROM genlayer_questions WHERE used = FALSE",
     );
     const unused = parseInt(countRes.rows[0].count);
-    if (unused >= 50) return;
+    console.log(`🤖 GenLayer pool check: ${unused} available`);
+
+    if (unused >= 100) {
+      console.log("✅ GenLayer pool full (100), skipping generation");
+      return;
+    }
+
+    // Auto-reset if all questions used up
+    const totalRes = await pool.query(
+      "SELECT COUNT(*) FROM genlayer_questions",
+    );
+    const total = parseInt(totalRes.rows[0].count);
+    if (total > 0 && unused === 0) {
+      console.log("🔄 GenLayer pool empty — resetting all questions to unused");
+      await pool.query("UPDATE genlayer_questions SET used = FALSE");
+      return; // next interval will generate more
+    }
 
     const categories = [
       "crypto",
@@ -5492,36 +5511,52 @@ async function preGenerateGenLayerQuestions() {
       "nft",
       "bitcoin",
       "ethereum",
+      "solidity",
+      "smart contracts",
+      "layer2",
     ];
     const difficulties = ["easy", "medium", "hard"];
-    const toGenerate = Math.min(10, 50 - unused);
+
+    // Generate more aggressively when pool is low
+    const toGenerate = unused < 10 ? 10 : 5;
 
     console.log(
-      "🤖 GenLayer: Generating " + toGenerate + " questions on Bradbury...",
+      `🤖 GenLayer: Generating ${toGenerate} questions on Bradbury...`,
     );
 
+    let generated = 0;
     for (let i = 0; i < toGenerate; i++) {
-      const cat = categories[Math.floor(Math.random() * categories.length)];
-      const diff =
-        difficulties[Math.floor(Math.random() * difficulties.length)];
-      const question = await generateGenLayerQuestion(cat, diff);
-      if (question) {
-        await pool.query(
-          "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
-          [cat, diff, JSON.stringify(question)],
-        );
-        console.log("✅ GenLayer saved: " + cat + "/" + diff);
+      try {
+        const cat = categories[Math.floor(Math.random() * categories.length)];
+        const diff =
+          difficulties[Math.floor(Math.random() * difficulties.length)];
+        const question = await generateGenLayerQuestion(cat, diff);
+        if (question) {
+          await pool.query(
+            "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
+            [cat, diff, JSON.stringify(question)],
+          );
+          generated++;
+          console.log(`✅ GenLayer saved Q${generated}: ${cat}/${diff}`);
+        }
+        await new Promise((r) => setTimeout(r, 3000)); // 3s between each
+      } catch (qErr) {
+        console.error(`❌ GenLayer Q${i + 1} failed:`, qErr.message);
+        await new Promise((r) => setTimeout(r, 5000)); // wait longer on error
       }
-      await new Promise((r) => setTimeout(r, 5000));
     }
+
+    console.log(
+      `🎉 GenLayer generation done: ${generated}/${toGenerate} questions added`,
+    );
   } catch (err) {
     console.error("GenLayer pre-gen error:", err.message);
   }
 }
 
 initGenLayer().then(() => {
-  setTimeout(preGenerateGenLayerQuestions, 60000);
-  setInterval(preGenerateGenLayerQuestions, 30 * 60 * 1000);
+  setTimeout(preGenerateGenLayerQuestions, 30000); // start after 30s
+  setInterval(preGenerateGenLayerQuestions, 10 * 60 * 1000); // every 10 mins
 });
 
 app.get("/genlayer/stats", async (req, res) => {
@@ -5540,11 +5575,20 @@ app.get("/genlayer/stats", async (req, res) => {
 });
 
 app.get("/genlayer/question", async (req, res) => {
-  const { category = "crypto", difficulty = "medium" } = req.query;
   try {
-    const cached = await pool.query(
+    let cached = await pool.query(
       "SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1",
     );
+
+    // Auto-reset pool if empty
+    if (cached.rows.length === 0) {
+      console.log("🔄 GenLayer pool empty — auto-resetting");
+      await pool.query("UPDATE genlayer_questions SET used = FALSE");
+      cached = await pool.query(
+        "SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1",
+      );
+    }
+
     if (cached.rows.length > 0) {
       await pool.query(
         "UPDATE genlayer_questions SET used = TRUE WHERE id = $1",
@@ -5556,10 +5600,11 @@ app.get("/genlayer/question", async (req, res) => {
         source: "genlayer_bradbury",
       });
     }
-    const question = await generateGenLayerQuestion(category, difficulty);
-    if (!question)
-      return res.json({ ok: false, error: "GenLayer unavailable" });
-    res.json({ ok: true, question, source: "genlayer_live" });
+
+    // No questions at all — trigger background generation
+    console.log("⚠️ GenLayer pool completely empty, triggering generation");
+    preGenerateGenLayerQuestions().catch(() => {});
+    return res.json({ ok: false, error: "GenLayer unavailable" });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
