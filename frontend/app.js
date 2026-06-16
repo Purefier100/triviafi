@@ -1465,26 +1465,52 @@ async function connectWallet() {
       // Get all providers when multiple wallets are installed
       const allProviders = window.ethereum?.providers || [window.ethereum];
 
+      // DEBUG — remove after fixing
+      console.log(
+        "All providers:",
+        window.ethereum?.providers?.map((p) => ({
+          isMetaMask: p.isMetaMask,
+          isOKExWallet: p.isOKExWallet,
+          isOkxWallet: p.isOkxWallet,
+          isCoinbaseWallet: p.isCoinbaseWallet,
+          isRabby: p.isRabby,
+          isBraveWallet: p.isBraveWallet,
+        })),
+      );
+      console.log("window.ethereum flags:", {
+        isMetaMask: window.ethereum?.isMetaMask,
+        isOKExWallet: window.ethereum?.isOKExWallet,
+        isOkxWallet: window.ethereum?.isOkxWallet,
+      });
+
       const providerMap = {
         metamask: () => {
-          // Check providers array first (multiple wallets installed)
-          if (window.ethereum?.providers) {
-            return window.ethereum.providers.find(
+          // Try providers array first (most reliable when multiple wallets installed)
+          if (window.ethereum?.providers?.length) {
+            // Real MetaMask never has isOKExWallet, isBraveWallet, isCoinbaseWallet
+            const mm = window.ethereum.providers.find(
               (p) =>
-                p.isMetaMask &&
+                p.isMetaMask === true &&
                 !p.isOKExWallet &&
                 !p.isOkxWallet &&
-                !p.isCoinbaseWallet,
+                !p.isBraveWallet &&
+                !p.isCoinbaseWallet &&
+                !p.isTrust &&
+                !p.isRabby,
             );
+            if (mm) return mm;
           }
-          // Single wallet — make sure it's actually MetaMask not OKX
+          // MetaMask extension injects window.ethereum directly when alone
           if (
             window.ethereum?.isMetaMask &&
             !window.ethereum?.isOKExWallet &&
-            !window.ethereum?.isOkxWallet
+            !window.ethereum?.isOkxWallet &&
+            !window.ethereum?.isBraveWallet
           ) {
             return window.ethereum;
           }
+          // Last resort: check if MetaMask added itself to a different key
+          if (window.metamaskEthereum) return window.metamaskEthereum;
           return null;
         },
         coinbase: () => {
