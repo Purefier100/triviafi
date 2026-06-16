@@ -1439,13 +1439,33 @@ async function reconnectContracts() {
 }
 
 async function connectWallet() {
-  if (!window.ethereum) {
-    toast("Please install MetaMask", "error");
-    return;
-  }
   try {
-    await window.ethereum.request({ method: "eth_requestAccounts" });
-    provider = new ethers.BrowserProvider(window.ethereum);
+    const providerOptions = {
+      walletconnect: {
+        package: WalletConnectProvider,
+        options: {
+          rpc: {
+            5042002: "https://rpc.testnet.arc.network",
+            4441: "https://liteforge.rpc.caldera.xyz/http",
+          },
+        },
+      },
+    };
+
+    const web3Modal = new Web3Modal({
+      cacheProvider: false,
+      providerOptions,
+      theme: {
+        background: "#0f0f0f",
+        main: "#ffffff",
+        secondary: "rgba(255,255,255,0.4)",
+        border: "rgba(255,255,255,0.08)",
+        hover: "rgba(255,107,0,0.08)",
+      },
+    });
+
+    const instance = await web3Modal.connect();
+    provider = new ethers.BrowserProvider(instance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
@@ -1459,19 +1479,19 @@ async function connectWallet() {
       if (!chosen) return;
       activeNet = NETWORKS[chosen];
       try {
-        await window.ethereum.request({
+        await instance.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: activeNet.hexChainId }],
         });
       } catch (e) {
         if (e.code === 4902) {
-          await window.ethereum.request({
+          await instance.request({
             method: "wallet_addEthereumChain",
             params: [{ chainId: activeNet.hexChainId, ...activeNet.addParams }],
           });
         }
       }
-      provider = new ethers.BrowserProvider(window.ethereum);
+      provider = new ethers.BrowserProvider(instance);
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
     }
@@ -1494,7 +1514,6 @@ async function connectWallet() {
     const message = `Login to ${activeNet.name}`;
     const signature = await signer.signMessage(message);
 
-    // Fetch CSRF token before wallet auth
     let csrfToken = "";
     try {
       const ct = await fetch(`${BACKEND}/csrf-token`, {
@@ -1549,7 +1568,30 @@ async function connectWallet() {
       window.pendingGameId = null;
     }
     updateNetBar();
+
+    instance.on("disconnect", () => {
+      provider = signer = contract = usdcContract = null;
+      userAddress = null;
+      renderAuthState();
+      toast("Wallet disconnected", "info");
+    });
+
+    instance.on("accountsChanged", (accounts) => {
+      if (accounts.length === 0) {
+        provider = signer = contract = usdcContract = null;
+        userAddress = null;
+        renderAuthState();
+      } else {
+        connectWallet();
+      }
+    });
   } catch (e) {
+    if (
+      e === "Modal closed by user" ||
+      e?.message?.includes("closed") ||
+      e?.message?.includes("User closed")
+    )
+      return;
     toast("Connection failed: " + e.message, "error");
   }
 }
