@@ -1462,21 +1462,69 @@ async function connectWallet() {
       });
       await instance.enable();
     } else {
-      // All injected wallets
+      // Get all providers when multiple wallets are installed
+      const allProviders = window.ethereum?.providers || [window.ethereum];
+
       const providerMap = {
-        metamask: () =>
-          window.ethereum?.providers?.find((p) => p.isMetaMask) ||
-          (window.ethereum?.isMetaMask ? window.ethereum : null),
-        coinbase: () =>
-          window.ethereum?.providers?.find((p) => p.isCoinbaseWallet) ||
-          window.coinbaseWalletExtension ||
-          (window.ethereum?.isCoinbaseWallet ? window.ethereum : null),
-        rabby: () => (window.ethereum?.isRabby ? window.ethereum : null),
-        okx: () => window.okxwallet || null,
-        trust: () =>
-          window.trustwallet ||
-          (window.ethereum?.isTrust ? window.ethereum : null),
-        brave: () => (window.ethereum?.isBraveWallet ? window.ethereum : null),
+        metamask: () => {
+          // Check providers array first (multiple wallets installed)
+          if (window.ethereum?.providers) {
+            return window.ethereum.providers.find(
+              (p) =>
+                p.isMetaMask &&
+                !p.isOKExWallet &&
+                !p.isOkxWallet &&
+                !p.isCoinbaseWallet,
+            );
+          }
+          // Single wallet — make sure it's actually MetaMask not OKX
+          if (
+            window.ethereum?.isMetaMask &&
+            !window.ethereum?.isOKExWallet &&
+            !window.ethereum?.isOkxWallet
+          ) {
+            return window.ethereum;
+          }
+          return null;
+        },
+        coinbase: () => {
+          if (window.ethereum?.providers) {
+            return window.ethereum.providers.find((p) => p.isCoinbaseWallet);
+          }
+          return (
+            window.coinbaseWalletExtension ||
+            (window.ethereum?.isCoinbaseWallet ? window.ethereum : null)
+          );
+        },
+        rabby: () => {
+          if (window.ethereum?.providers) {
+            return window.ethereum.providers.find((p) => p.isRabby);
+          }
+          return window.ethereum?.isRabby ? window.ethereum : null;
+        },
+        okx: () => {
+          // OKX has its own dedicated window.okxwallet — always use that
+          return (
+            window.okxwallet ||
+            window.ethereum?.providers?.find(
+              (p) => p.isOKExWallet || p.isOkxWallet,
+            ) ||
+            null
+          );
+        },
+        trust: () => {
+          return (
+            window.trustwallet ||
+            window.ethereum?.providers?.find((p) => p.isTrust) ||
+            (window.ethereum?.isTrust ? window.ethereum : null)
+          );
+        },
+        brave: () => {
+          if (window.ethereum?.providers) {
+            return window.ethereum.providers.find((p) => p.isBraveWallet);
+          }
+          return window.ethereum?.isBraveWallet ? window.ethereum : null;
+        },
         phantom: () => window.phantom?.ethereum || null,
         bybit: () => window.bybitWallet || null,
       };
@@ -1692,10 +1740,11 @@ function showWalletModal() {
     const modal = document.createElement("div");
     modal.id = "walletModal";
     modal.style.cssText = `
-      position:fixed;inset:0;z-index:10010;
-      display:flex;align-items:center;justify-content:center;
-      background:rgba(0,0,0,0.75);backdrop-filter:blur(16px);
-      animation:fadeIn .15s ease;
+    position:fixed;inset:0;z-index:10010;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,0.75);backdrop-filter:blur(16px);
+    animation:fadeIn .15s ease;
+    padding:16px;
     `;
 
     modal.innerHTML = `
@@ -1706,8 +1755,10 @@ function showWalletModal() {
           background:#0d0d0d;
           border:1px solid rgba(255,255,255,0.08);
           border-radius:20px;
-          width:95%;max-width:420px;
-          padding:0;overflow:hidden;
+          width:100%;max-width:400px;
+          max-height:85vh;
+          overflow-y:auto;
+          padding:0;
           animation:slideUp .2s cubic-bezier(.175,.885,.32,1.275);
           box-shadow:0 24px 64px rgba(0,0,0,0.6);
         }
@@ -1815,7 +1866,7 @@ function showWalletModal() {
         }
 
         <div class="wm-section-label">${detected.length > 0 ? "Other wallets" : "Choose a wallet"}</div>
-        <div class="wm-list" style="max-height:280px;overflow-y:auto">
+        <div class="wm-list" style="max-height:180px;overflow-y:auto">
           ${notDetected
             .map(
               (w) => `
