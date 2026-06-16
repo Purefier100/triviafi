@@ -948,6 +948,231 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
   .stat-row{grid-template-columns:1fr}
   main{padding:0 12px 60px}
 }
+
+/* ── MOBILE FIXES ── */
+@media(max-width:480px) {
+
+/* Header */
+header {
+  padding:0 10px;
+  gap:6px;
+  flex-wrap:nowrap;
+  overflow:hidden;
+}
+.logo {
+  font-size:1.1rem;
+  letter-spacing:2px;
+  flex-shrink:0;
+}
+.hdr-r {
+  gap:5px;
+  flex-shrink:0;
+  overflow:hidden;
+}
+
+/* Hide live count on small screens */
+.hdr-r > div:first-child {
+  display:none !important;
+}
+
+/* Network trigger — shorter */
+#networkTrigger {
+  height:34px;
+  padding:0 8px;
+  font-size:.68rem;
+  border-radius:8px;
+  white-space:nowrap;
+  max-width:100px;
+  overflow:hidden;
+}
+#selectedNetwork {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  max-width:80px;
+  display:inline-block;
+}
+
+/* Connect wallet button */
+#connectBtn {
+  height:34px;
+  padding:0 10px;
+  font-size:.72rem;
+  border-radius:8px;
+  white-space:nowrap;
+}
+
+/* Claim prizes button */
+#claimPrizesBtn {
+  height:34px;
+  padding:0 8px;
+  font-size:.7rem;
+}
+
+/* Profile trigger */
+.profile-trigger {
+  padding:3px 7px 3px 3px;
+}
+.profile-name {
+  display:none !important;
+}
+
+/* Global stats bar */
+#globalStatsBar {
+  flex-wrap:wrap;
+  gap:5px;
+  padding:6px 10px;
+  font-size:.6rem;
+  justify-content:flex-start;
+}
+.gs-item {
+  font-size:.58rem;
+  gap:3px;
+}
+.gs-divider {
+  display:none;
+}
+
+/* Game grid */
+.game-grid {
+  grid-template-columns:1fr !important;
+}
+
+/* Tournament list */
+#tournamentList {
+  grid-template-columns:1fr !important;
+}
+
+/* Tournament screen header */
+#screenTournaments > div:first-child {
+  flex-direction:column;
+  align-items:flex-start;
+}
+#screenTournaments > div:first-child > div:last-child {
+  width:100%;
+  flex-wrap:wrap;
+}
+#screenTournaments > div:first-child > div:last-child button {
+  flex:1;
+  min-width:0;
+  font-size:.7rem;
+  padding:7px 8px;
+}
+
+/* Join screen card */
+.card {
+  padding:14px;
+}
+
+/* Stats row */
+.stat-row {
+  grid-template-columns:1fr 1fr !important;
+}
+
+/* Rooms footer */
+.rooms-footer {
+  padding:12px;
+}
+.rooms-subtext {
+  font-size:.65rem;
+}
+
+/* Answer grid */
+.ans-grid {
+  grid-template-columns:1fr !important;
+}
+
+/* Quiz header */
+.q-hdr {
+  gap:6px;
+}
+.q-clock {
+  font-size:1.5rem;
+}
+
+/* Profile dropdown */
+.profile-dropdown {
+  width:260px;
+  right:-10px;
+}
+
+/* Ticker */
+#ticker {
+  font-size:.62rem;
+}
+
+/* Floating badges */
+#floatingBadgesRow {
+  padding:10px;
+  gap:6px;
+}
+.float-badge {
+  padding:8px 10px;
+  min-width:100px;
+}
+.fb-val {
+  font-size:.72rem;
+}
+
+/* Network menu dropdown */
+#networkMenu {
+  right:0;
+  min-width:150px;
+}
+
+/* Toast */
+#toast {
+  font-size:.72rem;
+  padding:8px 14px;
+  max-width:95vw;
+  white-space:normal;
+  text-align:center;
+}
+
+/* Bet modal */
+.bet-modal-box {
+  padding:18px;
+  width:95%;
+}
+
+/* Winner banner */
+.winner-prize {
+  font-size:1.8rem;
+}
+
+/* Form grids */
+.form-grid-2 {
+  grid-template-columns:1fr !important;
+}
+
+/* Screens */
+main {
+  padding:0 10px 60px !important;
+}
+
+/* App footer */
+.app-footer {
+  padding:0 10px;
+  flex-wrap:wrap;
+  height:auto;
+  gap:6px;
+  padding:10px;
+}
+.footer-center {
+  display:none !important;
+}
+.footer-logo {
+  font-size:.8rem;
+}
+}
+
+/* Slightly larger screens but still mobile */
+@media(max-width:768px) and (min-width:481px) {
+header { padding:0 14px; }
+#connectBtn { font-size:.78rem; padding:0 14px; }
+#networkTrigger { font-size:.74rem; }
+.game-grid { grid-template-columns:repeat(2,1fr) !important; }
+}
   </style>
 </head>
 
