@@ -7994,13 +7994,14 @@ async function playTournamentRound(tournamentId, roundNumber) {
     let isAiVerified = false;
 
     // Try GenLayer first
+    let glQuestion = null;
     try {
       const glRes = await fetch(`${BACKEND}/genlayer/question`);
       const glData = await glRes.json();
       if (glData.ok && glData.question) {
-        const q = glData.question;
-        // GenLayer gives 1 question — fetch 10 from OpenTDB for the rest
+        glQuestion = glData.question;
         isAiVerified = true;
+        console.log("✅ GenLayer question loaded:", glQuestion);
       }
     } catch (_) {}
 
@@ -8027,7 +8028,7 @@ async function playTournamentRound(tournamentId, roundNumber) {
             ...q.incorrect_answers.map((a) => decodeURIComponent(a)),
           ]),
           id: idx,
-          aiVerified: isAiVerified && idx === 0, // badge on first question
+          aiVerified: false,
         }))
       : getLocalQuestions(9, 0, 10).map((q, idx) => ({
           question: q.q,
@@ -8036,6 +8037,23 @@ async function playTournamentRound(tournamentId, roundNumber) {
           id: idx,
           aiVerified: false,
         }));
+
+    // ── Inject GenLayer question as question #1 ──
+    if (glQuestion && isAiVerified && rawQ) {
+      const correctAnswer = glQuestion.options[glQuestion.correct];
+      const incorrectAnswers = glQuestion.options.filter(
+        (_, i) => i !== glQuestion.correct,
+      );
+      rawQ[0] = {
+        question: glQuestion.question,
+        correct: correctAnswer,
+        answers: shuffle([correctAnswer, ...incorrectAnswers]),
+        id: 0,
+        aiVerified: true,
+        source: "genlayer_bradbury",
+      };
+      console.log("✅ GenLayer injected as Q1:", rawQ[0].question);
+    }
 
     hideToast();
     showTournamentQuiz(tournamentId, rawQ);
