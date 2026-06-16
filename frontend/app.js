@@ -6,6 +6,15 @@
 // Fix: ABI uses tuple() return type + helper to normalise result to array
 // =============================================================================
 
+// ── EIP-6963: Modern multi-wallet detection ──────────────────────────────
+window._eip6963Providers = {};
+window.addEventListener("eip6963:announceProvider", (event) => {
+  const { info, provider } = event.detail;
+  window._eip6963Providers[info.rdns] = { info, provider };
+  console.log("EIP-6963 wallet detected:", info.name, info.rdns);
+});
+window.dispatchEvent(new Event("eip6963:requestProvider"));
+
 const BACKEND = "https://name-triviafi-backend.onrender.com";
 let currentProfile = null;
 
@@ -1462,74 +1471,50 @@ async function connectWallet() {
       });
       await instance.enable();
     } else {
-      // Get all providers when multiple wallets are installed
-      const allProviders = window.ethereum?.providers || [window.ethereum];
-
-      // DEBUG — remove after fixing
-      console.log(
-        "All providers:",
-        window.ethereum?.providers?.map((p) => ({
-          isMetaMask: p.isMetaMask,
-          isOKExWallet: p.isOKExWallet,
-          isOkxWallet: p.isOkxWallet,
-          isCoinbaseWallet: p.isCoinbaseWallet,
-          isRabby: p.isRabby,
-          isBraveWallet: p.isBraveWallet,
-        })),
-      );
-      console.log("window.ethereum flags:", {
-        isMetaMask: window.ethereum?.isMetaMask,
-        isOKExWallet: window.ethereum?.isOKExWallet,
-        isOkxWallet: window.ethereum?.isOkxWallet,
-      });
+      // EIP-6963 RDNS keys for each wallet
+      const eip = window._eip6963Providers || {};
+      console.log("EIP-6963 wallets found:", Object.keys(eip));
 
       const providerMap = {
         metamask: () => {
-          // Try providers array first (most reliable when multiple wallets installed)
-          if (window.ethereum?.providers?.length) {
-            // Real MetaMask never has isOKExWallet, isBraveWallet, isCoinbaseWallet
-            const mm = window.ethereum.providers.find(
-              (p) =>
-                p.isMetaMask === true &&
-                !p.isOKExWallet &&
-                !p.isOkxWallet &&
-                !p.isBraveWallet &&
-                !p.isCoinbaseWallet &&
-                !p.isTrust &&
-                !p.isRabby,
+          // EIP-6963 first — guaranteed to be real MetaMask
+          if (eip["io.metamask"]) return eip["io.metamask"].provider;
+          // Fallback: providerMap (some MetaMask versions)
+          if (window.ethereum?.providerMap?.get?.("MetaMask"))
+            return window.ethereum.providerMap.get("MetaMask");
+          // Fallback: _providers array
+          if (window.ethereum?._providers?.length)
+            return window.ethereum._providers.find(
+              (p) => p.isMetaMask && !p.isOKExWallet,
             );
-            if (mm) return mm;
-          }
-          // MetaMask extension injects window.ethereum directly when alone
-          if (
-            window.ethereum?.isMetaMask &&
-            !window.ethereum?.isOKExWallet &&
-            !window.ethereum?.isOkxWallet &&
-            !window.ethereum?.isBraveWallet
-          ) {
+          // Fallback: providers array
+          if (window.ethereum?.providers?.length)
+            return window.ethereum.providers.find(
+              (p) => p.isMetaMask && !p.isOKExWallet && !p.isOkxWallet,
+            );
+          // Last: window.ethereum only if clearly MetaMask
+          if (window.ethereum?.isMetaMask && !window.ethereum?.isOKExWallet)
             return window.ethereum;
-          }
-          // Last resort: check if MetaMask added itself to a different key
-          if (window.metamaskEthereum) return window.metamaskEthereum;
           return null;
         },
         coinbase: () => {
-          if (window.ethereum?.providers) {
+          if (eip["com.coinbase.wallet"])
+            return eip["com.coinbase.wallet"].provider;
+          if (window.ethereum?.providers?.length)
             return window.ethereum.providers.find((p) => p.isCoinbaseWallet);
-          }
           return (
             window.coinbaseWalletExtension ||
             (window.ethereum?.isCoinbaseWallet ? window.ethereum : null)
           );
         },
         rabby: () => {
-          if (window.ethereum?.providers) {
+          if (eip["io.rabby"]) return eip["io.rabby"].provider;
+          if (window.ethereum?.providers?.length)
             return window.ethereum.providers.find((p) => p.isRabby);
-          }
           return window.ethereum?.isRabby ? window.ethereum : null;
         },
         okx: () => {
-          // OKX has its own dedicated window.okxwallet — always use that
+          if (eip["com.okex.wallet"]) return eip["com.okex.wallet"].provider;
           return (
             window.okxwallet ||
             window.ethereum?.providers?.find(
@@ -1539,6 +1524,8 @@ async function connectWallet() {
           );
         },
         trust: () => {
+          if (eip["com.trustwallet.app"])
+            return eip["com.trustwallet.app"].provider;
           return (
             window.trustwallet ||
             window.ethereum?.providers?.find((p) => p.isTrust) ||
@@ -1546,13 +1533,19 @@ async function connectWallet() {
           );
         },
         brave: () => {
-          if (window.ethereum?.providers) {
+          if (eip["com.brave.wallet"]) return eip["com.brave.wallet"].provider;
+          if (window.ethereum?.providers?.length)
             return window.ethereum.providers.find((p) => p.isBraveWallet);
-          }
           return window.ethereum?.isBraveWallet ? window.ethereum : null;
         },
-        phantom: () => window.phantom?.ethereum || null,
-        bybit: () => window.bybitWallet || null,
+        phantom: () => {
+          if (eip["app.phantom"]) return eip["app.phantom"].provider;
+          return window.phantom?.ethereum || null;
+        },
+        bybit: () => {
+          if (eip["com.bybit"]) return eip["com.bybit"].provider;
+          return window.bybitWallet || null;
+        },
       };
 
       const getProvider = providerMap[chosen];
