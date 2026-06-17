@@ -16,5 +16,9 @@
     "passport-google-oauth20": "^2.0.0",
     "pg": "^8.20.0",
     "sanitize-html": "^2.17.4"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "hardhat": "^3.9.0"
   }
 }

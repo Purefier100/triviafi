@@ -1087,6 +1087,7 @@ const NETWORKS = {
     decimals: 6,
     isNative: false,
     contractAddress: "0x52F6dE1118a3c22CBF04f7d811B08034DCF21E50",
+    tournamentAddress: "0xeDa9902bC65A5f8Bb99baB7aaA38f2ce171A01a6",
     tokenAddress: "0x3600000000000000000000000000000000000000",
     rpc: "https://rpc.testnet.arc.network",
     hexChainId: "0x" + (5042002).toString(16),
@@ -1104,6 +1105,7 @@ const NETWORKS = {
     decimals: 18,
     isNative: true, // zkLTC is native gas token — no ERC20 approve needed
     contractAddress: "0xf829c7adAAd30C9735c73F33e9576F1ABDC7F765",
+    tournamentAddress: "0x3A525Df9A4dC97b0d7c484F6d0F30a6c8CAb07B0",
     tokenAddress: null,
     rpc: "https://liteforge.rpc.caldera.xyz/http",
     hexChainId: "0x" + (4441).toString(16),
@@ -1143,6 +1145,14 @@ const ABI = [
   "function getPlayerStats(address) view returns (uint256,uint256,uint256)",
   "function getLeaderboard(uint256) view returns (address[],uint256[],bool[],bool[])",
   "function getPrizeBreakdown(uint256) view returns (uint256,uint256,uint256,uint256)",
+];
+
+const TOURNAMENT_ABI = [
+  "function submitScore(uint256 tournamentId, uint256 roundNumber, uint256 score, uint256 nonce, bytes calldata signature) external",
+  "function getScore(uint256 tournamentId, uint256 roundNumber, address player) view returns (uint256 score, uint256 timestamp, bool submitted)",
+  "function hasSubmitted(uint256, uint256, address) view returns (bool)",
+  "function getRoundSubmissionCount(uint256, uint256) view returns (uint256)",
+  "event ScoreSubmitted(uint256 indexed tournamentId, uint256 indexed roundNumber, address indexed player, uint256 score, uint256 timestamp)",
 ];
 
 const USDC_ABI = [
@@ -8306,24 +8316,90 @@ async function submitTournamentScore(tournamentId, answers, score, timeTaken) {
     const data = await res.json();
     if (!res.ok) return toast(data.error || "Submit failed", "error");
 
-    // ── Submit score onchain if we have a signature ───────────────────────
-    if (data.scoreSignature && contract && userAddress) {
+    // ── Submit score onchain via tournament contract ───────────────────────
+    if (
+      data.scoreSignature &&
+      signer &&
+      userAddress &&
+      data.tournamentContractAddress
+    ) {
       try {
-        toast("⛓️ Confirming score onchain...", "info");
-        const tx = await contract.submitScore(
+        const targetChainId = data.chainId || 5042002;
+        const targetNet = NETWORKS[targetChainId];
+
+        // Switch to correct network first
+        if (provider) {
+          const currentChain = Number((await provider.getNetwork()).chainId);
+          if (currentChain !== targetChainId) {
+            toast(`Switching to ${targetNet.name}...`, "info");
+            try {
+              await window.ethereum.request({
+                method: "wallet_switchEthereumChain",
+                params: [{ chainId: targetNet.hexChainId }],
+              });
+              await new Promise((r) => setTimeout(r, 800));
+              activeNet = targetNet;
+              CONTRACT_ADDRESS = activeNet.contractAddress;
+              USDC_ADDRESS = activeNet.tokenAddress;
+              provider = new ethers.BrowserProvider(window.ethereum);
+              signer = await provider.getSigner();
+              contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+              usdcContract = activeNet.isNative
+                ? null
+                : new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+              updateNetBar();
+            } catch (switchErr) {
+              if (switchErr.code === 4902) {
+                await window.ethereum.request({
+                  method: "wallet_addEthereumChain",
+                  params: [
+                    { chainId: targetNet.hexChainId, ...targetNet.addParams },
+                  ],
+                });
+              }
+            }
+          }
+        }
+
+        toast("⛓️ Submitting score onchain...", "info");
+
+        // Call the tournament contract's submitScore
+        const tournamentContract = new ethers.Contract(
+          data.tournamentContractAddress,
+          TOURNAMENT_ABI,
+          signer,
+        );
+
+        const tx = await tournamentContract.submitScore(
           data.tournamentId || tournamentId,
+          data.roundNumber,
           data.score ?? score,
+          BigInt(data.nonce),
           data.scoreSignature,
         );
+
+        toast("⛓️ Waiting for confirmation...", "info");
         await tx.wait();
+
         toast(
-          `✅ Score ${data.score ?? score} pts confirmed onchain!`,
+          `✅ Score ${data.score ?? score} pts confirmed onchain! TX: ${tx.hash.slice(0, 12)}...`,
           "success",
         );
       } catch (txErr) {
-        console.warn("Onchain score TX failed (non-fatal):", txErr.message);
-        // Score is already saved in DB — onchain is bonus confirmation
-        toast(`Score saved: ${data.score ?? score} pts`, "success");
+        console.warn("Onchain score TX failed:", txErr.message);
+        if (txErr.code === 4001 || txErr.message?.includes("rejected")) {
+          toast(
+            `Score saved (${data.score ?? score} pts) — onchain skipped`,
+            "info",
+          );
+        } else {
+          toast(`Score saved: ${data.score ?? score} pts`, "success");
+        }
+      }
+    } else {
+      // No contract address — just show score
+      if (data.score !== undefined) {
+        toast(`Score: ${data.score} pts`, "success");
       }
     }
 
@@ -8331,10 +8407,10 @@ async function submitTournamentScore(tournamentId, answers, score, timeTaken) {
       toast(`🏆 Tournament over! Winner: ${fmt(data.winner)}`, "success");
     } else if (data.roundFinished) {
       toast(
-        `Round done! ${data.eliminated?.length || 0} players eliminated. Next round starting...`,
+        `Round done! ${data.eliminated?.length || 0} players eliminated.`,
         "success",
       );
-    } else {
+    } else if (!data.scoreSignature) {
       toast(`Score submitted: ${score} pts`, "success");
     }
 
@@ -9178,6 +9254,7 @@ async function submitCreateTournament() {
 
   try {
     // ── Require wallet signature before creating tournament ───────────────
+    // ── Require wallet signature before creating tournament ───────────────────
     let createSignature = "";
     if (signer && userAddress) {
       try {
@@ -9197,6 +9274,85 @@ async function submitCreateTournament() {
       }
     }
 
+    // ── Send onchain creation proof TX ────────────────────────────────────────
+    let createTxHash = "";
+    if (signer && userAddress) {
+      try {
+        toast("⛓️ Confirm tournament creation onchain...", "info");
+        if (btn) btn.textContent = "⏳ Confirm in wallet...";
+
+        const isLitvmCreate = chainId === 4441;
+        const targetNet = NETWORKS[chainId];
+
+        // Switch network if needed
+        if (provider) {
+          const currentChain = Number((await provider.getNetwork()).chainId);
+          if (currentChain !== chainId) {
+            await window.ethereum.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: targetNet.hexChainId }],
+            });
+            await new Promise((r) => setTimeout(r, 800));
+            activeNet = targetNet;
+            CONTRACT_ADDRESS = activeNet.contractAddress;
+            USDC_ADDRESS = activeNet.tokenAddress;
+            provider = new ethers.BrowserProvider(window.ethereum);
+            signer = await provider.getSigner();
+            contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+            usdcContract = activeNet.isNative
+              ? null
+              : new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+            updateNetBar();
+            toast(`✅ Switched to ${targetNet.name}`, "success");
+          }
+        }
+
+        // Onchain proof: tiny self-transfer with tournament metadata in calldata
+        const proofData = ethers.hexlify(
+          ethers.toUtf8Bytes(
+            `TriviaFi:create:${name.slice(0, 20)}:${fee}${tokenSymbol}:${max}p:${rounds}r`,
+          ),
+        );
+
+        if (isLitvmCreate) {
+          const tx = await signer.sendTransaction({
+            to: userAddress,
+            value: ethers.parseUnits("0.000001", 18),
+            data: proofData.slice(0, 2 + 128),
+          });
+          await tx.wait();
+          createTxHash = tx.hash;
+        } else {
+          // Arc — tiny USDC transfer to self as proof
+          const usdcW = new ethers.Contract(
+            NETWORKS[5042002].tokenAddress,
+            ["function transfer(address,uint256) external returns (bool)"],
+            signer,
+          );
+          const tx = await usdcW.transfer(
+            userAddress,
+            ethers.parseUnits("0.001", 6),
+          );
+          await tx.wait();
+          createTxHash = tx.hash;
+        }
+
+        toast("✅ Creation confirmed onchain!", "success");
+        if (btn) btn.textContent = "⏳ Creating tournament...";
+      } catch (txErr) {
+        if (txErr.code === 4001 || txErr.message?.includes("rejected")) {
+          toast("Transaction required to create tournament.", "error");
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "🚀 Launch Tournament";
+          }
+          return;
+        }
+        // Non-fatal — continue without TX (signature is still proof)
+        console.warn("Create TX failed (non-fatal):", txErr.message);
+      }
+    }
+
     const res = await fetch(`${BACKEND}/tournaments/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -9209,6 +9365,7 @@ async function submitCreateTournament() {
         maxPlayers: max,
         rounds,
         createSignature,
+        createTxHash, // send to backend for logging
       }),
     });
 

@@ -59,6 +59,22 @@ const TREASURY_ADDRESS = (
   process.env.TREASURY_ADDRESS || "0xAe699B48004F1507CbcB05EaCc0D7528c4F0d407"
 ).toLowerCase();
 
+// ── Tournament Score Contract ─────────────────────────────────────────────
+const TOURNAMENT_CONTRACT_ARC = process.env.TOURNAMENT_CONTRACT_ARC || "";
+const TOURNAMENT_CONTRACT_LITVM = process.env.TOURNAMENT_CONTRACT_LITVM || "";
+
+const TOURNAMENT_ABI = [
+  "function submitScore(uint256 tournamentId, uint256 roundNumber, uint256 score, uint256 nonce, bytes calldata signature) external",
+  "function getScore(uint256 tournamentId, uint256 roundNumber, address player) view returns (uint256 score, uint256 timestamp, bool submitted)",
+  "function hasSubmitted(uint256, uint256, address) view returns (bool)",
+  "function getRoundSubmissionCount(uint256, uint256) view returns (uint256)",
+  "event ScoreSubmitted(uint256 indexed tournamentId, uint256 indexed roundNumber, address indexed player, uint256 score, uint256 timestamp)",
+];
+
+console.log("Tournament contracts:");
+console.log("  Arc:  ", TOURNAMENT_CONTRACT_ARC || "NOT SET");
+console.log("  LitVM:", TOURNAMENT_CONTRACT_LITVM || "NOT SET");
+
 // ✅ Security check: confirm verifier wallet matches treasury address
 const verifierAddress = verifierWallet.address.toLowerCase();
 if (verifierAddress !== TREASURY_ADDRESS) {
@@ -4598,6 +4614,11 @@ app.post(
       const scoreSignature = await verifierWallet.signMessage(
         ethers.getBytes(message),
       );
+      const isLitvmTourney = tournament.token_symbol === "zkLTC";
+      const tourneyContractAddr = isLitvmTourney
+        ? TOURNAMENT_CONTRACT_LITVM
+        : TOURNAMENT_CONTRACT_ARC;
+      const tourneyChainId = isLitvmTourney ? 4441 : 5042002;
 
       // Check if all active players submitted
       const activePlayers = await pool.query(
