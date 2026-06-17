@@ -4576,9 +4576,8 @@ app.post(
         answers.filter((a) => a.correct === true).length * 100,
         1000,
       );
-
-      // Clamp time to a sane range (0–600s) to prevent manipulation
       const cleanTime = Math.max(0, Math.min(600, parseInt(timeTaken) || 0));
+
       await pool.query(
         "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken) VALUES ($1,$2,LOWER($3),$4,$5)",
         [req.params.id, round.id, wallet, score, cleanTime],
@@ -4586,6 +4585,18 @@ app.post(
       await pool.query(
         "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
         [score, req.params.id, wallet],
+      );
+
+      // ── Sign the tournament score so client can submit onchain ──────────
+      const tournamentId = parseInt(req.params.id);
+      const roundNumber = parseInt(tournament.current_round);
+      const nonce = BigInt(Date.now()); // unique per submission
+      const message = ethers.solidityPackedKeccak256(
+        ["address", "uint256", "uint256", "uint256", "uint256"],
+        [wallet, tournamentId, roundNumber, score, nonce],
+      );
+      const scoreSignature = await verifierWallet.signMessage(
+        ethers.getBytes(message),
       );
 
       // Check if all active players submitted
@@ -4644,6 +4655,10 @@ app.post(
           return res.json({
             ok: true,
             score,
+            scoreSignature,
+            nonce: nonce.toString(),
+            tournamentId,
+            roundNumber,
             roundFinished: true,
             tournamentFinished: true,
             winner,
@@ -4680,13 +4695,25 @@ app.post(
         return res.json({
           ok: true,
           score,
+          scoreSignature,
+          nonce: nonce.toString(),
+          tournamentId,
+          roundNumber,
           roundFinished: true,
           tournamentFinished: false,
           nextRound,
           eliminated: [loser],
         });
       }
-      res.json({ ok: true, score, roundFinished: false });
+      res.json({
+        ok: true,
+        score,
+        scoreSignature,
+        nonce: nonce.toString(),
+        tournamentId,
+        roundNumber,
+        roundFinished: false,
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
