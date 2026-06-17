@@ -25,9 +25,18 @@ function decryptAnswer(encrypted) {
     return null;
   }
 }
-const express = require("express");
+
+process.on("unhandledRejection", (reason) => {
+  console.error("🚨 UNHANDLED PROMISE REJECTION (process kept alive):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("🚨 UNCAUGHT EXCEPTION (process kept alive):", err);
+});
+
 const session = require("express-session");
+const pgSessionFactory = require("connect-pg-simple");
 const passport = require("passport");
+const express = require("express");
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const cors = require("cors");
 const { Pool } = require("pg");
@@ -881,8 +890,16 @@ app.use(cookieParser());
 app.use(express.json({ limit: "512kb" }));
 
 // ── Session ───────────────────────────────────────────────────────────────────
+const PgSession = pgSessionFactory(session);
+
 app.use(
   session({
+    store: new PgSession({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true,
+      pruneSessionInterval: 60 * 15,
+    }),
     secret: process.env.SESSION_SECRET || "fallback-dev-secret",
     resave: false,
     saveUninitialized: false,
@@ -890,7 +907,7 @@ app.use(
       secure: process.env.NODE_ENV === "production",
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxAge: 30 * 24 * 60 * 60 * 1000,
     },
   }),
 );
@@ -5628,8 +5645,18 @@ app.listen(PORT, () => {
   console.log(`   Contract:  ${CONTRACT_ADDRESS}`);
 });
 
-// CSRF error handler — must be BEFORE app.listen
+// 404 handler — placed BEFORE the error handler, AFTER all your routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// CSRF/general error handler — must be BEFORE app.listen
 app.use((err, req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
   if (err.code === "EBADCSRFTOKEN") {
     return res.status(403).json({ error: "Invalid or missing CSRF token" });
   }
@@ -5773,9 +5800,67 @@ async function preGenerateGenLayerQuestions() {
   }
 }
 
-initGenLayer().then(() => {
-  setTimeout(preGenerateGenLayerQuestions, 30000); // start after 30s
-  setInterval(preGenerateGenLayerQuestions, 10 * 60 * 1000); // every 10 mins
+const GENLAYER_ENABLED = process.env.GENLAYER_ENABLED === "true";
+let _genlayerConsecutiveFailures = 0;
+const GENLAYER_MAX_CONSECUTIVE_FAILURES = 3;
+let _genlayerCircuitOpen = false;
+
+async function safePreGenerateGenLayerQuestions() {
+  if (!GENLAYER_ENABLED || _genlayerCircuitOpen) return;
+  try {
+    await Promise.race([
+      preGenerateGenLayerQuestions(),
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("GenLayer cycle timeout")),
+          5 * 60 * 1000,
+        ),
+      ),
+    ]);
+    _genlayerConsecutiveFailures = 0;
+  } catch (e) {
+    _genlayerConsecutiveFailures++;
+    console.error(
+      `❌ GenLayer cycle failed (${_genlayerConsecutiveFailures}/${GENLAYER_MAX_CONSECUTIVE_FAILURES}):`,
+      e.message,
+    );
+    if (_genlayerConsecutiveFailures >= GENLAYER_MAX_CONSECUTIVE_FAILURES) {
+      _genlayerCircuitOpen = true;
+      console.error(
+        "⛔ GenLayer circuit breaker OPENED — disabled until /admin/genlayer/reset",
+      );
+    }
+  }
+}
+
+if (GENLAYER_ENABLED) {
+  initGenLayer()
+    .then(() => {
+      setTimeout(safePreGenerateGenLayerQuestions, 30000);
+      setInterval(safePreGenerateGenLayerQuestions, 10 * 60 * 1000);
+    })
+    .catch((e) => {
+      console.error("❌ GenLayer init failed, disabled:", e.message);
+      _genlayerCircuitOpen = true;
+    });
+} else {
+  console.log("⏭️  GenLayer disabled (set GENLAYER_ENABLED=true to enable)");
+}
+
+app.post("/admin/genlayer/reset", async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: "Forbidden" });
+  _genlayerCircuitOpen = false;
+  _genlayerConsecutiveFailures = 0;
+  res.json({ ok: true });
+});
+
+app.get("/admin/genlayer/status", async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: "Forbidden" });
+  res.json({
+    enabled: GENLAYER_ENABLED,
+    circuitOpen: _genlayerCircuitOpen,
+    consecutiveFailures: _genlayerConsecutiveFailures,
+  });
 });
 
 // ── Block all raw access paths ────────────────────────────────────────────

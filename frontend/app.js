@@ -1351,6 +1351,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     const screen = document.querySelector(".screen.active");
     if (screen?.id === "screenTournaments") loadTournaments();
   }, 10000);
+  setInterval(
+    async () => {
+      if (!userAddress || !signer) return;
+      try {
+        const r = await fetch(`${BACKEND}/auth/me`, { credentials: "include" });
+        const d = await r.json();
+        if (d.user) currentProfile = currentProfile || d.user;
+      } catch (_) {}
+    },
+    5 * 60 * 1000,
+  );
 });
 
 function checkUrlGame() {
@@ -9542,18 +9553,67 @@ async function submitCreateTournament() {
     const rawText = await res.text();
     console.log("CREATE RESPONSE:", res.status, rawText);
 
-    // Always parse response safely
     let data = {};
     try {
-      data = await res.json();
+      data = rawText ? JSON.parse(rawText) : {};
     } catch (_) {
       throw new Error(
         `Server returned invalid response (status ${res.status})`,
       );
     }
 
+    if (res.status === 401) {
+      toast(
+        "⚠️ Your session expired. Reconnecting — try Launch again after this finishes.",
+        "error",
+      );
+      try {
+        const reAuthMsg = `Login to ${activeNet.name}`;
+        const reAuthSig = await signer.signMessage(reAuthMsg);
+        let freshCsrf = "";
+        try {
+          const ct = await fetch(`${BACKEND}/csrf-token`, {
+            credentials: "include",
+          });
+          freshCsrf = (await ct.json()).csrfToken || "";
+        } catch (_) {}
+        const reAuthRes = await fetch(`${BACKEND}/auth/wallet`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "CSRF-Token": freshCsrf,
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            wallet: userAddress,
+            signature: reAuthSig,
+            networkName: activeNet.name,
+          }),
+        });
+        const reAuthData = await reAuthRes.json();
+        if (reAuthData.user) {
+          currentProfile = reAuthData.user;
+          toast(
+            "✅ Session restored. Click Launch Tournament again.",
+            "success",
+          );
+        } else {
+          toast(
+            "Could not restore session. Refresh the page and reconnect your wallet.",
+            "error",
+          );
+        }
+      } catch (_) {
+        toast(
+          "Could not restore session. Refresh the page and reconnect your wallet.",
+          "error",
+        );
+      }
+      resetBtn();
+      return;
+    }
+
     if (!res.ok) {
-      // 24hr limit — show friendly modal instead of toast
       if (res.status === 429) {
         document.getElementById("createTourneyModal")?.remove();
         showAlreadyCreatedModal(
@@ -9561,6 +9621,14 @@ async function submitCreateTournament() {
           data.hoursLeft || 24,
           data.nextAllowedAt || null,
         );
+        return;
+      }
+      if (res.status === 503) {
+        toast(
+          "Server temporarily unavailable. Please wait and try again.",
+          "error",
+        );
+        resetBtn();
         return;
       }
       throw new Error(data.error || `Server error (${res.status})`);
