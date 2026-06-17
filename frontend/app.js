@@ -2668,7 +2668,13 @@ async function renderGames() {
       const list = Array.isArray(all) ? all : all.tournaments || [];
       const now24 = Date.now();
       openTournaments = list.filter((t) => {
-        if (t.status === "open" || t.status === "active") return true;
+        // Exclude expired open tournaments (deadline passed)
+        if (t.status === "open") {
+          if (t.deadline_at && new Date(t.deadline_at).getTime() < now24)
+            return false;
+          return true;
+        }
+        if (t.status === "active") return true;
         // Also show finished/cancelled tournaments created within last 24 hours
         if (t.status === "finished" || t.status === "cancelled") {
           const created = t.created_at ? new Date(t.created_at).getTime() : 0;
@@ -5979,6 +5985,26 @@ function renderTournaments() {
       const chainIcon = t.chain_id === 4441 ? "🔷" : "⚡";
       const timer = fmtTournamentTime(t);
 
+      const createdStr = t.created_at
+        ? new Date(t.created_at).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+      const endedStr = t.finished_at
+        ? new Date(t.finished_at).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+      const isExpired =
+        t.status === "open" &&
+        t.deadline_at &&
+        new Date(t.deadline_at) < new Date();
       const winnersArr = Array.isArray(t.winners) ? t.winners : [];
 
       // ── Type-specific styling ─────────────────────────────────────────
@@ -6031,15 +6057,19 @@ function renderTournaments() {
           <span style="width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block;animation:pulse 1s ease-in-out infinite"></span>
           <span style="font-size:.65rem;font-weight:800;color:var(--red)">LIVE</span>
         </div>`
-          : isCancelled
-            ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,157,58,.1);border:1px solid rgba(255,157,58,.3);border-radius:20px;padding:3px 10px">
-          <span style="font-size:.65rem;font-weight:800;color:var(--gold)">⏰ EXPIRED</span>
+          : isExpired
+            ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--red)">⏰ EXPIRED</span>
         </div>`
-            : isFull
-              ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);border-radius:20px;padding:3px 10px">
+            : isCancelled
+              ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,157,58,.1);border:1px solid rgba(255,157,58,.3);border-radius:20px;padding:3px 10px">
+          <span style="font-size:.65rem;font-weight:800;color:var(--gold)">❌ CANCELLED</span>
+        </div>`
+              : isFull
+                ? `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(239,71,111,.1);border:1px solid rgba(239,71,111,.3);border-radius:20px;padding:3px 10px">
           <span style="font-size:.65rem;font-weight:800;color:var(--red)">🔴 FULL</span>
         </div>`
-              : `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.3);border-radius:20px;padding:3px 10px">
+                : `<div style="display:inline-flex;align-items:center;gap:5px;background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.3);border-radius:20px;padding:3px 10px">
           <span style="font-size:.65rem;font-weight:800;color:var(--green)">OPEN</span>
         </div>`;
 
@@ -6159,15 +6189,21 @@ function renderTournaments() {
         <!-- Progress bar -->
         ${progressBar}
 
-        <!-- Timer / Discord link -->
+        <!-- Timer / Discord link + Created/Ended timestamps -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px">
-          ${
-            timer && t.status === "open"
-              ? `<div style="font-size:.68rem;color:var(--muted)">⏰ ${timer}</div>`
-              : t.sponsor_name
-                ? `<div style="font-size:.68rem;color:#7289da">🏢 ${sanitizeText(t.sponsor_name)}</div>`
-                : `<div></div>`
-          }
+          <div style="display:flex;flex-direction:column;gap:2px">
+            ${
+              isExpired
+                ? `<div style="font-size:.65rem;color:var(--red);font-weight:700">⏰ Expired · not filled</div>`
+                : timer && t.status === "open"
+                  ? `<div style="font-size:.68rem;color:var(--muted)">⏰ ${timer}</div>`
+                  : t.sponsor_name
+                    ? `<div style="font-size:.68rem;color:#7289da">🏢 ${sanitizeText(t.sponsor_name)}</div>`
+                    : `<div></div>`
+            }
+            ${createdStr ? `<div style="font-size:.6rem;color:rgba(255,255,255,.25)">Created ${createdStr}</div>` : ""}
+            ${endedStr ? `<div style="font-size:.6rem;color:rgba(6,214,160,.5)">Ended ${endedStr}</div>` : ""}
+          </div>
           ${
             t.discord_invite
               ? `<a href="${sanitizeUrl(t.discord_invite)}" target="_blank" rel="noopener noreferrer"
