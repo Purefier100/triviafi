@@ -7993,15 +7993,19 @@ async function playTournamentRound(tournamentId, roundNumber) {
     let rawQ = null;
     let isAiVerified = false;
 
-    // Try GenLayer first
+    // Request question from server — no answer ever returned
     let glQuestion = null;
     try {
-      const glRes = await fetch(`${BACKEND}/genlayer/question`);
+      const glRes = await fetch(`${BACKEND}/genlayer/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ tournamentId, roundNumber }),
+      });
       const glData = await glRes.json();
       if (glData.ok && glData.question) {
         glQuestion = glData.question;
         isAiVerified = true;
-        console.log("✅ GenLayer question loaded:", glQuestion);
       }
     } catch (_) {}
 
@@ -8038,21 +8042,19 @@ async function playTournamentRound(tournamentId, roundNumber) {
           aiVerified: false,
         }));
 
-    // ── Inject GenLayer question as question #1 ──
+    // ── Inject GenLayer question as Q1 — no correct answer on client ──
     if (glQuestion && isAiVerified && rawQ) {
-      const correctAnswer = glQuestion.options[glQuestion.correct];
-      const incorrectAnswers = glQuestion.options.filter(
-        (_, i) => i !== glQuestion.correct,
-      );
       rawQ[0] = {
         question: glQuestion.question,
-        correct: correctAnswer,
-        answers: shuffle([correctAnswer, ...incorrectAnswers]),
+        answers: glQuestion.options, // already shuffled by server
+        correct: null, // null — server verifies, never sent to client
         id: 0,
         aiVerified: true,
+        serverVerified: true, // flag to use /genlayer/verify
+        tournamentId,
+        roundNumber,
         source: "genlayer_bradbury",
       };
-      console.log("✅ GenLayer injected as Q1:", rawQ[0].question);
     }
 
     hideToast();
@@ -8120,17 +8122,43 @@ function showTournamentQuiz(tournamentId, rawQ) {
       }
     }, 1000);
 
-    window._tPick = (i) => {
+    window._tPick = async (i) => {
       clearInterval(timerInterval);
+      modal.querySelectorAll(".ans-btn").forEach((b) => (b.disabled = true));
+
       const selected = q.answers[i];
-      const isCorrect = selected === q.correct;
+      let isCorrect;
+
+      if (q.serverVerified) {
+        // GenLayer — verify server-side only, client never sees answer
+        try {
+          const vRes = await fetch(`${BACKEND}/genlayer/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              tournamentId: q.tournamentId,
+              roundNumber: q.roundNumber,
+              selected,
+            }),
+          });
+          const vData = await vRes.json();
+          isCorrect = vData.correct;
+        } catch (_) {
+          isCorrect = false;
+        }
+      } else {
+        isCorrect = selected === q.correct;
+      }
+
       if (isCorrect) tScore += 100;
       tAnswers.push({ questionIndex: qIdx, selected, correct: isCorrect });
+
       modal.querySelectorAll(".ans-btn").forEach((b, bi) => {
-        b.disabled = true;
-        if (q.answers[bi] === q.correct) b.classList.add("correct");
-        else if (bi === i && !isCorrect) b.classList.add("wrong");
+        if (bi === i) b.classList.add(isCorrect ? "correct" : "wrong");
+        // Never highlight which one was correct for GL questions
       });
+
       setTimeout(() => {
         qIdx++;
         renderQ();

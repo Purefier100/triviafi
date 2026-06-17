@@ -1,4 +1,30 @@
 require("dotenv").config();
+const crypto = require("crypto");
+
+function encryptAnswer(text) {
+  const secret = process.env.SESSION_SECRET || "fallback";
+  const iv = crypto.randomBytes(16);
+  const key = crypto.createHash("sha256").update(secret).digest();
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  return iv.toString("hex") + ":" + encrypted;
+}
+
+function decryptAnswer(encrypted) {
+  try {
+    const secret = process.env.SESSION_SECRET || "fallback";
+    const [ivHex, encryptedText] = encrypted.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const key = crypto.createHash("sha256").update(secret).digest();
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (_) {
+    return null;
+  }
+}
 const express = require("express");
 const session = require("express-session");
 const passport = require("passport");
@@ -341,6 +367,20 @@ async function initDB() {
     applied_at    TIMESTAMPTZ DEFAULT NOW(),
     reviewed_at   TIMESTAMPTZ,
     UNIQUE(tournament_id, wallet)
+  );
+`);
+
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS genlayer_round_questions (
+    id              SERIAL PRIMARY KEY,
+    tournament_id   INT NOT NULL,
+    round_number    INT NOT NULL,
+    wallet          TEXT NOT NULL,
+    question_text   TEXT NOT NULL,
+    options         TEXT NOT NULL,
+    correct_answer  TEXT NOT NULL,
+    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tournament_id, round_number, wallet)
   );
 `);
 
@@ -5559,13 +5599,25 @@ initGenLayer().then(() => {
   setInterval(preGenerateGenLayerQuestions, 10 * 60 * 1000); // every 10 mins
 });
 
+// ── Block all raw access paths ────────────────────────────────────────────
+app.get("/genlayer/question", (req, res) =>
+  res.status(403).json({ error: "Forbidden" }),
+);
+app.get("/genlayer/questions", (req, res) =>
+  res.status(403).json({ error: "Forbidden" }),
+);
+app.get("/genlayer/questions/*", (req, res) =>
+  res.status(403).json({ error: "Forbidden" }),
+);
+
+// Stats only — counts, never question content
 app.get("/genlayer/stats", async (req, res) => {
   try {
     const stats = await pool.query(`
       SELECT 
-        COUNT(*) FILTER (WHERE used = FALSE) as available,
-        COUNT(*) FILTER (WHERE used = TRUE) as used,
-        COUNT(*) as total
+        COUNT(*) FILTER (WHERE used=FALSE) as available,
+        COUNT(*) FILTER (WHERE used=TRUE)  as used,
+        COUNT(*)                           as total
       FROM genlayer_questions
     `);
     res.json({ ok: true, stats: stats.rows[0], network: "bradbury" });
@@ -5574,43 +5626,150 @@ app.get("/genlayer/stats", async (req, res) => {
   }
 });
 
-app.get("/genlayer/question", async (req, res) => {
+// Assign question to active player — answer encrypted, never sent to client
+app.post("/genlayer/assign", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+
+  const { tournamentId, roundNumber } = req.body;
+  if (!tournamentId || !roundNumber) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+
   try {
+    // Must be active non-eliminated player in exactly this round
+    const playerCheck = await pool.query(
+      `SELECT tp.wallet FROM tournament_players tp
+       JOIN tournaments t ON t.id = tp.tournament_id
+       WHERE tp.tournament_id=$1
+         AND LOWER(tp.wallet)=LOWER($2)
+         AND tp.eliminated=FALSE
+         AND t.status='active'
+         AND t.current_round=$3`,
+      [tournamentId, req.user.wallet || "", parseInt(roundNumber)],
+    );
+
+    if (!playerCheck.rows.length) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    // Already assigned — return same question (handles page refresh)
+    const existing = await pool.query(
+      `SELECT id, question_text, options FROM genlayer_round_questions
+       WHERE tournament_id=$1 AND round_number=$2 AND LOWER(wallet)=LOWER($3)`,
+      [tournamentId, roundNumber, req.user.wallet],
+    );
+
+    if (existing.rows.length > 0) {
+      return res.json({
+        ok: true,
+        question: {
+          id: existing.rows[0].id,
+          question: existing.rows[0].question_text,
+          options: JSON.parse(existing.rows[0].options),
+          category: "web3",
+          // NO correct answer
+        },
+      });
+    }
+
+    // Instant pull from pre-generated pool
     let cached = await pool.query(
-      "SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1",
+      "SELECT id, data FROM genlayer_questions WHERE used=FALSE ORDER BY RANDOM() LIMIT 1",
     );
 
     // Auto-reset pool if empty
     if (cached.rows.length === 0) {
-      console.log("🔄 GenLayer pool empty — auto-resetting");
-      await pool.query("UPDATE genlayer_questions SET used = FALSE");
+      console.log("🔄 GenLayer pool empty — resetting");
+      await pool.query("UPDATE genlayer_questions SET used=FALSE");
       cached = await pool.query(
-        "SELECT id, data FROM genlayer_questions WHERE used = FALSE ORDER BY RANDOM() LIMIT 1",
+        "SELECT id, data FROM genlayer_questions WHERE used=FALSE ORDER BY RANDOM() LIMIT 1",
       );
     }
 
-    if (cached.rows.length > 0) {
-      await pool.query(
-        "UPDATE genlayer_questions SET used = TRUE WHERE id = $1",
-        [cached.rows[0].id],
-      );
-      return res.json({
-        ok: true,
-        question: cached.rows[0].data,
-        source: "genlayer_bradbury",
-      });
+    if (!cached.rows.length) {
+      preGenerateGenLayerQuestions().catch(() => {});
+      return res.json({ ok: false, error: "No questions available" });
     }
 
-    // No questions at all — trigger background generation
-    console.log("⚠️ GenLayer pool completely empty, triggering generation");
-    preGenerateGenLayerQuestions().catch(() => {});
-    return res.json({ ok: false, error: "GenLayer unavailable" });
+    const row = cached.rows[0];
+    const q = row.data;
+
+    // Mark as used immediately
+    await pool.query("UPDATE genlayer_questions SET used=TRUE WHERE id=$1", [
+      row.id,
+    ]);
+
+    // Extract correct answer BEFORE encrypting — never sent to client
+    const correctAnswer = q.options[q.correct];
+    const encryptedAnswer = encryptAnswer(correctAnswer);
+
+    // Shuffle options so client cannot guess by position
+    const shuffledOptions = [...q.options].sort(() => Math.random() - 0.5);
+
+    // Wipe raw data so it can never be read from the pool table
+    await pool.query(
+      "UPDATE genlayer_questions SET data='{\"wiped\":true}' WHERE id=$1",
+      [row.id],
+    );
+
+    // Store encrypted answer server-side only
+    await pool.query(
+      `INSERT INTO genlayer_round_questions
+         (tournament_id, round_number, wallet, question_text, options, correct_answer)
+       VALUES ($1,$2,LOWER($3),$4,$5,$6)
+       ON CONFLICT (tournament_id, round_number, wallet) DO NOTHING`,
+      [
+        tournamentId,
+        roundNumber,
+        req.user.wallet,
+        q.question,
+        JSON.stringify(shuffledOptions),
+        encryptedAnswer,
+      ],
+    );
+
+    // Send ONLY question text + shuffled options — correct answer never leaves server
+    return res.json({
+      ok: true,
+      question: {
+        id: row.id,
+        question: q.question,
+        options: shuffledOptions,
+        category: q.category || "web3",
+      },
+    });
   } catch (err) {
-    res.json({ ok: false, error: err.message });
+    console.error("GenLayer assign error:", err.message);
+    res.json({ ok: false, error: "Server error" });
   }
 });
 
+// Verify answer — returns only true/false, never the correct answer
+app.post("/genlayer/verify", async (req, res) => {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  const { tournamentId, roundNumber, selected } = req.body;
+  if (!tournamentId || !roundNumber || selected === undefined) {
+    return res.status(400).json({ error: "Missing fields" });
+  }
+  try {
+    const r = await pool.query(
+      `SELECT correct_answer FROM genlayer_round_questions
+       WHERE tournament_id=$1 AND round_number=$2 AND LOWER(wallet)=LOWER($3)`,
+      [tournamentId, roundNumber, req.user.wallet],
+    );
+    if (!r.rows.length) return res.json({ correct: false });
+    const decrypted = decryptAnswer(r.rows[0].correct_answer);
+    if (!decrypted) return res.json({ correct: false });
+    // ONLY true or false — correct answer never in response
+    res.json({ correct: decrypted === selected });
+  } catch (e) {
+    res.json({ correct: false });
+  }
+});
+
+// Admin generate — admin only, no question data exposed
 app.post("/admin/genlayer/generate", async (req, res) => {
-  preGenerateGenLayerQuestions();
-  res.json({ ok: true, message: "Generation started on Bradbury testnet" });
+  if (!isAdmin(req)) return res.status(403).json({ error: "Forbidden" });
+  preGenerateGenLayerQuestions().catch(() => {});
+  res.json({ ok: true, message: "Generation started" });
 });
