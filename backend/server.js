@@ -515,6 +515,17 @@ async function initDB() {
       )
       .catch(() => {});
 
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS tournament_join_attempts (
+          wallet TEXT NOT NULL,
+          attempted_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_join_attempts_wallet_time
+        ON tournament_join_attempts (wallet, attempted_at);
+      `);
+
     // =========================================================================
     // BETS
     // =========================================================================
@@ -2149,6 +2160,18 @@ app.post("/game/start", async (req, res) => {
       ]);
     } else if (dbUser.wallet.toLowerCase() !== wallet.toLowerCase()) {
       return res.status(403).json({ error: "Wallet mismatch" });
+    }
+
+    // ── Anti-bot: check account age before starting game ─────────────────
+    const botCheck = await pool.query(
+      `SELECT created_at FROM users WHERE id=$1`,
+      [req.user.id],
+    );
+    if (botCheck.rows.length > 0) {
+      const age = Date.now() - new Date(botCheck.rows[0].created_at).getTime();
+      if (age < 60 * 1000) {
+        return res.status(429).json({ error: "Please wait before playing." });
+      }
     }
 
     // Check joined onchain
@@ -3906,6 +3929,24 @@ app.post("/tournaments/create", async (req, res) => {
   });
   const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
 
+  // ── Anti-bot: require wallet to exist in users table with history ─────
+  const userCheck = await pool.query(
+    `SELECT id, wallet, created_at FROM users WHERE LOWER(wallet)=$1 OR LOWER(email)=$1`,
+    [creatorId],
+  );
+  if (!userCheck.rows.length) {
+    return res.status(403).json({ error: "Account not found" });
+  }
+  const accountAge =
+    Date.now() - new Date(userCheck.rows[0].created_at).getTime();
+  const minAgeMs = 5 * 60 * 1000; // 5 minutes minimum account age
+  if (accountAge < minAgeMs) {
+    return res.status(429).json({
+      error:
+        "Account too new. Please wait a few minutes before creating a tournament.",
+    });
+  }
+
   const recent = await pool.query(
     `SELECT id FROM tournaments
      WHERE LOWER(creator)=$1
@@ -3972,6 +4013,22 @@ app.post("/tournaments/create-whitelist", async (req, res) => {
     allowedAttributes: {},
   });
   const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
+
+  // ── Anti-bot check ────────────────────────────────────────────────────
+  const wlUserCheck = await pool.query(
+    `SELECT id, created_at FROM users WHERE LOWER(wallet)=$1 OR LOWER(email)=$1`,
+    [creatorId],
+  );
+  if (!wlUserCheck.rows.length) {
+    return res.status(403).json({ error: "Account not found" });
+  }
+  const wlAccountAge =
+    Date.now() - new Date(wlUserCheck.rows[0].created_at).getTime();
+  if (wlAccountAge < 5 * 60 * 1000) {
+    return res.status(429).json({
+      error: "Account too new. Please wait before creating a tournament.",
+    });
+  }
 
   const recent = await pool.query(
     `SELECT id FROM tournaments
@@ -4314,6 +4371,25 @@ app.post("/tournaments/:id/recover-payment", async (req, res) => {
 app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
   const { wallet, txHash } = req.body;
+  // ── Anti-bot: verify wallet is a real registered user ─────────────────
+  const joinerCheck = await pool.query(
+    `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
+    [wallet],
+  );
+  if (!joinerCheck.rows.length) {
+    return res.status(403).json({
+      error: "Wallet not registered. Please connect your wallet first.",
+    });
+  }
+  // Block brand-new wallets from joining paid tournaments (bot detection)
+  const joinerAge =
+    Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
+  if (joinerAge < 2 * 60 * 1000) {
+    // 2 minutes
+    return res
+      .status(429)
+      .json({ error: "Please wait a moment before joining." });
+  }
   if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
     return res.status(400).json({ error: "Invalid wallet" });
 
@@ -4343,6 +4419,40 @@ app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
     );
     if (parseInt(count.rows[0].count) >= tournament.max_players)
       return res.status(400).json({ error: "Tournament full" });
+
+    // ── Anti-bot: verify wallet is a real registered user ─────────────────
+    const joinerCheck = await pool.query(
+      `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
+      [wallet],
+    );
+    if (!joinerCheck.rows.length) {
+      return res.status(403).json({
+        error: "Wallet not registered. Please connect your wallet first.",
+      });
+    }
+    const joinerAge =
+      Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
+    if (joinerAge < 2 * 60 * 1000) {
+      return res
+        .status(429)
+        .json({ error: "Please wait a moment before joining." });
+    }
+
+    // ── Rate limit: max 5 join attempts per minute per wallet ────────────
+    const recentJoins = await pool.query(
+      `SELECT COUNT(*) FROM tournament_join_attempts
+       WHERE wallet=LOWER($1) AND attempted_at > NOW() - INTERVAL '1 minute'`,
+      [wallet],
+    );
+    if (parseInt(recentJoins.rows[0].count) >= 5) {
+      return res
+        .status(429)
+        .json({ error: "Too many attempts. Please wait before trying again." });
+    }
+    await pool.query(
+      `INSERT INTO tournament_join_attempts (wallet) VALUES (LOWER($1))`,
+      [wallet],
+    );
 
     // ── Verify payment tx onchain (if txHash provided) ────────────────────
     if (txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)) {
@@ -5441,6 +5551,18 @@ app.get("/tasks/status", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Clean up old join attempt records every hour
+setInterval(
+  async () => {
+    try {
+      await pool.query(
+        `DELETE FROM tournament_join_attempts WHERE attempted_at < NOW() - INTERVAL '1 hour'`,
+      );
+    } catch (_) {}
+  },
+  60 * 60 * 1000,
+);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {

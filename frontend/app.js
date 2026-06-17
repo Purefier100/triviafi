@@ -6223,6 +6223,7 @@ function renderTournaments() {
 async function openTournament(id) {
   currentTournamentId = id;
   window._joinScreenOrigin = "tournaments"; // set early before any await
+  window._tournamentOpenedAt = Date.now(); // bot detection timestamp // set early before any await
   try {
     const res = await fetch(`${BACKEND}/tournaments/${id}`);
     const { tournament: t, players, rounds } = await res.json();
@@ -7692,6 +7693,20 @@ async function joinTournament(id) {
   }, 60000);
 
   try {
+    // ── Bot detection: humans take at least 2s to read a tournament ──────
+    if (
+      !window._tournamentOpenedAt ||
+      Date.now() - window._tournamentOpenedAt < 2000
+    ) {
+      clearTimeout(lockTimer);
+      window._joiningTournament = null;
+      if (joinBtn) {
+        joinBtn.disabled = false;
+        joinBtn.textContent = `💰 Pay & Enter Tournament`;
+      }
+      toast("Please review the tournament details before joining.", "info");
+      return;
+    }
     // ── Auth check ────────────────────────────────────────────────────
     const authCheck = await fetch(`${BACKEND}/auth/me`, {
       credentials: "include",
@@ -8931,6 +8946,7 @@ function showCreateTournamentModal() {
 }
 
 function showTournamentTypeModal() {
+  window._modalOpenedAt = Date.now(); // bot detection timestamp
   const existing = document.getElementById("tourneyTypeModal");
   if (existing) existing.remove();
 
@@ -9030,6 +9046,11 @@ function showTournamentTypeModal() {
 }
 
 async function submitCreateTournament() {
+  // Bot detection — humans take at least 3 seconds to fill out a form
+  if (!window._modalOpenedAt || Date.now() - window._modalOpenedAt < 3000) {
+    toast("Please fill out the form completely before submitting.", "error");
+    return;
+  }
   const nameEl = document.getElementById("tName");
   const feeEl = document.getElementById("tFee");
   const maxEl = document.getElementById("tMax");
