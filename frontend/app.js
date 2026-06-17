@@ -2668,18 +2668,16 @@ async function renderGames() {
       const list = Array.isArray(all) ? all : all.tournaments || [];
       const now24 = Date.now();
       openTournaments = list.filter((t) => {
-        // Exclude expired open tournaments (deadline passed)
+        // Never show cancelled tournaments in the lobby
+        if (t.status === "cancelled") return false;
+        // Show open (not expired)
         if (t.status === "open") {
           if (t.deadline_at && new Date(t.deadline_at).getTime() < now24)
             return false;
           return true;
         }
-        if (t.status === "active") return true;
-        // Also show finished/cancelled tournaments created within last 24 hours
-        if (t.status === "finished" || t.status === "cancelled") {
-          const created = t.created_at ? new Date(t.created_at).getTime() : 0;
-          return now24 - created < 24 * 60 * 60 * 1000;
-        }
+        // Show active (live) and finished
+        if (t.status === "active" || t.status === "finished") return true;
         return false;
       });
       pastTournaments = list
@@ -2794,6 +2792,20 @@ async function renderGames() {
                         </span>
                       </div>
                       <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${t.rounds} rounds · bottom half eliminated</div>
+                      <div style="font-size:.62rem;color:rgba(255,255,255,.25);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">
+                        ${t.created_at ? `<span>📅 Created: ${new Date(t.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
+                        ${t.finished_at ? `<span style="color:rgba(6,214,160,.4)">✅ Ended: ${new Date(t.finished_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
+                        ${t.status === "active" ? `<span style="color:rgba(239,71,111,.5)">🔴 Live now</span>` : ""}
+                      </div>
+                      <div style="font-size:.62rem;color:rgba(255,255,255,.25);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">
+                        ${t.created_at ? `<span>📅 Created: ${new Date(t.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
+                        ${t.finished_at ? `<span style="color:rgba(6,214,160,.4)">✅ Ended: ${new Date(t.finished_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
+                        ${t.status === "active" ? `<span style="color:rgba(239,71,111,.5)">🔴 Live now</span>` : ""}
+                      </div>
+                      <div style="font-size:.65rem;color:rgba(255,255,255,.25);margin-top:2px">
+                      Created: ${new Date(t.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                       ${t.finished_at ? ` · Ended: ${new Date(t.finished_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+                      </div>
                     </div>
                     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;margin-left:8px;flex-shrink:0">
                       ${isLive ? `<span style="font-size:.62rem;font-weight:800;color:var(--red);background:rgba(239,71,111,.15);border:1px solid rgba(239,71,111,.3);padding:1px 7px;border-radius:10px">🔴 LIVE</span>` : `<span style="font-size:.62rem;font-weight:800;color:var(--green);background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.25);padding:1px 7px;border-radius:10px">🟢 OPEN</span>`}
@@ -3035,8 +3047,17 @@ async function renderGames() {
                         ${s === 0 && hasDeadlines && regSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="background:rgba(6,214,160,.1);border:1px solid rgba(6,214,160,.25);color:var(--green);font-weight:700;padding:1px 7px;border-radius:8px;font-size:.65rem" data-deadline="${g[10]}" data-prefix="Join closes: " data-expiredtext="Closed">🔓 Join: ${fmtTime(regSecs)}</span>` : ""}
                         ${s === 0 && hasDeadlines && regSecs <= 0 && playSecs > 0 ? `<span style="color:rgba(255,255,255,.2)">·</span><span style="background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.3);color:var(--gold);font-weight:700;padding:1px 7px;border-radius:8px;font-size:.65rem" data-deadline="${g[11]}" data-prefix="Play closes: " data-expiredtext="Ended">🎮 Play: ${fmtTime(playSecs)}</span>` : ""}
                       </div>
+                      <div style="margin-top:4px;font-size:.62rem;color:rgba(255,255,255,.2)">
+                      ${Number(g[10]) > 0 ? `📋 Join closes: ${new Date(Number(g[10]) * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+                      ${Number(g[11]) > 0 ? ` · 🎮 Play closes: ${new Date(Number(g[11]) * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+                      </div>
                       <div style="margin-top:7px;height:2px;background:rgba(255,255,255,.06);border-radius:1px;overflow:hidden">
                         <div style="height:100%;width:${fillPct}%;background:${fillPct >= 100 ? "var(--red)" : fillPct > 60 ? "var(--gold)" : "var(--green)"};border-radius:1px;transition:width .5s"></div>
+                      </div>
+                      <div style="margin-top:5px;font-size:.62rem;color:rgba(255,255,255,.25);display:flex;gap:10px;flex-wrap:wrap">
+                        ${Number(g[10]) > 0 ? `<span>📋 Join closes: ${new Date(Number(g[10]) * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
+                        ${Number(g[11]) > 0 ? `<span>🎮 Play closes: ${new Date(Number(g[11]) * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
+                        ${s === 1 ? `<span style="color:rgba(6,214,160,.4)">✅ Ended: ${new Date(Number(g[11]) * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>` : ""}
                       </div>
                     </div>
                     <div style="display:flex;gap:5px;flex-shrink:0">
