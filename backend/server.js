@@ -3964,23 +3964,32 @@ app.post("/tournaments/create", async (req, res) => {
   }
 
   const recent = await pool.query(
-    `SELECT id FROM tournaments
+    `SELECT id, created_at FROM tournaments
      WHERE LOWER(creator)=$1
        AND tournament_type='paid'
-       AND created_at > NOW() - INTERVAL '24 hours'`,
-    [creatorId],
+       AND created_at > NOW() - INTERVAL '24 hours'
+     ORDER BY created_at DESC LIMIT 1`[creatorId],
   );
-  if (recent.rows.length > 0)
-    return res
-      .status(429)
-      .json({ error: "You can only create 1 paid tournament per 24 hours." });
+  if (recent.rows.length > 0) {
+    const created = new Date(recent.rows[0].created_at);
+    const nextAllowed = new Date(created.getTime() + 24 * 60 * 60 * 1000);
+    const minutesLeft = Math.ceil((nextAllowed - Date.now()) / (1000 * 60));
+    const hoursLeft = Math.ceil(minutesLeft / 60);
+    const timeMsg =
+      hoursLeft > 1 ? `${hoursLeft} hours` : `${minutesLeft} minutes`;
+    return res.status(429).json({
+      error: `You already created a paid tournament today. You can create another in ${timeMsg}.`,
+      hoursLeft,
+      nextAllowedAt: nextAllowed.toISOString(),
+    });
+  }
 
   try {
     const result = await pool.query(
       `INSERT INTO tournaments
          (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds,
           deadline_at, tournament_type)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '2 hours', 'paid')
+       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '6 hours', 'paid')
        RETURNING *`,
       [
         cleanName,

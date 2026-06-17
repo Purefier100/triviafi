@@ -2824,7 +2824,6 @@ async function renderGames() {
                         </span>
                       </div>
                       <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${t.rounds} rounds · bottom half eliminated</div>
-                      <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${t.rounds} rounds · bottom half eliminated</div>
                       <div style="font-size:.62rem;color:rgba(255,255,255,.22);margin-top:4px">
                       📅 ${new Date(t.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}${t.finished_at ? ` · ✅ ${new Date(t.finished_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : t.status === "active" ? " · 🔴 Live" : ""}
                       </div>
@@ -9215,11 +9214,12 @@ function showTournamentTypeModal() {
 }
 
 async function submitCreateTournament() {
-  // Bot detection — humans take at least 3 seconds to fill out a form
+  // ── Bot detection: humans take at least 3 seconds to fill a form ─────
   if (!window._modalOpenedAt || Date.now() - window._modalOpenedAt < 3000) {
     toast("Please fill out the form completely before submitting.", "error");
     return;
   }
+
   const nameEl = document.getElementById("tName");
   const feeEl = document.getElementById("tFee");
   const maxEl = document.getElementById("tMax");
@@ -9240,118 +9240,276 @@ async function submitCreateTournament() {
   if (!currentProfile && !userAddress)
     return toast("You must be logged in to create a tournament", "error");
 
-  // Task gate check
+  // ── Task gate check ───────────────────────────────────────────────────
   const tasksPassedCreate = await checkTasksGate("create");
   if (!tasksPassedCreate) return;
 
+  const targetNet = NETWORKS[chainId];
   const tokenSymbol = chainId === 4441 ? "zkLTC" : "USDC";
+  const isLitvm = chainId === 4441;
+  const decimals = isLitvm ? 18 : 6;
 
   const btn = document.querySelector("#createTourneyModal .btn-primary");
   if (btn) {
     btn.disabled = true;
-    btn.textContent = "⏳ Creating...";
+    btn.textContent = "⏳ Starting...";
   }
 
   try {
-    // ── Require wallet signature before creating tournament ───────────────
-    // ── Require wallet signature before creating tournament ───────────────────
-    let createSignature = "";
-    if (signer && userAddress) {
+    // ════════════════════════════════════════════════════════════════════
+    // STEP 1 — Switch MetaMask to the correct network
+    // ════════════════════════════════════════════════════════════════════
+    if (!signer || !userAddress) {
+      toast("Connect your wallet first", "error");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🚀 Launch Tournament";
+      }
+      return;
+    }
+
+    if (btn) btn.textContent = "⏳ Step 1/3 — Switching network...";
+
+    const currentChainId = Number((await provider.getNetwork()).chainId);
+
+    if (currentChainId !== chainId) {
+      toast(`Switching to ${targetNet.name}...`, "info");
       try {
-        toast("✍️ Sign to confirm tournament creation...", "info");
-        const createMsg = `Create TriviaFi tournament: ${name} | Entry: ${fee} ${tokenSymbol} | ${Date.now()}`;
-        createSignature = await signer.signMessage(createMsg);
-        toast("✅ Signed!", "success");
-      } catch (sigErr) {
-        if (sigErr.code === 4001 || sigErr.message?.includes("rejected")) {
-          toast("Signature required to create tournament.", "error");
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: targetNet.hexChainId }],
+        });
+      } catch (switchErr) {
+        if (switchErr.code === 4902) {
+          // Network not in MetaMask — add it first
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{ chainId: targetNet.hexChainId, ...targetNet.addParams }],
+          });
+        } else if (
+          switchErr.code === 4001 ||
+          switchErr.message?.includes("rejected")
+        ) {
+          toast(
+            `⚠️ You must switch to ${targetNet.name} to create this tournament.`,
+            "error",
+          );
           if (btn) {
             btn.disabled = false;
             btn.textContent = "🚀 Launch Tournament";
           }
           return;
+        } else {
+          throw new Error(`Network switch failed: ${switchErr.message}`);
         }
       }
+
+      // Wait for MetaMask to fully switch — critical before rebuilding provider
+      await new Promise((r) => setTimeout(r, 1200));
+
+      // Rebuild everything on the new network
+      activeNet = targetNet;
+      CONTRACT_ADDRESS = activeNet.contractAddress;
+      USDC_ADDRESS = activeNet.tokenAddress;
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      usdcContract = activeNet.isNative
+        ? null
+        : new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
+      updateNetBar();
+      toast(`✅ Switched to ${targetNet.name}`, "success");
     }
 
-    // ── Send onchain creation proof TX ────────────────────────────────────────
-    let createTxHash = "";
-    if (signer && userAddress) {
-      try {
-        toast("⛓️ Confirm tournament creation onchain...", "info");
-        if (btn) btn.textContent = "⏳ Confirm in wallet...";
+    // ── Verify we are now actually on the right chain ─────────────────
+    const verifiedChain = Number((await provider.getNetwork()).chainId);
+    if (verifiedChain !== chainId) {
+      toast(
+        `Failed to switch to ${targetNet.name}. Please switch manually in MetaMask and try again.`,
+        "error",
+      );
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "🚀 Launch Tournament";
+      }
+      return;
+    }
 
-        const isLitvmCreate = chainId === 4441;
-        const targetNet = NETWORKS[chainId];
+    // ════════════════════════════════════════════════════════════════════
+    // STEP 2 — Wallet signature (proves intent, no gas cost)
+    // ════════════════════════════════════════════════════════════════════
+    if (btn) btn.textContent = "⏳ Step 2/3 — Sign to confirm...";
+    toast(
+      "✍️ Sign the message in MetaMask to confirm tournament creation...",
+      "info",
+    );
 
-        // Switch network if needed
-        if (provider) {
-          const currentChain = Number((await provider.getNetwork()).chainId);
-          if (currentChain !== chainId) {
-            await window.ethereum.request({
-              method: "wallet_switchEthereumChain",
-              params: [{ chainId: targetNet.hexChainId }],
-            });
-            await new Promise((r) => setTimeout(r, 800));
-            activeNet = targetNet;
-            CONTRACT_ADDRESS = activeNet.contractAddress;
-            USDC_ADDRESS = activeNet.tokenAddress;
-            provider = new ethers.BrowserProvider(window.ethereum);
-            signer = await provider.getSigner();
-            contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-            usdcContract = activeNet.isNative
-              ? null
-              : new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-            updateNetBar();
-            toast(`✅ Switched to ${targetNet.name}`, "success");
-          }
+    let createSignature = "";
+    try {
+      const signMsg = `Create TriviaFi tournament: ${name} | Entry: ${fee} ${tokenSymbol} | Players: ${max} | Rounds: ${rounds} | Chain: ${chainId} | ${Date.now()}`;
+      createSignature = await signer.signMessage(signMsg);
+      toast("✅ Signature confirmed!", "success");
+    } catch (sigErr) {
+      if (sigErr.code === 4001 || sigErr.message?.includes("rejected")) {
+        toast("❌ Signature required to create a tournament.", "error");
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "🚀 Launch Tournament";
         }
+        return;
+      }
+      throw new Error(`Signature failed: ${sigErr.message}`);
+    }
 
-        // Onchain proof: tiny self-transfer with tournament metadata in calldata
-        const proofData = ethers.hexlify(
-          ethers.toUtf8Bytes(
-            `TriviaFi:create:${name.slice(0, 20)}:${fee}${tokenSymbol}:${max}p:${rounds}r`,
-          ),
-        );
+    // ════════════════════════════════════════════════════════════════════
+    // STEP 3 — Onchain proof transaction (on the CORRECT network)
+    // Arc  → tiny USDC self-transfer with tournament metadata in memo
+    // LitVM → tiny native zkLTC self-transfer with metadata in calldata
+    // ════════════════════════════════════════════════════════════════════
+    if (btn) btn.textContent = "⏳ Step 3/3 — Confirm onchain...";
 
-        if (isLitvmCreate) {
-          const tx = await signer.sendTransaction({
+    // Encode tournament metadata into calldata (visible on block explorer)
+    const metaText = `TriviaFi:create:${name.slice(0, 30)}:${fee}${tokenSymbol}:${max}p:${rounds}r`;
+    const proofData = ethers.hexlify(ethers.toUtf8Bytes(metaText));
+
+    let createTxHash = "";
+
+    if (isLitvm) {
+      // ── LitVM (zkLTC): tiny self-transfer with calldata ──────────────
+      toast("⛓️ Confirm the onchain proof transaction in MetaMask...", "info");
+      try {
+        let gasLimit = 50000n;
+        try {
+          const est = await provider.estimateGas({
             to: userAddress,
             value: ethers.parseUnits("0.000001", 18),
-            data: proofData.slice(0, 2 + 128),
+            data: proofData.slice(0, 2 + 128), // cap calldata size
+            from: userAddress,
           });
-          await tx.wait();
-          createTxHash = tx.hash;
-        } else {
-          // Arc — tiny USDC transfer to self as proof
-          const usdcW = new ethers.Contract(
-            NETWORKS[5042002].tokenAddress,
-            ["function transfer(address,uint256) external returns (bool)"],
-            signer,
-          );
-          const tx = await usdcW.transfer(
-            userAddress,
-            ethers.parseUnits("0.001", 6),
-          );
-          await tx.wait();
-          createTxHash = tx.hash;
+          gasLimit = (BigInt(est) * 150n) / 100n;
+        } catch (_) {
+          gasLimit = 100000n;
         }
 
-        toast("✅ Creation confirmed onchain!", "success");
-        if (btn) btn.textContent = "⏳ Creating tournament...";
+        const tx = await signer.sendTransaction({
+          to: userAddress, // self-transfer — no ETH leaves wallet net
+          value: ethers.parseUnits("0.000001", 18),
+          data: proofData.slice(0, 2 + 128),
+          gasLimit,
+          chainId,
+        });
+
+        toast("⛓️ Waiting for LitVM confirmation...", "info");
+        const receipt = await tx.wait();
+
+        if (!receipt || receipt.status !== 1) {
+          throw new Error("Onchain proof transaction failed");
+        }
+
+        createTxHash = tx.hash;
+        toast(
+          `✅ Onchain proof confirmed on LitVM! TX: ${tx.hash.slice(0, 12)}...`,
+          "success",
+        );
       } catch (txErr) {
         if (txErr.code === 4001 || txErr.message?.includes("rejected")) {
-          toast("Transaction required to create tournament.", "error");
+          toast(
+            "❌ You must confirm the onchain transaction to create a tournament.",
+            "error",
+          );
           if (btn) {
             btn.disabled = false;
             btn.textContent = "🚀 Launch Tournament";
           }
           return;
         }
-        // Non-fatal — continue without TX (signature is still proof)
-        console.warn("Create TX failed (non-fatal):", txErr.message);
+        // Non-fatal for LitVM since RPC can be flaky — log and continue
+        console.warn("LitVM proof TX failed (non-fatal):", txErr.message);
+        toast(
+          "⚠️ Onchain proof skipped (LitVM network issue) — continuing with signature only.",
+          "info",
+        );
+        createTxHash = "";
+      }
+    } else {
+      // ── Arc (USDC): tiny USDC self-transfer as onchain proof ─────────
+      toast("⛓️ Confirm the onchain proof transaction in MetaMask...", "info");
+      try {
+        const arcUsdcAddress = NETWORKS[5042002].tokenAddress;
+        const freshUsdc = new ethers.Contract(
+          arcUsdcAddress,
+          [
+            "function transfer(address,uint256) external returns (bool)",
+            "function balanceOf(address) view returns (uint256)",
+          ],
+          signer,
+        );
+
+        // Use 0.001 USDC as proof amount (tiny, returned to self)
+        const proofAmount = ethers.parseUnits("0.001", 6);
+
+        // Check balance before sending
+        const balance = await freshUsdc.balanceOf(userAddress);
+        if (balance < proofAmount) {
+          toast(
+            "⚠️ Insufficient USDC for proof transaction (need 0.001 USDC). Continuing with signature only.",
+            "info",
+          );
+          createTxHash = "";
+        } else {
+          let gasLimit = 100000n;
+          try {
+            const est = await freshUsdc.transfer.estimateGas(
+              userAddress,
+              proofAmount,
+            );
+            gasLimit = (BigInt(est) * 150n) / 100n;
+          } catch (_) {
+            gasLimit = 150000n;
+          }
+
+          const tx = await freshUsdc.transfer(userAddress, proofAmount, {
+            gasLimit,
+          });
+          toast("⛓️ Waiting for Arc confirmation...", "info");
+          const receipt = await tx.wait();
+
+          if (!receipt || receipt.status !== 1) {
+            throw new Error("Onchain proof transaction failed");
+          }
+
+          createTxHash = tx.hash;
+          toast(
+            `✅ Onchain proof confirmed on Arc! TX: ${tx.hash.slice(0, 12)}...`,
+            "success",
+          );
+        }
+      } catch (txErr) {
+        if (txErr.code === 4001 || txErr.message?.includes("rejected")) {
+          toast(
+            "❌ You must confirm the onchain transaction to create a tournament.",
+            "error",
+          );
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "🚀 Launch Tournament";
+          }
+          return;
+        }
+        console.warn("Arc proof TX failed (non-fatal):", txErr.message);
+        toast(
+          "⚠️ Onchain proof skipped — continuing with signature only.",
+          "info",
+        );
+        createTxHash = "";
       }
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // STEP 4 — Register tournament in backend
+    // ════════════════════════════════════════════════════════════════════
+    if (btn) btn.textContent = "⏳ Creating tournament...";
 
     const res = await fetch(`${BACKEND}/tournaments/create`, {
       method: "POST",
@@ -9365,7 +9523,7 @@ async function submitCreateTournament() {
         maxPlayers: max,
         rounds,
         createSignature,
-        createTxHash, // send to backend for logging
+        createTxHash,
       }),
     });
 
@@ -9380,11 +9538,31 @@ async function submitCreateTournament() {
       );
     }
 
-    if (!res.ok)
+    if (!res.ok) {
+      // Surface 24hr limit message cleanly
+      if (res.status === 429) {
+        const hoursLeft = data.hoursLeft || "24";
+        showAlreadyCreatedModal(data.error, hoursLeft, data.nextAllowedAt);
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "🚀 Launch Tournament";
+        }
+        return;
+      }
       throw new Error(data.error || "Failed with status " + res.status);
+    }
 
+    // ── Success ───────────────────────────────────────────────────────
     document.getElementById("createTourneyModal")?.remove();
-    toast(`✅ "${name}" tournament created!`, "success");
+    toast(
+      `🏆 "${name}" tournament created successfully on ${targetNet.name}!`,
+      "success",
+    );
+
+    if (typeof confetti === "function") {
+      confetti({ particleCount: 80, spread: 60, origin: { y: 0.5 } });
+    }
+
     showScreen("screenTournaments");
     await loadTournaments();
   } catch (e) {
@@ -9392,9 +9570,61 @@ async function submitCreateTournament() {
     toast("Failed: " + e.message, "error");
     if (btn) {
       btn.disabled = false;
-      btn.textContent = "🚀 Create";
+      btn.textContent = "🚀 Launch Tournament";
     }
   }
+}
+
+// ── Show a friendly modal when the 24hr limit is hit ─────────────────────
+function showAlreadyCreatedModal(message, hoursLeft, nextAllowedAt) {
+  const existing = document.getElementById("alreadyCreatedModal");
+  if (existing) existing.remove();
+
+  let timeDisplay = `${hoursLeft} hour${hoursLeft !== 1 ? "s" : ""}`;
+  if (nextAllowedAt) {
+    const next = new Date(nextAllowedAt);
+    timeDisplay =
+      next.toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      }) +
+      " " +
+      next.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+
+  const modal = document.createElement("div");
+  modal.id = "alreadyCreatedModal";
+  modal.className = "bet-modal-overlay";
+  modal.innerHTML = `
+    <div class="bet-modal-box" style="max-width:400px;width:95%;text-align:center">
+      <div style="font-size:3rem;margin-bottom:12px">⏳</div>
+      <h3 style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:2px;
+        color:var(--gold);margin-bottom:8px">ONE TOURNAMENT PER DAY</h3>
+      <p style="color:var(--muted);font-size:.85rem;line-height:1.6;margin-bottom:16px">
+        ${message}
+      </p>
+      <div style="background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.2);
+        border-radius:10px;padding:12px;margin-bottom:18px">
+        <div style="font-size:.72rem;color:var(--muted);text-transform:uppercase;
+          letter-spacing:.5px;margin-bottom:4px">Next tournament available</div>
+        <div style="font-size:1.1rem;font-weight:700;color:var(--gold)">${timeDisplay}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-primary"
+          onclick="document.getElementById('alreadyCreatedModal').remove();showScreen('screenTournaments');loadTournaments()"
+          style="background:linear-gradient(135deg,var(--accent),var(--purple))">
+          👀 View My Active Tournament
+        </button>
+        <button class="btn btn-ghost btn-sm"
+          onclick="document.getElementById('alreadyCreatedModal').remove()">
+          Close
+        </button>
+      </div>
+    </div>`;
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
 }
 
 async function showPredictionBets(gameId, players) {
