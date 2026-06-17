@@ -9407,7 +9407,6 @@ async function submitCreateTournament() {
           value: proofValue,
           data: proofData,
           gasLimit,
-          chainId,
         });
 
         toast("⛓️ Waiting for LitVM confirmation...", "info");
@@ -9539,6 +9538,9 @@ async function submitCreateTournament() {
         createTxHash,
       }),
     });
+
+    const rawText = await res.text();
+    console.log("CREATE RESPONSE:", res.status, rawText);
 
     // Always parse response safely
     let data = {};
