@@ -9105,6 +9105,13 @@ function showCreateTournamentModal() {
 
   document.body.appendChild(modal);
 
+  document.getElementById("createTourneyLaunchBtn").onclick =
+    submitCreateTournament;
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.remove();
+  });
+
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.remove();
   });
