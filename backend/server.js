@@ -3986,6 +3986,7 @@ app.post("/tournaments/create", async (req, res) => {
        AND tournament_type='paid'
        AND created_at > NOW() - INTERVAL '24 hours'
      ORDER BY created_at DESC LIMIT 1`,
+    [creatorId], // ✅ add this
   );
   if (recent.rows.length > 0) {
     const created = new Date(recent.rows[0].created_at);

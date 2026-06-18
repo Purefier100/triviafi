@@ -9400,61 +9400,30 @@ async function submitCreateTournament() {
         );
         const proofData = ethers.hexlify(metaBytes);
 
-        // ── Same timeout-guarded estimateGas pattern as doJoin/joinTournament ──
-        let gasLimit = 150000n;
-        try {
-          const est = await Promise.race([
-            provider.estimateGas({
-              to: userAddress,
-              value: proofValue,
-              data: proofData,
-              from: userAddress,
-            }),
-            new Promise((_, r) => setTimeout(() => r(new Error("t")), 4000)),
-          ]);
-          gasLimit = (BigInt(est) * 150n) / 100n;
-        } catch (_) {
-          gasLimit = 150000n;
-        }
+        // ✅ Skip estimateGas — CORS blocks it on LitVM in browser
+        const gasLimit = 300000n;
 
-        // ── Guard sendTransaction itself — ethers internally polls
-        // eth_getTransactionByHash to build the response object, and that
-        // lookup can hang on LitVM even after MetaMask shows "confirmed".
-        // Race it so a slow/stuck lookup never blocks the UI forever.
-        let tx;
-        try {
-          tx = await Promise.race([
-            signer.sendTransaction({
-              to: userAddress,
-              value: proofValue,
-              data: proofData,
-              gasLimit,
-            }),
-            new Promise((_, r) =>
-              setTimeout(() => r(new Error("hash_lookup_timeout")), 15000),
-            ),
-          ]);
-          createTxHash = tx.hash;
-          toast(
-            `✅ Proof sent on LitVM! TX: ${tx.hash.slice(0, 14)}...`,
-            "success",
-          );
-        } catch (sendErr) {
-          if (sendErr.code === 4001 || sendErr.message?.includes("rejected")) {
-            throw sendErr;
-          }
-          console.warn(
-            "LitVM proof TX hash lookup timed out, proceeding anyway",
-          );
-          toast("⚠️ Confirmed in wallet — continuing...", "info");
-          createTxHash = "";
-        }
+        const tx = await signer.sendTransaction({
+          to: userAddress,
+          value: proofValue,
+          data: proofData,
+          gasLimit,
+        });
+
+        // ✅ Skip tx.wait() — CORS blocks receipt polling on LitVM in browser
+        // MetaMask already signed & broadcast it, hash is proof enough
+        createTxHash = tx.hash;
+        toast(
+          `✅ Proof sent on LitVM! TX: ${tx.hash.slice(0, 14)}...`,
+          "success",
+        );
       } catch (txErr) {
         if (txErr.code === 4001 || txErr.message?.includes("rejected")) {
           toast("❌ Transaction required to create tournament.", "error");
           resetBtn();
           return;
         }
+        // LitVM RPC flaky — degrade gracefully with sig-only proof
         console.warn(
           "LitVM proof TX failed, continuing with sig only:",
           txErr.message,
