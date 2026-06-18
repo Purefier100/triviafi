@@ -4245,10 +4245,14 @@ async function showMyGames() {
 
 async function doJoin() {
   if (!contract || !userAddress) return toast("Connect wallet first", "error");
-  const joinBtn = document.querySelector('[onclick="doJoin()"]');
-  if (joinBtn) {
-    joinBtn.disabled = true;
-    joinBtn.textContent = "⏳ Processing...";
+
+  // ✅ Rebuild signer from the wallet that was originally connected
+  if (window._activeWalletProvider) {
+    provider = new ethers.BrowserProvider(window._activeWalletProvider);
+    signer = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+    if (!activeNet.isNative)
+      usdcContract = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
   }
 
   // Auto-release lock after 30s max — prevents permanent stuck state
@@ -4499,6 +4503,12 @@ async function tryRestoreWallet() {
 }
 
 async function startPlay() {
+  // ✅ Rebuild signer from the wallet that was originally connected
+  if (window._activeWalletProvider) {
+    provider = new ethers.BrowserProvider(window._activeWalletProvider);
+    signer = await provider.getSigner();
+    contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+  }
   if (alreadySubmitted(currentGameId)) {
     toast("You already played this game!", "error");
     showScreen("screenResults");
@@ -5742,6 +5752,81 @@ async function checkUnclaimedPrizes() {
     }
   } catch (_) {}
 
+  // ── Check tournament prizes ──────────────────────────────────────────
+  try {
+    const tRes = await fetch(`${BACKEND}/tournaments?limit=50`, {
+      credentials: "include",
+    });
+    if (tRes.ok) {
+      const allT = await tRes.json();
+      const finishedT = (
+        Array.isArray(allT) ? allT : allT.tournaments || []
+      ).filter((t) => t.status === "finished" && t.tournament_type === "paid");
+
+      for (const t of finishedT) {
+        if (!userAddress) break;
+        // Check if user is a top-3 winner with unclaimed prize
+        try {
+          const claimRes = await fetch(
+            `${BACKEND}/tournaments/${t.id}/claim-status?wallet=${userAddress}`,
+            { credentials: "include" },
+          );
+          const claimData = await claimRes.json();
+
+          if (!claimData.status || claimData.status === "pending") {
+            // Check if they played
+            const tDetail = await fetch(`${BACKEND}/tournaments/${t.id}`, {
+              credentials: "include",
+            });
+            if (tDetail.ok) {
+              const { players } = await tDetail.json();
+              const me = players?.find(
+                (p) => p.wallet?.toLowerCase() === userAddress.toLowerCase(),
+              );
+              if (me && Number(me.total_score) > 0) {
+                const ranked = players
+                  .filter((p) => Number(p.total_score) > 0)
+                  .sort(
+                    (a, b) => Number(b.total_score) - Number(a.total_score),
+                  );
+                const myRank = ranked.findIndex(
+                  (p) => p.wallet?.toLowerCase() === userAddress.toLowerCase(),
+                );
+                if (myRank >= 0 && myRank < 3) {
+                  const splits = [0.6, 0.25, 0.15];
+                  const prize = parseFloat(t.prize_pool) * splits[myRank];
+                  if (prize > 0) {
+                    claims.push({
+                      gameId: t.id,
+                      chainId: t.chain_id,
+                      net: NETWORKS[t.chain_id] || NETWORKS[5042002],
+                      name: t.name,
+                      prize,
+                      myPos: myRank,
+                      type: "tournament_prize",
+                    });
+                  }
+                }
+              }
+              // Check refund eligibility (registered but never played)
+              if (me && Number(me.total_score) === 0 && !me.refunded) {
+                claims.push({
+                  gameId: t.id,
+                  chainId: t.chain_id,
+                  net: NETWORKS[t.chain_id] || NETWORKS[5042002],
+                  name: t.name,
+                  prize: parseFloat(t.entry_fee || 0),
+                  myPos: -1,
+                  type: "tournament_refund",
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
   window._unclaimedPrizes = claims;
   const btn = document.getElementById("claimPrizesBtn");
   const badge = document.getElementById("claimBadge");
@@ -5779,16 +5864,26 @@ function showUnclaimedModal() {
       const dp = c.net?.decimals === 18 ? 4 : 2;
       const chainIcon = c.chainId === 4441 ? "🔷" : "⚡";
       const isPrize = c.type === "prize";
-      const label = isPrize
-        ? `${medals[c.myPos] || "🏆"} ${positions[c.myPos] || ""} Place · Game #${c.gameId}`
-        : `🎲 Bet won · Game #${c.gameId}`;
+      const isTournamentPrize = c.type === "tournament_prize";
+      const isTournamentRefund = c.type === "tournament_refund";
+      const label = isTournamentPrize
+        ? `🏆 ${medals[c.myPos] || ""} ${positions[c.myPos] || ""} Place · Tournament: ${c.name}`
+        : isTournamentRefund
+          ? `💸 Refund Available · Tournament: ${c.name}`
+          : isPrize
+            ? `${medals[c.myPos] || "🏆"} ${positions[c.myPos] || ""} Place · Game #${c.gameId}`
+            : `🎲 Bet won · Game #${c.gameId}`;
       return `<div style="display:flex;align-items:center;justify-content:space-between;
         padding:12px 14px;border-radius:10px;cursor:pointer;
         background:rgba(255,209,102,.04);border:1px solid rgba(255,209,102,.12);
         margin-bottom:8px;gap:12px;transition:background .15s"
       onmouseover="this.style.background='rgba(255,209,102,.08)'"
       onmouseout="this.style.background='rgba(255,209,102,.04)'"
-      onclick="document.getElementById('claimPrizesModal').remove();openGameReadOnly(${c.gameId},${c.chainId})">
+      onclick="document.getElementById('claimPrizesModal').remove();${
+        c.type === "tournament_prize" || c.type === "tournament_refund"
+          ? `openTournament(${c.gameId})`
+          : `openGameReadOnly(${c.gameId},${c.chainId})`
+      }">
       <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
         <span style="font-size:.8rem;flex-shrink:0">${chainIcon}</span>
         <div style="min-width:0">
@@ -5800,7 +5895,11 @@ function showUnclaimedModal() {
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         <span style="font-size:.95rem;font-weight:700;color:var(--green)">
           ${c.prize.toFixed(dp)} ${c.net?.symbol || "USDC"}</span>
-        <button onclick="event.stopPropagation();document.getElementById('claimPrizesModal').remove();openGameReadOnly(${c.gameId},${c.chainId})"
+        <button onclick="event.stopPropagation();document.getElementById('claimPrizesModal').remove();${
+          c.type === "tournament_prize" || c.type === "tournament_refund"
+            ? `openTournament(${c.gameId})`
+            : `openGameReadOnly(${c.gameId},${c.chainId})`
+        }"
           style="background:linear-gradient(135deg,#ffd166,#ff9d3a);color:#000;border:none;
             padding:6px 14px;border-radius:20px;font-size:.75rem;font-weight:800;
             cursor:pointer;white-space:nowrap;font-family:inherit">
