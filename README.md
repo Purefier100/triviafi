@@ -3,9 +3,9 @@
 
 TriviaFi is a fully onchain trivia game where players compete across **Arc Testnet** and **LitVM Testnet**, earning **USDC** and **zkLTC** prizes. Scores are signed and verified onchain, prize pools split automatically, and every game is transparent and trustless.
 
-🌐 **Live:** https://triviafi.vercel.app  
-🐦 **Twitter:** [@Purefier1](https://x.com/Purefier1)  
-💬 **Telegram:** https://t.me/triviafi
+🌐 **Live:** https://triviafi.xyz/  
+🐦 **Twitter:** https://x.com/TriviaFi  
+💬 **Telegram:** https://t.me/onchaintriviafi
 
 ---
 
