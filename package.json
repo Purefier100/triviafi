@@ -24,6 +24,7 @@
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.3.0",
     "@walletconnect/web3-provider": "^1.8.0",
+    "connect-pg-simple": "^10.0.0",
     "ethers": "^6.16.0",
     "express-rate-limit": "^8.3.2",
     "genlayer-js": "^1.1.8",

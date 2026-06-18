@@ -9421,7 +9421,15 @@ async function submitCreateTournament() {
         });
 
         toast("⛓️ Waiting for LitVM confirmation...", "info");
-        const receipt = await tx.wait();
+        const receipt = await Promise.race([
+          tx.wait(),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error("LitVM confirmation timeout")),
+              30000,
+            ),
+          ),
+        ]);
 
         if (!receipt || receipt.status !== 1) {
           throw new Error("Transaction failed onchain");

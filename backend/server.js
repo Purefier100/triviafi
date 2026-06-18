@@ -5626,45 +5626,6 @@ app.get("/tasks/status", async (req, res) => {
   }
 });
 
-// Clean up old join attempt records every hour
-setInterval(
-  async () => {
-    try {
-      await pool.query(
-        `DELETE FROM tournament_join_attempts WHERE attempted_at < NOW() - INTERVAL '1 hour'`,
-      );
-    } catch (_) {}
-  },
-  60 * 60 * 1000,
-);
-
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`\n🚀 Backend running on port ${PORT}`);
-  console.log(`   Verifier:  ${verifierWallet.address}`);
-  console.log(`   Contract:  ${CONTRACT_ADDRESS}`);
-});
-
-// 404 handler — placed BEFORE the error handler, AFTER all your routes
-app.use((req, res) => {
-  res.status(404).json({ error: "Not found" });
-});
-
-// CSRF/general error handler — must be BEFORE app.listen
-app.use((err, req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-  }
-  if (err.code === "EBADCSRFTOKEN") {
-    return res.status(403).json({ error: "Invalid or missing CSRF token" });
-  }
-  console.error("Unhandled error:", err.message);
-  res.status(500).json({ error: err.message });
-});
-// ============================================================
-
 // ── GenLayer AI Question Generation (Bradbury Testnet) ────────────────────
 let genLayerClient = null;
 
@@ -6037,3 +5998,42 @@ app.post("/admin/genlayer/generate", async (req, res) => {
   preGenerateGenLayerQuestions().catch(() => {});
   res.json({ ok: true, message: "Generation started" });
 });
+
+// Clean up old join attempt records every hour
+setInterval(
+  async () => {
+    try {
+      await pool.query(
+        `DELETE FROM tournament_join_attempts WHERE attempted_at < NOW() - INTERVAL '1 hour'`,
+      );
+    } catch (_) {}
+  },
+  60 * 60 * 1000,
+);
+
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => {
+  console.log(`\n🚀 Backend running on port ${PORT}`);
+  console.log(`   Verifier:  ${verifierWallet.address}`);
+  console.log(`   Contract:  ${CONTRACT_ADDRESS}`);
+});
+
+// 404 handler — placed BEFORE the error handler, AFTER all your routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// CSRF/general error handler — must be BEFORE app.listen
+app.use((err, req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  if (err.code === "EBADCSRFTOKEN") {
+    return res.status(403).json({ error: "Invalid or missing CSRF token" });
+  }
+  console.error("Unhandled error:", err.message);
+  res.status(500).json({ error: err.message });
+});
+// ============================================================
