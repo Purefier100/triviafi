@@ -1593,6 +1593,7 @@ async function connectWallet() {
     provider = new ethers.BrowserProvider(instance);
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
+    window._activeWalletProvider = instance; // ✅ save which wallet was chosen
 
     const network = await provider.getNetwork();
     const chainId = Number(network.chainId);
@@ -2208,11 +2209,14 @@ async function loadGames() {
           const p = new ethers.JsonRpcProvider(rpc, { chainId, name });
           await Promise.race([
             p.getBlockNumber(),
-            new Promise((_, r) => setTimeout(() => r(new Error("t")), 3000)),
+            new Promise((_, r) => setTimeout(() => r(new Error("t")), 2000)),
           ]);
           return p;
-        } catch (_) {}
+        } catch (_) {
+          // LitVM blocks browser CORS — silently skip
+        }
       }
+      // Return provider anyway — MetaMask handles actual tx signing
       return new ethers.JsonRpcProvider(rpcs[0], { chainId, name });
     }
 
@@ -9286,6 +9290,12 @@ async function submitCreateTournament() {
       toast("Connect your wallet first", "error");
       resetBtn();
       return;
+    }
+
+    // ✅ Rebuild signer from the wallet that was originally connected
+    if (window._activeWalletProvider) {
+      provider = new ethers.BrowserProvider(window._activeWalletProvider);
+      signer = await provider.getSigner();
     }
 
     // ══════════════════════════════════════════════════════════════════
