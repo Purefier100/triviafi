@@ -15,6 +15,10 @@ window.addEventListener("eip6963:announceProvider", (event) => {
 });
 window.dispatchEvent(new Event("eip6963:requestProvider"));
 
+function getActiveProvider() {
+  return window._activeWalletProvider || window.ethereum;
+}
+
 const BACKEND = "https://name-triviafi-backend.onrender.com";
 let currentProfile = null;
 
@@ -1423,7 +1427,7 @@ async function switchToNetwork(chainId) {
   const net = NETWORKS[chainId];
 
   try {
-    await window.ethereum.request({
+    await getActiveProvider().request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: net.hexChainId }],
     });
@@ -1440,7 +1444,7 @@ async function switchToNetwork(chainId) {
     console.error(e);
 
     if (e.code === 4902) {
-      await window.ethereum.request({
+      await getActiveProvider().request({
         method: "wallet_addEthereumChain",
         params: [
           {
@@ -3728,7 +3732,7 @@ async function claimGameRefund(gameId, chainId) {
     if (currentChainId !== chainId) {
       try {
         toast(`Switching to ${targetNet.name}...`, "info");
-        await window.ethereum.request({
+        await getActiveProvider().request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: targetNet.hexChainId }],
         });
@@ -3862,13 +3866,13 @@ async function openGame(gameId, gameChainId) {
           if (userChainId !== targetChainId) {
             toast(`Switching to ${targetNet.name}...`, "info");
             try {
-              await window.ethereum.request({
+              await getActiveProvider().request({
                 method: "wallet_switchEthereumChain",
                 params: [{ chainId: targetNet.hexChainId }],
               });
             } catch (e) {
               if (e.code === 4902) {
-                await window.ethereum.request({
+                await getActiveProvider().request({
                   method: "wallet_addEthereumChain",
                   params: [
                     { chainId: targetNet.hexChainId, ...targetNet.addParams },
@@ -5279,7 +5283,7 @@ async function doClaimPrize() {
       (provider ? Number((await provider.getNetwork()).chainId) : null)
   ) {
     try {
-      await window.ethereum.request({
+      await getActiveProvider().request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: NETWORKS[targetChainId].hexChainId }],
       });
@@ -7922,13 +7926,13 @@ async function joinTournament(id) {
       toast(`Switching to ${targetNet.name}...`, "info");
       if (joinBtn) joinBtn.textContent = "⏳ Switching network...";
       try {
-        await window.ethereum.request({
+        await getActiveProvider().request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: targetNet.hexChainId }],
         });
       } catch (e) {
         if (e.code === 4902) {
-          await window.ethereum.request({
+          await getActiveProvider().request({
             method: "wallet_addEthereumChain",
             params: [{ chainId: targetNet.hexChainId, ...targetNet.addParams }],
           });
@@ -8451,7 +8455,7 @@ async function submitTournamentScore(tournamentId, answers, score, timeTaken) {
           if (currentChain !== targetChainId) {
             toast(`Switching to ${targetNet.name}...`, "info");
             try {
-              await window.ethereum.request({
+              await getActiveProvider().request({
                 method: "wallet_switchEthereumChain",
                 params: [{ chainId: targetNet.hexChainId }],
               });
@@ -8470,7 +8474,7 @@ async function submitTournamentScore(tournamentId, answers, score, timeTaken) {
               updateNetBar();
             } catch (switchErr) {
               if (switchErr.code === 4902) {
-                await window.ethereum.request({
+                await getActiveProvider().request({
                   method: "wallet_addEthereumChain",
                   params: [
                     { chainId: targetNet.hexChainId, ...targetNet.addParams },
@@ -9413,13 +9417,13 @@ async function submitCreateTournament() {
     if (currentChainId !== chainId) {
       toast(`Switching to ${targetNet.name}...`, "info");
       try {
-        await window.ethereum.request({
+        await getActiveProvider().request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: targetNet.hexChainId }],
         });
       } catch (switchErr) {
         if (switchErr.code === 4902) {
-          await window.ethereum.request({
+          await getActiveProvider().request({
             method: "wallet_addEthereumChain",
             params: [{ chainId: targetNet.hexChainId, ...targetNet.addParams }],
           });
