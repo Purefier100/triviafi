@@ -6012,9 +6012,10 @@ app.post("/genlayer/verify", async (req, res) => {
   }
 });
 
-// Admin generate — admin only, no question data exposed
 app.post("/admin/genlayer/generate", async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ error: "Forbidden" });
+  const keyOk = req.headers["x-admin-key"] === process.env.ADMIN_SECRET;
+  if (!keyOk && !isAdmin(req))
+    return res.status(403).json({ error: "Forbidden" });
   preGenerateGenLayerQuestions().catch(() => {});
   res.json({ ok: true, message: "Generation started" });
 });
