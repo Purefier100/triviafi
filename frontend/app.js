@@ -5537,16 +5537,6 @@ async function loadGlobalStats() {
     // Animate the hero stat counters
     const gTotalEl = document.getElementById("gTotal");
     const gActiveEl = document.getElementById("gActive");
-    if (typeof window.animateCounter === "function") {
-      if (gTotalEl && gTotalEl.textContent !== "...") {
-        const totalVal = parseInt(gTotalEl.textContent.replace(/,/g, "")) || 0;
-        if (totalVal > 0) window.animateCounter(gTotalEl, totalVal);
-      }
-      if (gActiveEl) {
-        const activeVal = parseInt(gActiveEl.textContent) || 0;
-        if (activeVal > 0) window.animateCounter(gActiveEl, activeVal);
-      }
-    }
 
     // Update floating badge values
     const badgePaidOut = document.getElementById("badgePaidOut");
