@@ -3736,7 +3736,9 @@ async function claimGameRefund(gameId, chainId) {
         activeNet = targetNet;
         CONTRACT_ADDRESS = activeNet.contractAddress;
         USDC_ADDRESS = activeNet.tokenAddress;
-        provider = new ethers.BrowserProvider(window.ethereum);
+        provider = new ethers.BrowserProvider(
+          window._activeWalletProvider || window.ethereum,
+        );
         signer = await provider.getSigner();
         contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
         if (!activeNet.isNative) {
@@ -3878,7 +3880,9 @@ async function openGame(gameId, gameChainId) {
             activeNet = targetNet;
             CONTRACT_ADDRESS = activeNet.contractAddress;
             USDC_ADDRESS = activeNet.tokenAddress;
-            provider = new ethers.BrowserProvider(window.ethereum);
+            provider = new ethers.BrowserProvider(
+              window._activeWalletProvider || window.ethereum,
+            );
             signer = await provider.getSigner();
             contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
             usdcContract = activeNet.isNative
@@ -4480,7 +4484,9 @@ async function tryRestoreWallet() {
     if (addr.toLowerCase() !== savedAddress.toLowerCase()) return;
 
     // Reconnect provider silently
-    provider = new ethers.BrowserProvider(window.ethereum);
+    provider = new ethers.BrowserProvider(
+      window._activeWalletProvider || window.ethereum,
+    );
     signer = await provider.getSigner();
     userAddress = await signer.getAddress();
 
@@ -5281,7 +5287,9 @@ async function doClaimPrize() {
       activeNet = NETWORKS[targetChainId];
       CONTRACT_ADDRESS = activeNet.contractAddress;
       USDC_ADDRESS = activeNet.tokenAddress;
-      provider = new ethers.BrowserProvider(window.ethereum);
+      provider = new ethers.BrowserProvider(
+        window._activeWalletProvider || window.ethereum,
+      );
       signer = await provider.getSigner();
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
       if (!activeNet.isNative) {
@@ -7936,7 +7944,9 @@ async function joinTournament(id) {
       activeNet = targetNet;
       CONTRACT_ADDRESS = activeNet.contractAddress;
       USDC_ADDRESS = activeNet.tokenAddress;
-      provider = new ethers.BrowserProvider(window.ethereum);
+      provider = new ethers.BrowserProvider(
+        window._activeWalletProvider || window.ethereum,
+      );
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
@@ -8449,7 +8459,9 @@ async function submitTournamentScore(tournamentId, answers, score, timeTaken) {
               activeNet = targetNet;
               CONTRACT_ADDRESS = activeNet.contractAddress;
               USDC_ADDRESS = activeNet.tokenAddress;
-              provider = new ethers.BrowserProvider(window.ethereum);
+              provider = new ethers.BrowserProvider(
+                window._activeWalletProvider || window.ethereum,
+              );
               signer = await provider.getSigner();
               contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
               usdcContract = activeNet.isNative
@@ -9433,7 +9445,9 @@ async function submitCreateTournament() {
       activeNet = targetNet;
       CONTRACT_ADDRESS = activeNet.contractAddress;
       USDC_ADDRESS = activeNet.tokenAddress;
-      provider = new ethers.BrowserProvider(window.ethereum);
+      new ethers.BrowserProvider(
+        window._activeWalletProvider || window.ethereum,
+      );
       signer = await provider.getSigner();
       userAddress = await signer.getAddress();
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
