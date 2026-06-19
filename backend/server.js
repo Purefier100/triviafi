@@ -5408,13 +5408,14 @@ app.get("/tournaments/:id/my-application", async (req, res) => {
 
 app.get("/games/active-count", async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("games")
-      .select("id", { count: "exact" })
-      .eq("status", 0)
-      .gt("play_deadline", Math.floor(Date.now() / 1000));
-
-    res.json({ count: data?.length || 0, active: data?.length || 0 });
+    const result = await pool.query(
+      `SELECT COUNT(*) as count FROM games 
+       WHERE status = 0 
+       AND play_deadline > $1`,
+      [Math.floor(Date.now() / 1000)],
+    );
+    const count = parseInt(result.rows[0].count) || 0;
+    res.json({ count, active: count });
   } catch (e) {
     res.json({ count: 0 });
   }
@@ -5713,7 +5714,6 @@ async function preGenerateGenLayerQuestions() {
       return;
     }
 
-    // Auto-reset if all questions used up
     const totalRes = await pool.query(
       "SELECT COUNT(*) FROM genlayer_questions",
     );
@@ -5721,7 +5721,7 @@ async function preGenerateGenLayerQuestions() {
     if (total > 0 && unused === 0) {
       console.log("🔄 GenLayer pool empty — resetting all questions to unused");
       await pool.query("UPDATE genlayer_questions SET used = FALSE");
-      return; // next interval will generate more
+      return;
     }
 
     const categories = [
@@ -5738,46 +5738,42 @@ async function preGenerateGenLayerQuestions() {
     ];
     const difficulties = ["easy", "medium", "hard"];
 
-    // Generate more aggressively when pool is low
-    const toGenerate = unused < 20 ? 15 : 5;
-
+    const toGenerate = unused < 20 ? 10 : 3;
     console.log(
-      `🤖 GenLayer: Generating ${toGenerate} questions on Bradbury...`,
+      `🤖 GenLayer: Generating ${toGenerate} questions sequentially...`,
     );
 
     let generated = 0;
-    const generatePromises = [];
-
-    // Generate in parallel — don't wait for each one sequentially
     for (let i = 0; i < toGenerate; i++) {
-      const cat = categories[Math.floor(Math.random() * categories.length)];
-      const diff =
-        difficulties[Math.floor(Math.random() * difficulties.length)];
+      try {
+        const cat = categories[Math.floor(Math.random() * categories.length)];
+        const diff =
+          difficulties[Math.floor(Math.random() * difficulties.length)];
 
-      generatePromises.push(
-        generateGenLayerQuestion(cat, diff)
-          .then(async (question) => {
-            if (question) {
-              await pool.query(
-                "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
-                [cat, diff, JSON.stringify(question)],
-              );
-              generated++;
-              console.log(`✅ GenLayer saved Q${generated}: ${cat}/${diff}`);
-            }
-          })
-          .catch((e) =>
-            console.error(`❌ GenLayer Q failed (${cat}/${diff}):`, e.message),
-          ),
-      );
+        console.log(`🔄 GenLayer Q${i + 1}/${toGenerate}: ${cat}/${diff}...`);
+        const question = await generateGenLayerQuestion(cat, diff);
+
+        if (question) {
+          await pool.query(
+            "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
+            [cat, diff, JSON.stringify(question)],
+          );
+          generated++;
+          console.log(`✅ GenLayer saved Q${generated}: ${cat}/${diff}`);
+        } else {
+          console.log(`⚠️ GenLayer Q${i + 1} returned null — skipping`);
+        }
+
+        // Wait between each to let nonce settle on Bradbury
+        await new Promise((r) => setTimeout(r, 12000));
+      } catch (qErr) {
+        console.error(`❌ GenLayer Q${i + 1} failed:`, qErr.message);
+        // Wait longer on error before next attempt
+        await new Promise((r) => setTimeout(r, 20000));
+      }
     }
 
-    await Promise.allSettled(generatePromises);
     console.log(`🎉 GenLayer done: ${generated}/${toGenerate} questions added`);
-
-    console.log(
-      `🎉 GenLayer generation done: ${generated}/${toGenerate} questions added`,
-    );
   } catch (err) {
     console.error("GenLayer pre-gen error:", err.message);
   }
