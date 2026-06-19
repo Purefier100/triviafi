@@ -720,6 +720,17 @@ async function initDB() {
         );
       `);
 
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS genlayer_questions (
+          id          SERIAL PRIMARY KEY,
+          category    TEXT NOT NULL,
+          difficulty  TEXT NOT NULL,
+          data        JSONB NOT NULL,
+          used        BOOLEAN DEFAULT FALSE,
+          created_at  TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+
     // =========================================================================
     // GAME QUESTIONS
     // =========================================================================
