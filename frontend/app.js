@@ -8244,20 +8244,20 @@ async function playTournamentRound(tournamentId, roundNumber) {
     rawQ = qtData
       ? qtData.results.map((q, idx) => ({
           question: decodeURIComponent(q.question),
+          correct: decodeURIComponent(q.correct_answer), // ✅ needed for feedback
           answers: shuffle([
             decodeURIComponent(q.correct_answer),
             ...q.incorrect_answers.map((a) => decodeURIComponent(a)),
           ]),
           id: idx,
           aiVerified: false,
-          // ✅ correct answer never stored on object
         }))
       : getLocalQuestions(9, 0, 10).map((q, idx) => ({
           question: q.q,
+          correct: q.correct, // ✅ needed for feedback
           answers: shuffle([q.correct, ...q.wrong]),
           id: idx,
           aiVerified: false,
-          // ✅ correct answer never stored on object
         }));
 
     // ── Inject GenLayer question as Q1 — no correct answer on client ──
