@@ -9197,8 +9197,7 @@ function showCreateTournamentModal() {
           🏆 Prizes auto-split <strong style="color:var(--gold)">60% / 25% / 15%</strong>
             to top 3 finishers<br>
           ⚡ Bottom half eliminated each round · Last 3 get prizes<br>
-          ⏰ Auto-expires 2 hours after creation if not filled<br>
-          🚫 One paid tournament per wallet per 24 hours
+          ⏰ Auto-expires 24 hours after creation if not filled<br>
         </div>
 
         <div style="display:flex;gap:10px">
