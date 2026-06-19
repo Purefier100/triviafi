@@ -5827,7 +5827,9 @@ if (GENLAYER_ENABLED) {
 }
 
 app.post("/admin/genlayer/reset", async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ error: "Forbidden" });
+  const keyOk = req.headers["x-admin-key"] === process.env.ADMIN_SECRET;
+  if (!keyOk && !isAdmin(req))
+    return res.status(403).json({ error: "Forbidden" });
   _genlayerCircuitOpen = false;
   _genlayerConsecutiveFailures = 0;
   res.json({ ok: true });
