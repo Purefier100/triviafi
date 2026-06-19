@@ -4792,54 +4792,30 @@ function pickAnswer(idx) {
   clearInterval(timerInt);
   const q = questions[currentQ];
   const selected = q.answers[idx];
-  const isCorrect = selected === q.correct;
-  const pts = isCorrect ? 100 : 0;
-  score += pts;
-  if (typeof playSound === "function")
-    playSound(isCorrect ? "correct" : "wrong");
+
+  // Disable all buttons immediately
+  document.querySelectorAll(".ans-btn").forEach((b) => (b.disabled = true));
+
+  // Mark selected as pending
+  document.querySelectorAll(".ans-btn")[idx].style.opacity = "0.7";
 
   answers.push({
     questionIndex: currentQ,
     selected,
-    correct: isCorrect,
     timeLeft,
   });
 
-  if (isCorrect) {
-    streakCount++;
-    if (streakCount >= STREAK_THRESHOLD) payStreakBonus();
-  } else {
-    streakCount = 0;
-  }
-
-  document.querySelectorAll(".ans-btn").forEach((b, i) => {
-    b.disabled = true;
-    if (i === idx) {
-      b.classList.add(isCorrect ? "correct" : "wrong");
-    }
-  });
-
-  document.getElementById("qPts").textContent =
-    streakCount >= STREAK_THRESHOLD
-      ? `⭐ ${score} 🔥x${streakCount}`
-      : `⭐ ${score}`;
-
+  // Show neutral feedback while waiting
   const fb = document.getElementById("qFeedback");
   fb.style.display = "block";
-  if (isCorrect) {
-    fb.style.cssText =
-      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
-    fb.textContent = `✓ Correct! +${pts} pts`;
-  } else {
-    fb.style.cssText =
-      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
-    fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
-  }
+  fb.style.cssText =
+    "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
+  fb.textContent = "✓ Answer recorded";
 
   setTimeout(() => {
     currentQ++;
     loadQ();
-  }, 1500);
+  }, 800);
 }
 
 function timeUp() {
@@ -4952,7 +4928,8 @@ async function doClaimRefund(gameId) {
 
 async function finishTrivia() {
   clearInterval(timerInt);
-  document.getElementById("resScore").textContent = score;
+  document.getElementById("resScore").textContent = verifiedScore;
+  score = verifiedScore;
   document.getElementById("resIcon").textContent =
     score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
   document.getElementById("resSub").textContent =
@@ -5035,6 +5012,13 @@ async function submitMyScore() {
 
     verifiedScore = data.score ?? score;
     signature = data.signature;
+
+    // ✅ Update score display immediately after server responds
+    document.getElementById("resScore").textContent = verifiedScore;
+    document.getElementById("resSub").textContent =
+      `${verifiedScore} pts — submitting onchain...`;
+    score = verifiedScore;
+
     // Optimistic leaderboard update — shows score before tx confirms
     const lbEl = document.getElementById("leaderboard");
     if (lbEl && userAddress) {
