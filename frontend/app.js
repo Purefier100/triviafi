@@ -9445,7 +9445,7 @@ async function submitCreateTournament() {
       activeNet = targetNet;
       CONTRACT_ADDRESS = activeNet.contractAddress;
       USDC_ADDRESS = activeNet.tokenAddress;
-      new ethers.BrowserProvider(
+      provider = new ethers.BrowserProvider(
         window._activeWalletProvider || window.ethereum,
       );
       signer = await provider.getSigner();
