@@ -4665,7 +4665,11 @@ async function startPlay() {
       toast("Could not register game session. Check connection.", "error");
       return;
     }
-    questions = rawQuestions;
+    // ✅ Strip correct answers from memory — server already has them
+    questions = rawQuestions.map((q) => {
+      const { correct, ...safeQ } = q;
+      return safeQ;
+    });
     currentQ = 0;
     score = 0;
     answers = [];
@@ -4800,8 +4804,9 @@ function pickAnswer(idx) {
 
   document.querySelectorAll(".ans-btn").forEach((b, i) => {
     b.disabled = true;
-    if (q.answers[i] === q.correct) b.classList.add("correct");
-    else if (i === idx && !isCorrect) b.classList.add("wrong");
+    if (i === idx) {
+      b.classList.add(isCorrect ? "correct" : "wrong");
+    }
   });
 
   document.getElementById("qPts").textContent =
@@ -8241,20 +8246,20 @@ async function playTournamentRound(tournamentId, roundNumber) {
     rawQ = qtData
       ? qtData.results.map((q, idx) => ({
           question: decodeURIComponent(q.question),
-          correct: decodeURIComponent(q.correct_answer),
           answers: shuffle([
             decodeURIComponent(q.correct_answer),
             ...q.incorrect_answers.map((a) => decodeURIComponent(a)),
           ]),
           id: idx,
           aiVerified: false,
+          // ✅ correct answer never stored on object
         }))
       : getLocalQuestions(9, 0, 10).map((q, idx) => ({
           question: q.q,
-          correct: q.correct,
           answers: shuffle([q.correct, ...q.wrong]),
           id: idx,
           aiVerified: false,
+          // ✅ correct answer never stored on object
         }));
 
     // ── Inject GenLayer question as Q1 — no correct answer on client ──

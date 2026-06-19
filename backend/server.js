@@ -5739,33 +5739,41 @@ async function preGenerateGenLayerQuestions() {
     const difficulties = ["easy", "medium", "hard"];
 
     // Generate more aggressively when pool is low
-    const toGenerate = unused < 10 ? 10 : 5;
+    const toGenerate = unused < 20 ? 15 : 5;
 
     console.log(
       `🤖 GenLayer: Generating ${toGenerate} questions on Bradbury...`,
     );
 
     let generated = 0;
+    const generatePromises = [];
+
+    // Generate in parallel — don't wait for each one sequentially
     for (let i = 0; i < toGenerate; i++) {
-      try {
-        const cat = categories[Math.floor(Math.random() * categories.length)];
-        const diff =
-          difficulties[Math.floor(Math.random() * difficulties.length)];
-        const question = await generateGenLayerQuestion(cat, diff);
-        if (question) {
-          await pool.query(
-            "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
-            [cat, diff, JSON.stringify(question)],
-          );
-          generated++;
-          console.log(`✅ GenLayer saved Q${generated}: ${cat}/${diff}`);
-        }
-        await new Promise((r) => setTimeout(r, 3000)); // 3s between each
-      } catch (qErr) {
-        console.error(`❌ GenLayer Q${i + 1} failed:`, qErr.message);
-        await new Promise((r) => setTimeout(r, 5000)); // wait longer on error
-      }
+      const cat = categories[Math.floor(Math.random() * categories.length)];
+      const diff =
+        difficulties[Math.floor(Math.random() * difficulties.length)];
+
+      generatePromises.push(
+        generateGenLayerQuestion(cat, diff)
+          .then(async (question) => {
+            if (question) {
+              await pool.query(
+                "INSERT INTO genlayer_questions (category, difficulty, data) VALUES ($1, $2, $3)",
+                [cat, diff, JSON.stringify(question)],
+              );
+              generated++;
+              console.log(`✅ GenLayer saved Q${generated}: ${cat}/${diff}`);
+            }
+          })
+          .catch((e) =>
+            console.error(`❌ GenLayer Q failed (${cat}/${diff}):`, e.message),
+          ),
+      );
     }
+
+    await Promise.allSettled(generatePromises);
+    console.log(`🎉 GenLayer done: ${generated}/${toGenerate} questions added`);
 
     console.log(
       `🎉 GenLayer generation done: ${generated}/${toGenerate} questions added`,
@@ -5788,7 +5796,7 @@ async function safePreGenerateGenLayerQuestions() {
       new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error("GenLayer cycle timeout")),
-          5 * 60 * 1000,
+          15 * 60 * 1000,
         ),
       ),
     ]);
