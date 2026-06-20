@@ -8518,6 +8518,19 @@ function showTournamentQuiz(tournamentId, rawQ) {
       let isCorrect;
 
       if (q.serverVerified) {
+        // Show loading state while verifying
+        const loadingFb =
+          modal.querySelector("#tqFeedback") ||
+          (() => {
+            const el = document.createElement("div");
+            el.id = "tqFeedback";
+            el.style.cssText =
+              "padding:10px;border-radius:8px;font-size:.85rem;font-weight:500;margin-top:8px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
+            el.textContent = "⏳ Verifying with GenLayer AI...";
+            modal.querySelector(".bet-modal-box").appendChild(el);
+            return el;
+          })();
+
         try {
           const vRes = await fetch(`${BACKEND}/genlayer/verify`, {
             method: "POST",
@@ -8534,10 +8547,27 @@ function showTournamentQuiz(tournamentId, rawQ) {
         } catch (_) {
           isCorrect = false;
         }
-        // For server-verified GL questions — only mark selected btn
+
+        // Show correct/wrong on selected button
         modal.querySelectorAll(".ans-btn").forEach((b, bi) => {
           if (bi === i) b.classList.add(isCorrect ? "correct" : "wrong");
         });
+
+        // Show feedback message
+        const fb =
+          modal.querySelector("#tqFeedback") || document.createElement("div");
+        fb.id = "tqFeedback";
+        if (isCorrect) {
+          fb.style.cssText =
+            "padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:8px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
+          fb.textContent = "✓ Correct! +100 pts";
+        } else {
+          fb.style.cssText =
+            "padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:8px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+          fb.textContent = "✗ Wrong! The AI verified a different answer.";
+        }
+        if (!fb.parentElement)
+          modal.querySelector(".bet-modal-box").appendChild(fb);
       } else {
         isCorrect = selected === q.correct;
         // ✅ Show correct answer highlight for all non-GL questions
@@ -8550,10 +8580,13 @@ function showTournamentQuiz(tournamentId, rawQ) {
       if (isCorrect) tScore += 100;
       tAnswers.push({ questionIndex: qIdx, selected, correct: isCorrect });
 
-      setTimeout(() => {
-        qIdx++;
-        renderQ();
-      }, 1200); // slightly longer so user sees the correct answer
+      setTimeout(
+        () => {
+          qIdx++;
+          renderQ();
+        },
+        q.serverVerified ? 2000 : 1200,
+      ); // slightly longer so user sees the correct answer
     };
   }
   renderQ();
