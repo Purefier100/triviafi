@@ -5825,10 +5825,95 @@ async function checkUnclaimedPrizes() {
     if (claims.length > 0) {
       btn.style.display = "flex";
       badge.textContent = claims.length;
+
+      // ── Show specific refund toasts ──────────────────────────────────
+      const agentRefunds = claims.filter(
+        (c) => c.type === "prize" && c.myPos < 0,
+      );
+      const tourneyRefunds = claims.filter(
+        (c) => c.type === "tournament_refund",
+      );
+      const tourneyPrizes = claims.filter((c) => c.type === "tournament_prize");
+
+      // Agent refund notification
+      if (agentRefunds.length > 0 && !window._agentRefundNotified) {
+        window._agentRefundNotified = true;
+        showRefundBanner(
+          "💸 Agent Room Refund Available",
+          `You joined ${agentRefunds.length} game${agentRefunds.length > 1 ? "s" : ""} but didn't play. Click to claim your entry fee back.`,
+          "var(--gold)",
+          () => showUnclaimedModal(),
+        );
+      }
+
+      // Tournament refund notification (auto-sent)
+      if (tourneyRefunds.length > 0 && !window._tourneyRefundNotified) {
+        window._tourneyRefundNotified = true;
+        showRefundBanner(
+          "✅ Tournament Refund Sent",
+          `Your entry fee for ${tourneyRefunds.length} tournament${tourneyRefunds.length > 1 ? "s" : ""} has been automatically refunded to your wallet.`,
+          "var(--green)",
+          () => showUnclaimedModal(),
+        );
+      }
+
+      // Tournament prize notification
+      if (tourneyPrizes.length > 0 && !window._tourneyPrizeNotified) {
+        window._tourneyPrizeNotified = true;
+        showRefundBanner(
+          "🏆 Tournament Prize Ready",
+          `You won ${tourneyPrizes.length} tournament${tourneyPrizes.length > 1 ? "s" : ""}! Claim your prize now.`,
+          "var(--accent)",
+          () => showUnclaimedModal(),
+        );
+      }
     } else {
       btn.style.display = "none";
     }
   }
+}
+
+function showRefundBanner(title, message, color, onClick) {
+  const existing = document.getElementById("refundNotifBanner");
+  if (existing) existing.remove();
+
+  const banner = document.createElement("div");
+  banner.id = "refundNotifBanner";
+  banner.style.cssText = `
+    position:fixed;top:70px;right:16px;z-index:9997;
+    background:var(--card);border:1px solid ${color};
+    border-radius:14px;padding:14px 16px;max-width:320px;
+    box-shadow:0 8px 32px rgba(0,0,0,.4);
+    animation:slideUp .3s ease;cursor:pointer;
+  `;
+  banner.innerHTML = `
+    <div style="display:flex;align-items:flex-start;gap:10px">
+      <div style="flex:1">
+        <div style="font-size:.85rem;font-weight:700;color:${color};margin-bottom:4px">
+          ${title}
+        </div>
+        <div style="font-size:.75rem;color:var(--muted);line-height:1.5">
+          ${message}
+        </div>
+      </div>
+      <button onclick="event.stopPropagation();document.getElementById('refundNotifBanner').remove()"
+        style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;
+        padding:0;flex-shrink:0;line-height:1">✕</button>
+    </div>
+    <button style="margin-top:10px;background:${color};color:#000;border:none;
+      padding:7px 16px;border-radius:20px;font-size:.75rem;font-weight:800;
+      cursor:pointer;width:100%">
+      View & Claim →
+    </button>
+  `;
+  banner.addEventListener("click", () => {
+    banner.remove();
+    onClick?.();
+  });
+  document.body.appendChild(banner);
+
+  // Auto-dismiss after 8 seconds
+  setTimeout(() => banner?.remove(), 8000);
 }
 
 function showUnclaimedModal() {
@@ -8203,6 +8288,32 @@ async function deleteTournament(id) {
   } catch (e) {
     toast("Failed: " + e.message, "error");
   }
+}
+
+// ── Refund notification checker ───────────────────────────────────────────
+async function checkRefundNotifications() {
+  if (!userAddress) return;
+
+  // ── Agent game refunds (user must claim) ─────────────────────────────
+  try {
+    const refunds = await fetch(
+      `${BACKEND}/games/refund-status-all?wallet=${userAddress}`,
+      { credentials: "include" },
+    )
+      .then((r) => r.json())
+      .catch(() => []);
+
+    const pending = (refunds || []).filter(
+      (r) => r.status === "pending" || r.status === null,
+    );
+    if (pending.length > 0) {
+      showRefundNotificationBanner(
+        "agent",
+        `💸 You have ${pending.length} unclaimed refund${pending.length > 1 ? "s" : ""} from agent rooms you joined but didn't play.`,
+        pending[0],
+      );
+    }
+  } catch (_) {}
 }
 
 async function playTournamentRound(tournamentId, roundNumber) {
