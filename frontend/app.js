@@ -8358,30 +8358,18 @@ async function playTournamentRound(tournamentId, roundNumber) {
     // Request question from server — no answer ever returned
     let glQuestion = null;
     try {
-      console.log("🤖 GL assign request:", {
-        tournamentId,
-        roundNumber,
-        wallet: userAddress,
-      });
       const glRes = await fetch(`${BACKEND}/genlayer/assign`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ tournamentId, roundNumber }),
       });
-      console.log("🤖 GL response status:", glRes.status);
       const glData = await glRes.json();
-      console.log("🤖 GL assign result:", JSON.stringify(glData));
       if (glData.ok && glData.question) {
         glQuestion = glData.question;
         isAiVerified = true;
-        console.log("✅ GL question injected:", glQuestion.question);
-      } else {
-        console.warn("⚠️ GL not injected, reason:", glData);
       }
-    } catch (e) {
-      console.error("❌ GL assign error:", e.message);
-    }
+    } catch (_) {}
 
     // Fetch 10 questions from OpenTDB
     let qtData;
