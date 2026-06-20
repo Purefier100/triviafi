@@ -4683,11 +4683,8 @@ async function startPlay() {
       toast("Could not register game session. Check connection.", "error");
       return;
     }
-    // ✅ Strip correct answers from memory — server already has them
-    questions = rawQuestions.map((q) => {
-      const { correct, ...safeQ } = q;
-      return safeQ;
-    });
+    // Keep correct answers for UI feedback — server independently verifies score
+    questions = rawQuestions;
     currentQ = 0;
     score = 0;
     answers = [];
@@ -4800,36 +4797,54 @@ function pickAnswer(idx) {
   clearInterval(timerInt);
   const q = questions[currentQ];
   const selected = q.answers[idx];
-
-  // Disable all buttons immediately
-  const btns = document.querySelectorAll(".ans-btn");
-  btns.forEach((b) => (b.disabled = true));
+  const isCorrect = selected === q.correct;
+  const pts = isCorrect ? 100 : 0;
+  score += pts;
+  if (typeof playSound === "function")
+    playSound(isCorrect ? "correct" : "wrong");
 
   answers.push({
     questionIndex: currentQ,
     selected,
+    correct: isCorrect,
     timeLeft,
   });
 
-  // ── Score tracking (client-side, will be overridden by server) ──────
-  // We don't know correct answer here — server verifies
-  // Show neutral "recorded" state then move on
-  const fb = document.getElementById("qFeedback");
-  fb.style.display = "block";
-  fb.style.cssText =
-    "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
-  fb.textContent = "⏳ Checking answer...";
+  if (isCorrect) {
+    streakCount++;
+    if (streakCount >= STREAK_THRESHOLD) payStreakBonus();
+  } else {
+    streakCount = 0;
+  }
 
-  // Update score display
+  document.querySelectorAll(".ans-btn").forEach((b, i) => {
+    b.disabled = true;
+    if (i === idx) {
+      b.classList.add(isCorrect ? "correct" : "wrong");
+    }
+  });
+
   document.getElementById("qPts").textContent =
     streakCount >= STREAK_THRESHOLD
       ? `⭐ ${score} 🔥x${streakCount}`
       : `⭐ ${score}`;
 
+  const fb = document.getElementById("qFeedback");
+  fb.style.display = "block";
+  if (isCorrect) {
+    fb.style.cssText =
+      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(6,214,160,.12);border:1px solid rgba(6,214,160,.3);color:var(--green)";
+    fb.textContent = `✓ Correct! +${pts} pts`;
+  } else {
+    fb.style.cssText =
+      "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(239,71,111,.12);border:1px solid rgba(239,71,111,.3);color:var(--red)";
+    fb.textContent = `✗ Wrong! Answer: ${q.correct}`;
+  }
+
   setTimeout(() => {
     currentQ++;
     loadQ();
-  }, 900);
+  }, 1500);
 }
 
 function timeUp() {
@@ -4942,8 +4957,7 @@ async function doClaimRefund(gameId) {
 
 async function finishTrivia() {
   clearInterval(timerInt);
-  document.getElementById("resScore").textContent = verifiedScore;
-  score = verifiedScore;
+  document.getElementById("resScore").textContent = score;
   document.getElementById("resIcon").textContent =
     score >= 800 ? "🏆" : score >= 500 ? "🎯" : "💪";
   document.getElementById("resSub").textContent =
