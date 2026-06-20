@@ -2821,8 +2821,19 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       `✅ Score: game=${gameId} score=${score} wallet=${effectiveWallet}`,
     );
 
+    // ✅ Build correct answers map for client feedback
+    const correctAnswersMap = {};
+    storedQs.rows.forEach((row) => {
+      correctAnswersMap[row.q_index] = row.correct_answer;
+    });
+
     await client.query("COMMIT");
-    res.json({ score, signature, nonce: nonce.toString() });
+    res.json({
+      score,
+      signature,
+      nonce: nonce.toString(),
+      correctAnswers: correctAnswersMap, // ✅ sent after scoring, safe
+    });
   } catch (e) {
     await client.query("ROLLBACK");
     console.error("Submit error:", e.message);

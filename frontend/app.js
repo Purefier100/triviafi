@@ -972,7 +972,15 @@ function startAutoRefresh() {
   stopAutoRefresh();
   autoRefreshInterval = setInterval(async () => {
     try {
-      if (typeof loadGames === "function") await loadGames();
+      // Only reload games if NOT viewing agent room card to prevent flicker
+      const activeScreen = document.querySelector(".screen.active")?.id;
+      if (
+        typeof loadGames === "function" &&
+        activeScreen === "screenLobby" &&
+        !window._agentRoomMode
+      ) {
+        await loadGames();
+      }
       if (typeof loadGlobalStats === "function") await loadGlobalStats();
       if (userAddress && typeof checkUnclaimedPrizes === "function")
         await checkUnclaimedPrizes();
@@ -4794,10 +4802,8 @@ function pickAnswer(idx) {
   const selected = q.answers[idx];
 
   // Disable all buttons immediately
-  document.querySelectorAll(".ans-btn").forEach((b) => (b.disabled = true));
-
-  // Mark selected as pending
-  document.querySelectorAll(".ans-btn")[idx].style.opacity = "0.7";
+  const btns = document.querySelectorAll(".ans-btn");
+  btns.forEach((b) => (b.disabled = true));
 
   answers.push({
     questionIndex: currentQ,
@@ -4805,17 +4811,25 @@ function pickAnswer(idx) {
     timeLeft,
   });
 
-  // Show neutral feedback while waiting
+  // ── Score tracking (client-side, will be overridden by server) ──────
+  // We don't know correct answer here — server verifies
+  // Show neutral "recorded" state then move on
   const fb = document.getElementById("qFeedback");
   fb.style.display = "block";
   fb.style.cssText =
     "display:block;padding:11px;border-radius:8px;font-size:.87rem;font-weight:500;margin-top:5px;background:rgba(0,229,255,.08);border:1px solid rgba(0,229,255,.2);color:var(--accent)";
-  fb.textContent = "✓ Answer recorded";
+  fb.textContent = "⏳ Checking answer...";
+
+  // Update score display
+  document.getElementById("qPts").textContent =
+    streakCount >= STREAK_THRESHOLD
+      ? `⭐ ${score} 🔥x${streakCount}`
+      : `⭐ ${score}`;
 
   setTimeout(() => {
     currentQ++;
     loadQ();
-  }, 800);
+  }, 900);
 }
 
 function timeUp() {
@@ -5012,6 +5026,11 @@ async function submitMyScore() {
 
     verifiedScore = data.score ?? score;
     signature = data.signature;
+
+    // ✅ Show correct/wrong highlights using server-returned answers
+    if (data.correctAnswers) {
+      window._serverCorrectAnswers = data.correctAnswers;
+    }
 
     // ✅ Update score display immediately after server responds
     document.getElementById("resScore").textContent = verifiedScore;
