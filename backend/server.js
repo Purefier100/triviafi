@@ -3967,6 +3967,95 @@ app.get("/tournaments/stats", async (req, res) => {
   }
 });
 
+// Discord bot tournament creation — no auth session needed, uses bot secret
+app.post("/tournaments/create-discord", async (req, res) => {
+  // verify it's coming from your bot
+  const botSecret = req.headers["x-bot-secret"];
+  if (botSecret !== process.env.BOT_SECRET) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  const {
+    name,
+    maxPlayers,
+    rounds,
+    prize1,
+    prize2,
+    prize3,
+    guildId,
+    guildName,
+    createdBy,
+    createdByUsername,
+  } = req.body;
+
+  if (!name || !maxPlayers || !rounds)
+    return res.status(400).json({ error: "Missing fields" });
+
+  const cleanName = sanitizeHtml(name, {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
+  const creatorId = `discord:${guildId}:${createdBy}`;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO tournaments
+         (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds,
+          deadline_at, tournament_type, prize_1_text, prize_2_text, prize_3_text,
+          sponsor_name, guild_id)
+       VALUES ($1,$2,5042002,0,'POINTS',$3,$4,NOW()+INTERVAL '6 hours',
+               'whitelist',$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [
+        cleanName,
+        creatorId,
+        parseInt(maxPlayers),
+        parseInt(rounds),
+        sanitizeHtml(prize1 || "🥇 1st Prize", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        sanitizeHtml(prize2 || "🥈 2nd Prize", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        sanitizeHtml(prize3 || "🥉 3rd Prize", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        sanitizeHtml(guildName || "", {
+          allowedTags: [],
+          allowedAttributes: {},
+        }),
+        guildId,
+      ],
+    );
+    res.json({ tournament: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get tournaments for a specific Discord guild
+app.get("/tournaments/guild/:guildId", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT t.*,
+         (SELECT COUNT(*) FROM tournament_players tp WHERE tp.tournament_id = t.id) AS player_count
+       FROM tournaments t
+       WHERE t.guild_id=$1
+         AND t.status IN ('open','active')
+         AND t.created_at > NOW() - INTERVAL '24 hours'
+       ORDER BY t.created_at DESC
+       LIMIT 10`,
+      [req.params.guildId],
+    );
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 4. CREATE paid tournament — before /:id
 app.post("/tournaments/create", async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
