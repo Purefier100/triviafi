@@ -2827,6 +2827,27 @@ app.post("/submit-score", scoreLimiter, async (req, res) => {
       correctAnswersMap[row.q_index] = row.correct_answer;
     });
 
+    // Add after the score is saved in submit-score
+    const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL; // e.g. http://your-bot-host:3001
+    if (BOT_WEBHOOK_URL) {
+      fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bot-secret": process.env.BOT_SECRET,
+        },
+        body: JSON.stringify({
+          type: "score_submitted",
+          gameId,
+          wallet: effectiveWallet,
+          score,
+          gameName: "Trivia Game",
+          chainId,
+          username: req.user?.username || null,
+        }),
+      }).catch(() => {});
+    }
+
     await client.query("COMMIT");
     res.json({
       score,
