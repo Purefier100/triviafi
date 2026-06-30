@@ -4157,6 +4157,28 @@ app.post("/tournaments/create", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+
+  // after: res.json({ tournament: result.rows[0] });
+  const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL;
+  if (BOT_WEBHOOK_URL) {
+    fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bot-secret": process.env.BOT_SECRET,
+      },
+      body: JSON.stringify({
+        type: "tournament_created",
+        tournamentId: result.rows[0].id,
+        name: cleanName,
+        maxPlayers: parseInt(maxPlayers),
+        rounds: parseInt(rounds),
+        entryFee: parseFloat(entryFee),
+        tokenSymbol: tokenSymbol || "USDC",
+        chainId: parseInt(chainId || 5042002),
+      }),
+    }).catch(() => {});
+  }
 });
 
 // 5. CREATE whitelist tournament — before /:id
@@ -4252,6 +4274,27 @@ app.post("/tournaments/create-whitelist", async (req, res) => {
     res.json({ tournament: result.rows[0] });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+  // after: res.json({ tournament: result.rows[0] });
+  if (BOT_WEBHOOK_URL) {
+    fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bot-secret": process.env.BOT_SECRET,
+      },
+      body: JSON.stringify({
+        type: "whitelist_created",
+        tournamentId: result.rows[0].id,
+        name: cleanName,
+        maxPlayers: parseInt(maxPlayers),
+        rounds: parseInt(rounds),
+        prize1,
+        prize2,
+        prize3,
+        sponsorName: cleanSponsor,
+      }),
+    }).catch(() => {});
   }
 });
 
@@ -4444,6 +4487,25 @@ app.post("/tournaments/:id/join-whitelist", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+  // after the INSERT INTO tournament_players succeeds, before the auto-start check
+  if (process.env.BOT_WEBHOOK_URL) {
+    const playerCountNow = parseInt(count.rows[0].count) + 1;
+    fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bot-secret": process.env.BOT_SECRET,
+      },
+      body: JSON.stringify({
+        type: "tournament_joined",
+        tournamentId: req.params.id,
+        name: tournament.name,
+        wallet,
+        currentPlayers: playerCountNow,
+        maxPlayers: tournament.max_players,
+      }),
+    }).catch(() => {});
   }
 });
 
@@ -4704,6 +4766,26 @@ app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
     console.error("Tournament join error:", e.message);
     res.status(500).json({ error: e.message });
   }
+
+  // after the INSERT INTO tournament_players succeeds, before the auto-start check
+  if (process.env.BOT_WEBHOOK_URL) {
+    const playerCountNow = parseInt(count.rows[0].count) + 1;
+    fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bot-secret": process.env.BOT_SECRET,
+      },
+      body: JSON.stringify({
+        type: "tournament_joined",
+        tournamentId: req.params.id,
+        name: tournament.name,
+        wallet,
+        currentPlayers: playerCountNow,
+        maxPlayers: tournament.max_players,
+      }),
+    }).catch(() => {});
+  }
 });
 
 // 12. SUBMIT round score
@@ -4833,7 +4915,36 @@ app.post(
               "UPDATE tournament_players SET prize_position=1 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
               [req.params.id, runnerUp],
             );
-          // 3rd place was assigned when the field dropped from 3→2 (below)
+
+          // ── Webhook: tournament finished ─────────────────────────────────────
+          if (process.env.BOT_WEBHOOK_URL) {
+            const winnersList = await pool.query(
+              `SELECT tp.wallet, tp.total_score, tp.prize_position, u.username
+       FROM tournament_players tp
+       LEFT JOIN users u ON LOWER(u.wallet)=LOWER(tp.wallet)
+       WHERE tp.tournament_id=$1 AND tp.prize_position BETWEEN 0 AND 2
+       ORDER BY tp.prize_position ASC`,
+              [req.params.id],
+            );
+            fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-bot-secret": process.env.BOT_SECRET,
+              },
+              body: JSON.stringify({
+                type: "tournament_finished",
+                tournamentId: req.params.id,
+                name: tournament.name,
+                tokenSymbol: tournament.token_symbol,
+                winners: winnersList.rows.map((w) => ({
+                  wallet: w.wallet,
+                  username: w.username,
+                })),
+              }),
+            }).catch(() => {});
+          }
+
           return res.json({
             ok: true,
             score,
