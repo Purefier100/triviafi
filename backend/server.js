@@ -6274,66 +6274,68 @@ app.get("/admin/stats", async (req, res) => {
   try {
     const [players, tournaments, newUsers, summary, tournamentPlayers] =
       await Promise.all([
-        // Active players last 7 days
+        // Active players last 7 days — was: game_scores (doesn't exist)
         pool.query(`
-          SELECT gs.wallet, u.username,
-            COUNT(gs.id) as games_played,
-            SUM(gs.score) as total_score,
-            MAX(gs.created_at) as last_active
-          FROM game_scores gs
-          LEFT JOIN users u ON LOWER(u.wallet)=LOWER(gs.wallet)
-          WHERE gs.created_at >= NOW() - INTERVAL '7 days'
-          GROUP BY gs.wallet, u.username
-          ORDER BY games_played DESC
-        `),
+      SELECT gs.wallet, u.username,
+        COUNT(gs.id) as games_played,
+        SUM(gs.score) as total_score,
+        MAX(gs.started_at) as last_active
+      FROM game_sessions gs
+      LEFT JOIN users u ON LOWER(u.wallet)=LOWER(gs.wallet)
+      WHERE gs.started_at >= NOW() - INTERVAL '7 days'
+        AND gs.finished = true
+      GROUP BY gs.wallet, u.username
+      ORDER BY games_played DESC
+    `),
 
-        // Tournaments created last 7 days
+        // Tournaments — this one is fine, no change needed
         pool.query(`
-          SELECT t.id, t.name, t.tournament_type, t.token_symbol,
-            t.entry_fee, t.status, t.prize_pool,
-            COUNT(tp.wallet) as players_joined,
-            t.created_at
-          FROM tournaments t
-          LEFT JOIN tournament_players tp ON tp.tournament_id=t.id
-          WHERE t.created_at >= NOW() - INTERVAL '7 days'
-          GROUP BY t.id
-          ORDER BY t.created_at DESC
-        `),
+      SELECT t.id, t.name, t.tournament_type, t.token_symbol,
+        t.entry_fee, t.status, t.prize_pool,
+        COUNT(tp.wallet) as players_joined,
+        t.created_at
+      FROM tournaments t
+      LEFT JOIN tournament_players tp ON tp.tournament_id=t.id
+      WHERE t.created_at >= NOW() - INTERVAL '7 days'
+      GROUP BY t.id
+      ORDER BY t.created_at DESC
+    `),
 
-        // New users registered last 7 days
+        // New users — fine, no change needed
         pool.query(`
-          SELECT username, wallet, created_at
-          FROM users
-          WHERE created_at >= NOW() - INTERVAL '7 days'
-          ORDER BY created_at DESC
-        `),
+      SELECT username, wallet, created_at
+      FROM users
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+      ORDER BY created_at DESC
+    `),
 
-        // Overall summary
+        // Summary — was: game_scores
         pool.query(`
-          SELECT
-            COUNT(DISTINCT gs.wallet) as unique_players,
-            COUNT(gs.id) as scores_submitted,
-            COUNT(DISTINCT gs.game_id) as games_played,
-            ROUND(AVG(gs.score)::numeric, 2) as avg_score
-          FROM game_scores gs
-          WHERE gs.created_at >= NOW() - INTERVAL '7 days'
-        `),
+      SELECT
+        COUNT(DISTINCT gs.wallet) as unique_players,
+        COUNT(gs.id) as scores_submitted,
+        COUNT(DISTINCT gs.game_id) as games_played,
+        ROUND(AVG(gs.score)::numeric, 2) as avg_score
+      FROM game_sessions gs
+      WHERE gs.started_at >= NOW() - INTERVAL '7 days'
+        AND gs.finished = true
+    `),
 
-        // Tournament players last 7 days
+        // Tournament players — was: tp.created_at (column is joined_at)
         pool.query(`
-          SELECT
-            tp.wallet, u.username,
-            t.name as tournament_name,
-            t.tournament_type,
-            t.token_symbol,
-            tp.total_score,
-            tp.created_at as joined_at
-          FROM tournament_players tp
-          LEFT JOIN tournaments t ON t.id=tp.tournament_id
-          LEFT JOIN users u ON LOWER(u.wallet)=LOWER(tp.wallet)
-          WHERE tp.created_at >= NOW() - INTERVAL '7 days'
-          ORDER BY tp.created_at DESC
-        `),
+      SELECT
+        tp.wallet, u.username,
+        t.name as tournament_name,
+        t.tournament_type,
+        t.token_symbol,
+        tp.total_score,
+        tp.joined_at
+      FROM tournament_players tp
+      LEFT JOIN tournaments t ON t.id=tp.tournament_id
+      LEFT JOIN users u ON LOWER(u.wallet)=LOWER(tp.wallet)
+      WHERE tp.joined_at >= NOW() - INTERVAL '7 days'
+      ORDER BY tp.joined_at DESC
+    `),
       ]);
 
     res.json({
