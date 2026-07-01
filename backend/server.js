@@ -540,6 +540,15 @@ async function initDB() {
       )
       .catch(() => {});
 
+    await pool
+      .query(
+        `
+        ALTER TABLE tournament_rounds
+        ADD COLUMN IF NOT EXISTS deadline_at TIMESTAMPTZ
+      `,
+      )
+      .catch(() => {});
+
     await pool.query(`
         CREATE TABLE IF NOT EXISTS tournament_join_attempts (
           wallet TEXT NOT NULL,
@@ -874,6 +883,14 @@ const scoreLimiter = rateLimit({
   message: {
     error: "Too many submissions",
   },
+});
+
+const walletAuthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many registration attempts" },
 });
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
@@ -1217,97 +1234,102 @@ app.get("/auth/me", (req, res) => {
 // ── Wallet login / register ───────────────────────────────────────────────────
 // Called after MetaMask connect. Signs in the user by wallet.
 // If a Google session already exists, links the wallet to that account.
-app.post("/auth/wallet", csrfProtection, async (req, res) => {
-  const { wallet, signature } = req.body;
+app.post(
+  "/auth/wallet",
+  walletAuthLimiter,
+  csrfProtection,
+  async (req, res) => {
+    const { wallet, signature } = req.body;
 
-  if (!wallet || !signature)
-    return res.status(400).json({ error: "Missing wallet or signature" });
-  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet))
-    return res.status(400).json({ error: "Invalid wallet" });
+    if (!wallet || !signature)
+      return res.status(400).json({ error: "Missing wallet or signature" });
+    if (!/^0x[a-fA-F0-9]{40}$/.test(wallet))
+      return res.status(400).json({ error: "Invalid wallet" });
 
-  try {
-    // Verify signature
-    const message = `Login to ${req.body.networkName || "TriviaFi"}`;
-    const recovered = ethers.verifyMessage(message, signature);
-    if (recovered.toLowerCase() !== wallet.toLowerCase())
-      return res.status(403).json({ error: "Invalid signature" });
+    try {
+      // Verify signature
+      const message = `Login to ${req.body.networkName || "TriviaFi"}`;
+      const recovered = ethers.verifyMessage(message, signature);
+      if (recovered.toLowerCase() !== wallet.toLowerCase())
+        return res.status(403).json({ error: "Invalid signature" });
 
-    const walletLower = wallet.toLowerCase();
+      const walletLower = wallet.toLowerCase();
 
-    // ── Case 1: Google session exists → link wallet to Google account ────────
-    if (req.user) {
-      const currentUser = req.user;
+      // ── Case 1: Google session exists → link wallet to Google account ────────
+      if (req.user) {
+        const currentUser = req.user;
 
-      if (
-        currentUser.wallet &&
-        currentUser.wallet.toLowerCase() !== walletLower
-      ) {
-        return res.status(400).json({
-          error: `Account already linked to wallet ${currentUser.wallet.slice(
-            0,
-            6,
-          )}...`,
-        });
-      }
-
-      if (!currentUser.wallet) {
-        // Check wallet isn't taken by another account
-        const taken = await pool.query(
-          "SELECT id, google_id FROM users WHERE LOWER(wallet)=$1 AND id!=$2",
-          [walletLower, currentUser.id],
-        );
-        if (taken.rows.length > 0) {
-          // ✅ If that account has a Google linked, block with specific message
-          if (taken.rows[0].google_id) {
-            return res.status(400).json({ error: "wallet_google_taken" });
-          }
-          return res
-            .status(400)
-            .json({ error: "Wallet already linked to another account" });
+        if (
+          currentUser.wallet &&
+          currentUser.wallet.toLowerCase() !== walletLower
+        ) {
+          return res.status(400).json({
+            error: `Account already linked to wallet ${currentUser.wallet.slice(
+              0,
+              6,
+            )}...`,
+          });
         }
 
-        await pool.query("UPDATE users SET wallet=$1 WHERE id=$2", [
-          walletLower,
+        if (!currentUser.wallet) {
+          // Check wallet isn't taken by another account
+          const taken = await pool.query(
+            "SELECT id, google_id FROM users WHERE LOWER(wallet)=$1 AND id!=$2",
+            [walletLower, currentUser.id],
+          );
+          if (taken.rows.length > 0) {
+            // ✅ If that account has a Google linked, block with specific message
+            if (taken.rows[0].google_id) {
+              return res.status(400).json({ error: "wallet_google_taken" });
+            }
+            return res
+              .status(400)
+              .json({ error: "Wallet already linked to another account" });
+          }
+
+          await pool.query("UPDATE users SET wallet=$1 WHERE id=$2", [
+            walletLower,
+            currentUser.id,
+          ]);
+        }
+
+        const updated = await pool.query("SELECT * FROM users WHERE id=$1", [
           currentUser.id,
         ]);
+        return req.login(updated.rows[0], () =>
+          res.json({ user: updated.rows[0] }),
+        );
       }
 
-      const updated = await pool.query("SELECT * FROM users WHERE id=$1", [
-        currentUser.id,
-      ]);
-      return req.login(updated.rows[0], () =>
-        res.json({ user: updated.rows[0] }),
-      );
-    }
-
-    // ── Case 2: No Google session — find or create wallet-only user ──────────
-    let userRow = await pool.query(
-      "SELECT * FROM users WHERE LOWER(wallet)=$1",
-      [walletLower],
-    );
-
-    if (userRow.rows.length === 0) {
-      // ✅ Check if this wallet is already in a Google-linked account
-      const googleLinked = await pool.query(
-        "SELECT id FROM users WHERE LOWER(wallet)=$1 AND google_id IS NOT NULL",
+      // ── Case 2: No Google session — find or create wallet-only user ──────────
+      let userRow = await pool.query(
+        "SELECT * FROM users WHERE LOWER(wallet)=$1",
         [walletLower],
       );
-      if (googleLinked.rows.length > 0) {
-        return res.status(400).json({ error: "wallet_google_taken" });
+
+      if (userRow.rows.length === 0) {
+        // ✅ Check if this wallet is already in a Google-linked account
+        const googleLinked = await pool.query(
+          "SELECT id FROM users WHERE LOWER(wallet)=$1 AND google_id IS NOT NULL",
+          [walletLower],
+        );
+        if (googleLinked.rows.length > 0) {
+          return res.status(400).json({ error: "wallet_google_taken" });
+        }
+        // Create new wallet-only user
+        userRow = await pool.query(
+          "INSERT INTO users (wallet) VALUES ($1) RETURNING *",
+          [walletLower],
+        );
       }
-      // Create new wallet-only user
-      userRow = await pool.query(
-        "INSERT INTO users (wallet) VALUES ($1) RETURNING *",
-        [walletLower],
-      );
-    }
 
-    req.login(userRow.rows[0], () => res.json({ user: userRow.rows[0] }));
-  } catch (e) {
-    console.error("Wallet auth error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
+      req.login(userRow.rows[0], () => res.json({ user: userRow.rows[0] }));
+    } catch (e) {
+      console.error("Wallet auth error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
 
 // =============================================================================
 // PROFILE ROUTES
@@ -2172,7 +2194,7 @@ function getLocalQuestions(catId, diff, count = 10) {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-app.post("/game/start", async (req, res) => {
+app.post("/game/start", requireUsername, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: "Not logged in" });
 
   const {
@@ -3069,8 +3091,9 @@ if (process.env.NODE_ENV === "production") {
       (SELECT COUNT(*) FROM tournament_players WHERE tournament_id = t.id) AS player_count
     FROM tournaments t
     WHERE t.status = 'open'
-      AND t.tournament_type = 'paid'
-      AND t.deadline_at < NOW()
+    AND t.tournament_type = 'paid'
+    AND t.deadline_at < NOW()
+    AND (SELECT COUNT(*) FROM tournament_players WHERE tournament_id = t.id) < 2
   `);
 
           for (const t of expired.rows) {
@@ -3217,6 +3240,114 @@ if (process.env.NODE_ENV === "production") {
         }
       } catch (e) {
         console.error("Auto-expire error:", e.message);
+      }
+
+      try {
+        const staleRounds = await pool.query(`
+          SELECT t.id, t.current_round, tr.id as round_id, t.name
+          FROM tournaments t
+          JOIN tournament_rounds tr
+            ON tr.tournament_id = t.id
+            AND tr.round_number = t.current_round
+          WHERE t.status = 'active'
+            AND tr.status = 'active'
+            AND tr.deadline_at < NOW()
+        `);
+
+        for (const stale of staleRounds.rows) {
+          console.log(
+            `⏰ Auto-advancing stale round ${stale.current_round} in tournament ${stale.id} (${stale.name})`,
+          );
+
+          // Insert score 0 for anyone who didn't submit
+          const activePlayers = await pool.query(
+            "SELECT wallet FROM tournament_players WHERE tournament_id=$1 AND NOT eliminated",
+            [stale.id],
+          );
+          for (const p of activePlayers.rows) {
+            await pool
+              .query(
+                `INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken)
+               VALUES ($1,$2,$3,0,999) ON CONFLICT DO NOTHING`,
+                [stale.id, stale.round_id, p.wallet],
+              )
+              .catch(() => {});
+          }
+
+          // Mark round finished
+          await pool.query(
+            "UPDATE tournament_rounds SET status='finished', finished_at=NOW() WHERE id=$1",
+            [stale.round_id],
+          );
+
+          // Run ranking — eliminate the lowest scorer
+          const ranked = await pool.query(
+            `SELECT tp.wallet, tp.total_score,
+                    COALESCE(SUM(ts.time_taken), 0) AS total_time
+             FROM tournament_players tp
+             LEFT JOIN tournament_scores ts
+               ON ts.tournament_id = tp.tournament_id
+              AND LOWER(ts.wallet) = LOWER(tp.wallet)
+             WHERE tp.tournament_id=$1 AND NOT tp.eliminated
+             GROUP BY tp.wallet, tp.total_score, tp.joined_at
+             ORDER BY tp.total_score DESC, total_time ASC, tp.joined_at ASC`,
+            [stale.id],
+          );
+
+          const activeCount = ranked.rows.length;
+
+          if (activeCount <= 2) {
+            // Tournament over
+            const winner = ranked.rows[0]?.wallet;
+            const runnerUp = ranked.rows[1]?.wallet;
+            await pool.query(
+              "UPDATE tournaments SET status='finished', finished_at=NOW(), winner=$1 WHERE id=$2",
+              [winner, stale.id],
+            );
+            if (winner)
+              await pool.query(
+                "UPDATE tournament_players SET prize_position=0 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+                [stale.id, winner],
+              );
+            if (runnerUp)
+              await pool.query(
+                "UPDATE tournament_players SET prize_position=1 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+                [stale.id, runnerUp],
+              );
+            console.log(
+              `🏆 Tournament ${stale.id} auto-finished. Winner: ${winner}`,
+            );
+          } else {
+            // Eliminate lowest, advance round
+            const loser = ranked.rows[activeCount - 1].wallet;
+            await pool.query(
+              "UPDATE tournament_players SET eliminated=TRUE WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+              [stale.id, loser],
+            );
+            if (activeCount === 3) {
+              await pool.query(
+                "UPDATE tournament_players SET prize_position=2 WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+                [stale.id, loser],
+              );
+            }
+            const nextRound = stale.current_round + 1;
+            await pool.query(
+              "UPDATE tournaments SET current_round=$1 WHERE id=$2",
+              [nextRound, stale.id],
+            );
+            await pool.query(
+              `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at, deadline_at)
+               VALUES ($1,$2,'active',NOW(), NOW() + INTERVAL '24 hours')
+               ON CONFLICT (tournament_id,round_number) DO NOTHING`,
+              [stale.id, nextRound],
+            );
+            console.log(
+              `➡️ Tournament ${stale.id} advanced to round ${nextRound}. Eliminated: ${loser}`,
+            );
+          }
+        }
+      } catch (e) {
+        console.error("Stale round auto-advance error:", e.message);
       }
 
       // ── Process queued refunds ────────────────────────────────────────────
@@ -4141,7 +4272,7 @@ app.post("/tournaments/create", async (req, res) => {
       `INSERT INTO tournaments
          (name, creator, chain_id, entry_fee, token_symbol, max_players, rounds,
           deadline_at, tournament_type)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '24 hours', 'paid')
+       VALUES ($1,$2,$3,$4,$5,$6,$7, NOW() + INTERVAL '48 hours', 'paid')
        RETURNING *`,
       [
         cleanName,
@@ -4445,69 +4576,96 @@ app.get("/tournaments/:id/round-status", async (req, res) => {
 });
 
 // 8. JOIN whitelist — before /:id
-app.post("/tournaments/:id/join-whitelist", async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const { wallet } = req.body;
-  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
-    return res.status(400).json({ error: "Invalid wallet" });
-  try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
-    const tournament = t.rows[0];
-    if (tournament.tournament_type !== "whitelist")
-      return res.status(400).json({ error: "Use /join for paid tournaments" });
-    if (tournament.status !== "open")
-      return res.status(400).json({ error: "Tournament not open" });
-    const count = await pool.query(
-      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
-      [req.params.id],
-    );
-    if (parseInt(count.rows[0].count) >= tournament.max_players)
-      return res.status(400).json({ error: "Tournament full" });
+app.post(
+  "/tournaments/:id/join-whitelist",
+  requireUsername,
+  async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Not logged in" });
+    const { wallet } = req.body;
+    if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+      return res.status(400).json({ error: "Invalid wallet" });
+    try {
+      const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+        req.params.id,
+      ]);
+      if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+      const tournament = t.rows[0];
+      if (tournament.tournament_type !== "whitelist")
+        return res
+          .status(400)
+          .json({ error: "Use /join for paid tournaments" });
+      if (tournament.status !== "open")
+        return res.status(400).json({ error: "Tournament not open" });
+      const count = await pool.query(
+        "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+        [req.params.id],
+      );
+      if (parseInt(count.rows[0].count) >= tournament.max_players)
+        return res.status(400).json({ error: "Tournament full" });
 
-    await pool.query(
-      `INSERT INTO tournament_players (tournament_id, wallet, user_id)
+      await pool.query(
+        `INSERT INTO tournament_players (tournament_id, wallet, user_id)
        VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
-      [req.params.id, wallet.toLowerCase(), req.user.id],
-    );
-    const newCount = parseInt(count.rows[0].count) + 1;
-    if (newCount >= tournament.max_players) {
-      await pool.query(
-        "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
-        [req.params.id],
+        [req.params.id, wallet.toLowerCase(), req.user.id],
       );
-      await pool.query(
-        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
-         VALUES ($1,1,'active',NOW()) ON CONFLICT DO NOTHING`,
-        [req.params.id],
-      );
+      const newCount = parseInt(count.rows[0].count) + 1;
+      if (newCount >= tournament.max_players) {
+        await pool.query(
+          "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
+          [req.params.id],
+        );
+        await pool.query(
+          `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at, deadline_at)
+           VALUES ($1,1,'active',NOW(), NOW() + INTERVAL '24 hours') 
+           ON CONFLICT (tournament_id,round_number) DO NOTHING`,
+          [req.params.id],
+        );
+        if (process.env.BOT_WEBHOOK_URL) {
+          const allPlayers = await pool.query(
+            "SELECT wallet FROM tournament_players WHERE tournament_id=$1",
+            [req.params.id],
+          );
+          fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-bot-secret": process.env.BOT_SECRET,
+            },
+            body: JSON.stringify({
+              type: "round_started",
+              tournamentId: req.params.id,
+              name: tournament.name,
+              roundNumber: 1,
+              players: allPlayers.rows.map((p) => p.wallet),
+            }),
+          }).catch(() => {});
+        }
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
     }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-  // after the INSERT INTO tournament_players succeeds, before the auto-start check
-  if (process.env.BOT_WEBHOOK_URL) {
-    const playerCountNow = parseInt(count.rows[0].count) + 1;
-    fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bot-secret": process.env.BOT_SECRET,
-      },
-      body: JSON.stringify({
-        type: "tournament_joined",
-        tournamentId: req.params.id,
-        name: tournament.name,
-        wallet,
-        currentPlayers: playerCountNow,
-        maxPlayers: tournament.max_players,
-      }),
-    }).catch(() => {});
-  }
-});
+    // after the INSERT INTO tournament_players succeeds, before the auto-start check
+    if (process.env.BOT_WEBHOOK_URL) {
+      const playerCountNow = parseInt(count.rows[0].count) + 1;
+      fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bot-secret": process.env.BOT_SECRET,
+        },
+        body: JSON.stringify({
+          type: "tournament_joined",
+          tournamentId: req.params.id,
+          name: tournament.name,
+          wallet,
+          currentPlayers: playerCountNow,
+          maxPlayers: tournament.max_players,
+        }),
+      }).catch(() => {});
+    }
+  },
+);
 
 // 9. DELETE tournament — before /:id submit/join/claim
 app.delete("/tournaments/:id", async (req, res) => {
@@ -4607,58 +4765,13 @@ app.post("/tournaments/:id/recover-payment", async (req, res) => {
 });
 
 // 11. JOIN paid tournament
-app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
-  if (!req.user) return res.status(401).json({ error: "Not logged in" });
-  const { wallet, txHash } = req.body;
-  // ── Anti-bot: verify wallet is a real registered user ─────────────────
-  const joinerCheck = await pool.query(
-    `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
-    [wallet],
-  );
-  if (!joinerCheck.rows.length) {
-    return res.status(403).json({
-      error: "Wallet not registered. Please connect your wallet first.",
-    });
-  }
-  // Block brand-new wallets from joining paid tournaments (bot detection)
-  const joinerAge =
-    Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
-  if (joinerAge < 2 * 60 * 1000) {
-    // 2 minutes
-    return res
-      .status(429)
-      .json({ error: "Please wait a moment before joining." });
-  }
-  if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
-    return res.status(400).json({ error: "Invalid wallet" });
-
-  try {
-    const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
-    const tournament = t.rows[0];
-
-    if (tournament.status !== "open")
-      return res.status(400).json({ error: "Tournament not open" });
-
-    // ── Idempotency: already registered? ─────────────────────────────────
-    const existingPlayer = await pool.query(
-      "SELECT id FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
-      [req.params.id, wallet],
-    );
-    if (existingPlayer.rows.length > 0) {
-      // Already registered — return success (idempotent)
-      return res.json({ ok: true, alreadyRegistered: true });
-    }
-
-    const count = await pool.query(
-      "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
-      [req.params.id],
-    );
-    if (parseInt(count.rows[0].count) >= tournament.max_players)
-      return res.status(400).json({ error: "Tournament full" });
-
+app.post(
+  "/tournaments/:id/join",
+  requireUsername,
+  csrfProtection,
+  async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Not logged in" });
+    const { wallet, txHash } = req.body;
     // ── Anti-bot: verify wallet is a real registered user ─────────────────
     const joinerCheck = await pool.query(
       `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
@@ -4669,128 +4782,203 @@ app.post("/tournaments/:id/join", csrfProtection, async (req, res) => {
         error: "Wallet not registered. Please connect your wallet first.",
       });
     }
+    // Block brand-new wallets from joining paid tournaments (bot detection)
     const joinerAge =
       Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
     if (joinerAge < 2 * 60 * 1000) {
+      // 2 minutes
       return res
         .status(429)
         .json({ error: "Please wait a moment before joining." });
     }
+    if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+      return res.status(400).json({ error: "Invalid wallet" });
 
-    // ── Rate limit: max 5 join attempts per minute per wallet ────────────
-    const recentJoins = await pool.query(
-      `SELECT COUNT(*) FROM tournament_join_attempts
-       WHERE wallet=LOWER($1) AND attempted_at > NOW() - INTERVAL '1 minute'`,
-      [wallet],
-    );
-    if (parseInt(recentJoins.rows[0].count) >= 5) {
-      return res
-        .status(429)
-        .json({ error: "Too many attempts. Please wait before trying again." });
-    }
-    await pool.query(
-      `INSERT INTO tournament_join_attempts (wallet) VALUES (LOWER($1))`,
-      [wallet],
-    );
+    try {
+      const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+        req.params.id,
+      ]);
+      if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+      const tournament = t.rows[0];
 
-    // ── Verify payment tx onchain (if txHash provided) ────────────────────
-    if (txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)) {
-      try {
-        const isLitvmT = tournament.token_symbol === "zkLTC";
-        const verifyProvider = isLitvmT ? makeLitvmProvider() : makeProvider();
-        const receipt = await Promise.race([
-          verifyProvider.getTransactionReceipt(txHash),
-          new Promise((_, r) =>
-            setTimeout(() => r(new Error("timeout")), 8000),
-          ),
-        ]);
+      if (tournament.status !== "open")
+        return res.status(400).json({ error: "Tournament not open" });
 
-        if (!receipt || receipt.status !== 1) {
-          console.error(
-            `JOIN rejected: tx ${txHash} not confirmed. ` +
-              `tournament=${req.params.id} wallet=${wallet}`,
-          );
-          return res.status(400).json({
-            error:
-              "Payment transaction not confirmed onchain. Please wait and try again.",
-          });
-        }
-
-        // Log verified payment
-        console.log(
-          `✅ Payment verified: tournament=${req.params.id} ` +
-            `wallet=${wallet} tx=${txHash} amount=${tournament.entry_fee} ` +
-            `${tournament.token_symbol}`,
-        );
-      } catch (verifyErr) {
-        // If verification times out, log but continue — don't block registration
-        console.warn(
-          `TX verification timeout for ${txHash}: ${verifyErr.message}. ` +
-            `Proceeding with registration.`,
-        );
+      // ── Idempotency: already registered? ─────────────────────────────────
+      const existingPlayer = await pool.query(
+        "SELECT id FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+        [req.params.id, wallet],
+      );
+      if (existingPlayer.rows.length > 0) {
+        // Already registered — return success (idempotent)
+        return res.json({ ok: true, alreadyRegistered: true });
       }
-    }
 
-    await pool.query(
-      `INSERT INTO tournament_players (tournament_id, wallet, user_id)
+      const count = await pool.query(
+        "SELECT COUNT(*) FROM tournament_players WHERE tournament_id=$1",
+        [req.params.id],
+      );
+      if (parseInt(count.rows[0].count) >= tournament.max_players)
+        return res.status(400).json({ error: "Tournament full" });
+
+      // ── Anti-bot: verify wallet is a real registered user ─────────────────
+      const joinerCheck = await pool.query(
+        `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
+        [wallet],
+      );
+      if (!joinerCheck.rows.length) {
+        return res.status(403).json({
+          error: "Wallet not registered. Please connect your wallet first.",
+        });
+      }
+      const joinerAge =
+        Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
+      if (joinerAge < 2 * 60 * 1000) {
+        return res
+          .status(429)
+          .json({ error: "Please wait a moment before joining." });
+      }
+
+      // ── Rate limit: max 5 join attempts per minute per wallet ────────────
+      const recentJoins = await pool.query(
+        `SELECT COUNT(*) FROM tournament_join_attempts
+       WHERE wallet=LOWER($1) AND attempted_at > NOW() - INTERVAL '1 minute'`,
+        [wallet],
+      );
+      if (parseInt(recentJoins.rows[0].count) >= 5) {
+        return res.status(429).json({
+          error: "Too many attempts. Please wait before trying again.",
+        });
+      }
+      await pool.query(
+        `INSERT INTO tournament_join_attempts (wallet) VALUES (LOWER($1))`,
+        [wallet],
+      );
+
+      // ── Verify payment tx onchain (if txHash provided) ────────────────────
+      if (txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+        try {
+          const isLitvmT = tournament.token_symbol === "zkLTC";
+          const verifyProvider = isLitvmT
+            ? makeLitvmProvider()
+            : makeProvider();
+          const receipt = await Promise.race([
+            verifyProvider.getTransactionReceipt(txHash),
+            new Promise((_, r) =>
+              setTimeout(() => r(new Error("timeout")), 8000),
+            ),
+          ]);
+
+          if (!receipt || receipt.status !== 1) {
+            console.error(
+              `JOIN rejected: tx ${txHash} not confirmed. ` +
+                `tournament=${req.params.id} wallet=${wallet}`,
+            );
+            return res.status(400).json({
+              error:
+                "Payment transaction not confirmed onchain. Please wait and try again.",
+            });
+          }
+
+          // Log verified payment
+          console.log(
+            `✅ Payment verified: tournament=${req.params.id} ` +
+              `wallet=${wallet} tx=${txHash} amount=${tournament.entry_fee} ` +
+              `${tournament.token_symbol}`,
+          );
+        } catch (verifyErr) {
+          // If verification times out, log but continue — don't block registration
+          console.warn(
+            `TX verification timeout for ${txHash}: ${verifyErr.message}. ` +
+              `Proceeding with registration.`,
+          );
+        }
+      }
+
+      await pool.query(
+        `INSERT INTO tournament_players (tournament_id, wallet, user_id)
        VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
-      [req.params.id, wallet.toLowerCase(), req.user.id],
-    );
-    await pool.query(
-      "UPDATE tournaments SET prize_pool = prize_pool + $1 WHERE id=$2",
-      [tournament.entry_fee, req.params.id],
-    );
-
-    const isLitvmT = tournament.token_symbol === "zkLTC";
-    await pool
-      .query(
-        `UPDATE platform_stats SET ${isLitvmT ? "total_volume_litvm" : "total_volume"} = ${isLitvmT ? "total_volume_litvm" : "total_volume"} + $1 WHERE id=1`,
-        [tournament.entry_fee],
-      )
-      .catch(() => {});
-
-    const newCount = parseInt(count.rows[0].count) + 1;
-    if (newCount >= tournament.max_players) {
-      await pool.query(
-        "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
-        [req.params.id],
+        [req.params.id, wallet.toLowerCase(), req.user.id],
       );
       await pool.query(
-        `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
-         VALUES ($1,1,'active',NOW()) ON CONFLICT (tournament_id,round_number) DO NOTHING`,
-        [req.params.id],
+        "UPDATE tournaments SET prize_pool = prize_pool + $1 WHERE id=$2",
+        [tournament.entry_fee, req.params.id],
       );
+
+      const isLitvmT = tournament.token_symbol === "zkLTC";
+      await pool
+        .query(
+          `UPDATE platform_stats SET ${isLitvmT ? "total_volume_litvm" : "total_volume"} = ${isLitvmT ? "total_volume_litvm" : "total_volume"} + $1 WHERE id=1`,
+          [tournament.entry_fee],
+        )
+        .catch(() => {});
+
+      const newCount = parseInt(count.rows[0].count) + 1;
+      if (newCount >= tournament.max_players) {
+        await pool.query(
+          "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
+          [req.params.id],
+        );
+        await pool.query(
+          `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at, deadline_at)
+           VALUES ($1,1,'active',NOW(), NOW() + INTERVAL '24 hours') 
+           ON CONFLICT (tournament_id,round_number) DO NOTHING`,
+          [req.params.id],
+        );
+
+        if (process.env.BOT_WEBHOOK_URL) {
+          const allPlayers = await pool.query(
+            "SELECT wallet FROM tournament_players WHERE tournament_id=$1",
+            [req.params.id],
+          );
+          fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-bot-secret": process.env.BOT_SECRET,
+            },
+            body: JSON.stringify({
+              type: "round_started",
+              tournamentId: req.params.id,
+              name: tournament.name,
+              roundNumber: 1,
+              players: allPlayers.rows.map((p) => p.wallet),
+            }),
+          }).catch(() => {});
+        }
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("Tournament join error:", e.message);
+      res.status(500).json({ error: e.message });
     }
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("Tournament join error:", e.message);
-    res.status(500).json({ error: e.message });
-  }
 
-  // after the INSERT INTO tournament_players succeeds, before the auto-start check
-  if (process.env.BOT_WEBHOOK_URL) {
-    const playerCountNow = parseInt(count.rows[0].count) + 1;
-    fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bot-secret": process.env.BOT_SECRET,
-      },
-      body: JSON.stringify({
-        type: "tournament_joined",
-        tournamentId: req.params.id,
-        name: tournament.name,
-        wallet,
-        currentPlayers: playerCountNow,
-        maxPlayers: tournament.max_players,
-      }),
-    }).catch(() => {});
-  }
-});
+    // after the INSERT INTO tournament_players succeeds, before the auto-start check
+    if (process.env.BOT_WEBHOOK_URL) {
+      const playerCountNow = parseInt(count.rows[0].count) + 1;
+      fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bot-secret": process.env.BOT_SECRET,
+        },
+        body: JSON.stringify({
+          type: "tournament_joined",
+          tournamentId: req.params.id,
+          name: tournament.name,
+          wallet,
+          currentPlayers: playerCountNow,
+          maxPlayers: tournament.max_players,
+        }),
+      }).catch(() => {});
+    }
+  },
+);
 
 // 12. SUBMIT round score
 app.post(
   "/tournaments/:id/submit",
+  requireUsername,
   scoreLimiter,
   csrfProtection,
   async (req, res) => {
@@ -4979,9 +5167,9 @@ app.post(
           [nextRound, req.params.id],
         );
         await pool.query(
-          `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at)
-         VALUES ($1,$2,'active',NOW())
-         ON CONFLICT (tournament_id,round_number) DO NOTHING`,
+          `INSERT INTO tournament_rounds (tournament_id, round_number, status, started_at, deadline_at)
+           VALUES ($1,$2,'active',NOW(), NOW() + INTERVAL '24 hours')
+           ON CONFLICT (tournament_id,round_number) DO NOTHING`,
           [req.params.id, nextRound],
         );
 
@@ -5772,6 +5960,17 @@ function isAdmin(req) {
   return w && w === ADMIN_WALLET;
 }
 
+// ── REQUIRE USERNAME MIDDLEWARE ───────────────────────────────────────────
+function requireUsername(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "Not logged in" });
+  if (!req.user.username)
+    return res.status(403).json({
+      error: "username_required",
+      message: "Please set a username before continuing",
+    });
+  next();
+}
+
 // ── WHO IS ADMIN (so frontend doesn't need hardcoded wallet) ──────────────
 app.get("/admin/me", (req, res) => {
   if (!req.user) return res.json({ isAdmin: false });
@@ -6303,11 +6502,12 @@ app.get("/admin/stats", async (req, res) => {
 
         // New users — fine, no change needed
         pool.query(`
-      SELECT username, wallet, created_at
-      FROM users
-      WHERE created_at >= NOW() - INTERVAL '7 days'
-      ORDER BY created_at DESC
-    `),
+          SELECT username, wallet, created_at
+          FROM users
+          WHERE created_at >= NOW() - INTERVAL '7 days'
+            AND wallet IS NOT NULL
+          ORDER BY created_at DESC
+        `),
 
         // Summary — was: game_scores
         pool.query(`
