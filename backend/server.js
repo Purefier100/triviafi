@@ -6264,6 +6264,93 @@ setInterval(
   60 * 60 * 1000,
 );
 
+// ── Admin stats (protected) ──────────────────────────────────────────
+app.get("/admin/stats", async (req, res) => {
+  const secret = req.headers["x-admin-secret"];
+  if (secret !== process.env.ADMIN_SECRET) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
+  try {
+    const [players, tournaments, newUsers, summary, tournamentPlayers] =
+      await Promise.all([
+        // Active players last 7 days
+        pool.query(`
+          SELECT gs.wallet, u.username,
+            COUNT(gs.id) as games_played,
+            SUM(gs.score) as total_score,
+            MAX(gs.created_at) as last_active
+          FROM game_scores gs
+          LEFT JOIN users u ON LOWER(u.wallet)=LOWER(gs.wallet)
+          WHERE gs.created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY gs.wallet, u.username
+          ORDER BY games_played DESC
+        `),
+
+        // Tournaments created last 7 days
+        pool.query(`
+          SELECT t.id, t.name, t.tournament_type, t.token_symbol,
+            t.entry_fee, t.status, t.prize_pool,
+            COUNT(tp.wallet) as players_joined,
+            t.created_at
+          FROM tournaments t
+          LEFT JOIN tournament_players tp ON tp.tournament_id=t.id
+          WHERE t.created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY t.id
+          ORDER BY t.created_at DESC
+        `),
+
+        // New users registered last 7 days
+        pool.query(`
+          SELECT username, wallet, created_at
+          FROM users
+          WHERE created_at >= NOW() - INTERVAL '7 days'
+          ORDER BY created_at DESC
+        `),
+
+        // Overall summary
+        pool.query(`
+          SELECT
+            COUNT(DISTINCT gs.wallet) as unique_players,
+            COUNT(gs.id) as scores_submitted,
+            COUNT(DISTINCT gs.game_id) as games_played,
+            ROUND(AVG(gs.score)::numeric, 2) as avg_score
+          FROM game_scores gs
+          WHERE gs.created_at >= NOW() - INTERVAL '7 days'
+        `),
+
+        // Tournament players last 7 days
+        pool.query(`
+          SELECT
+            tp.wallet, u.username,
+            t.name as tournament_name,
+            t.tournament_type,
+            t.token_symbol,
+            tp.total_score,
+            tp.created_at as joined_at
+          FROM tournament_players tp
+          LEFT JOIN tournaments t ON t.id=tp.tournament_id
+          LEFT JOIN users u ON LOWER(u.wallet)=LOWER(tp.wallet)
+          WHERE tp.created_at >= NOW() - INTERVAL '7 days'
+          ORDER BY tp.created_at DESC
+        `),
+      ]);
+
+    res.json({
+      period: "Last 7 days",
+      generated_at: new Date().toISOString(),
+      summary: summary.rows[0],
+      active_players: players.rows,
+      tournaments: tournaments.rows,
+      tournament_players: tournamentPlayers.rows,
+      new_users: newUsers.rows,
+    });
+  } catch (e) {
+    console.error("Admin stats error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`\n🚀 Backend running on port ${PORT}`);
