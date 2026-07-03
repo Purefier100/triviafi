@@ -4647,7 +4647,6 @@ app.post(
     }
     // after the INSERT INTO tournament_players succeeds, before the auto-start check
     if (process.env.BOT_WEBHOOK_URL) {
-      const playerCountNow = parseInt(count.rows[0].count) + 1;
       fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
         method: "POST",
         headers: {
@@ -4659,8 +4658,9 @@ app.post(
           tournamentId: req.params.id,
           name: tournament.name,
           wallet,
-          currentPlayers: playerCountNow,
+          currentPlayers: newCount,
           maxPlayers: tournament.max_players,
+          tournamentType: tournament.tournament_type,
         }),
       }).catch(() => {});
     }
@@ -4927,10 +4927,6 @@ app.post(
         );
 
         if (process.env.BOT_WEBHOOK_URL) {
-          const allPlayers = await pool.query(
-            "SELECT wallet FROM tournament_players WHERE tournament_id=$1",
-            [req.params.id],
-          );
           fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
             method: "POST",
             headers: {
@@ -4938,11 +4934,13 @@ app.post(
               "x-bot-secret": process.env.BOT_SECRET,
             },
             body: JSON.stringify({
-              type: "round_started",
+              type: "tournament_joined",
               tournamentId: req.params.id,
               name: tournament.name,
-              roundNumber: 1,
-              players: allPlayers.rows.map((p) => p.wallet),
+              wallet,
+              currentPlayers: newCount,
+              maxPlayers: tournament.max_players,
+              tournamentType: tournament.tournament_type,
             }),
           }).catch(() => {});
         }
@@ -5125,6 +5123,7 @@ app.post(
                 tournamentId: req.params.id,
                 name: tournament.name,
                 tokenSymbol: tournament.token_symbol,
+                tournamentType: tournament.tournament_type, // ← add this
                 winners: winnersList.rows.map((w) => ({
                   wallet: w.wallet,
                   username: w.username,
