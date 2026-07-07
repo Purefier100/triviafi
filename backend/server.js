@@ -4225,7 +4225,6 @@ app.post("/tournaments/create", async (req, res) => {
   });
   const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
 
-  // ── Anti-bot: require wallet to exist in users table with history ─────
   const userCheck = await pool.query(
     `SELECT id, wallet, created_at FROM users WHERE LOWER(wallet)=$1 OR LOWER(email)=$1`,
     [creatorId],
@@ -4235,7 +4234,7 @@ app.post("/tournaments/create", async (req, res) => {
   }
   const accountAge =
     Date.now() - new Date(userCheck.rows[0].created_at).getTime();
-  const minAgeMs = 5 * 60 * 1000; // 5 minutes minimum account age
+  const minAgeMs = 5 * 60 * 1000;
   if (accountAge < minAgeMs) {
     return res.status(429).json({
       error:
@@ -4284,31 +4283,32 @@ app.post("/tournaments/create", async (req, res) => {
         parseInt(rounds),
       ],
     );
+
+    // ✅ Webhook now fires INSIDE the try block, with `result` in scope
+    const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL;
+    if (BOT_WEBHOOK_URL) {
+      fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bot-secret": process.env.BOT_SECRET,
+        },
+        body: JSON.stringify({
+          type: "tournament_created",
+          tournamentId: result.rows[0].id,
+          name: cleanName,
+          maxPlayers: parseInt(maxPlayers),
+          rounds: parseInt(rounds),
+          entryFee: parseFloat(entryFee),
+          tokenSymbol: tokenSymbol || "USDC",
+          chainId: parseInt(chainId || 5042002),
+        }),
+      }).catch(() => {});
+    }
+
     res.json({ tournament: result.rows[0] });
   } catch (e) {
     res.status(500).json({ error: e.message });
-  }
-
-  // after: res.json({ tournament: result.rows[0] });
-  const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL;
-  if (BOT_WEBHOOK_URL) {
-    fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bot-secret": process.env.BOT_SECRET,
-      },
-      body: JSON.stringify({
-        type: "tournament_created",
-        tournamentId: result.rows[0].id,
-        name: cleanName,
-        maxPlayers: parseInt(maxPlayers),
-        rounds: parseInt(rounds),
-        entryFee: parseFloat(entryFee),
-        tokenSymbol: tokenSymbol || "USDC",
-        chainId: parseInt(chainId || 5042002),
-      }),
-    }).catch(() => {});
   }
 });
 
@@ -4344,7 +4344,6 @@ app.post("/tournaments/create-whitelist", async (req, res) => {
   });
   const creatorId = (req.user.wallet || req.user.email || "").toLowerCase();
 
-  // ── Anti-bot check ────────────────────────────────────────────────────
   const wlUserCheck = await pool.query(
     `SELECT id, created_at FROM users WHERE LOWER(wallet)=$1 OR LOWER(email)=$1`,
     [creatorId],
@@ -4402,30 +4401,33 @@ app.post("/tournaments/create-whitelist", async (req, res) => {
         cleanDiscord,
       ],
     );
+
+    // ✅ Webhook fires inside try, with `result` in scope; BOT_WEBHOOK_URL now declared here
+    const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL;
+    if (BOT_WEBHOOK_URL) {
+      fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bot-secret": process.env.BOT_SECRET,
+        },
+        body: JSON.stringify({
+          type: "whitelist_created",
+          tournamentId: result.rows[0].id,
+          name: cleanName,
+          maxPlayers: parseInt(maxPlayers),
+          rounds: parseInt(rounds),
+          prize1,
+          prize2,
+          prize3,
+          sponsorName: cleanSponsor,
+        }),
+      }).catch(() => {});
+    }
+
     res.json({ tournament: result.rows[0] });
   } catch (e) {
     res.status(500).json({ error: e.message });
-  }
-  // after: res.json({ tournament: result.rows[0] });
-  if (BOT_WEBHOOK_URL) {
-    fetch(`${BOT_WEBHOOK_URL}/game-activity`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bot-secret": process.env.BOT_SECRET,
-      },
-      body: JSON.stringify({
-        type: "whitelist_created",
-        tournamentId: result.rows[0].id,
-        name: cleanName,
-        maxPlayers: parseInt(maxPlayers),
-        rounds: parseInt(rounds),
-        prize1,
-        prize2,
-        prize3,
-        sponsorName: cleanSponsor,
-      }),
-    }).catch(() => {});
   }
 });
 
@@ -4608,7 +4610,29 @@ app.post(
        VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
         [req.params.id, wallet.toLowerCase(), req.user.id],
       );
+
       const newCount = parseInt(count.rows[0].count) + 1;
+
+      // ✅ Player-joined webhook — now the ONLY join webhook, fired once, in scope
+      if (process.env.BOT_WEBHOOK_URL) {
+        fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bot-secret": process.env.BOT_SECRET,
+          },
+          body: JSON.stringify({
+            type: "tournament_joined",
+            tournamentId: req.params.id,
+            name: tournament.name,
+            wallet,
+            currentPlayers: newCount,
+            maxPlayers: tournament.max_players,
+            tournamentType: tournament.tournament_type,
+          }),
+        }).catch(() => {});
+      }
+
       if (newCount >= tournament.max_players) {
         await pool.query(
           "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
@@ -4641,28 +4665,10 @@ app.post(
           }).catch(() => {});
         }
       }
+
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
-    }
-    // after the INSERT INTO tournament_players succeeds, before the auto-start check
-    if (process.env.BOT_WEBHOOK_URL) {
-      fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bot-secret": process.env.BOT_SECRET,
-        },
-        body: JSON.stringify({
-          type: "tournament_joined",
-          tournamentId: req.params.id,
-          name: tournament.name,
-          wallet,
-          currentPlayers: newCount,
-          maxPlayers: tournament.max_players,
-          tournamentType: tournament.tournament_type,
-        }),
-      }).catch(() => {});
     }
   },
 );
@@ -4772,7 +4778,7 @@ app.post(
   async (req, res) => {
     if (!req.user) return res.status(401).json({ error: "Not logged in" });
     const { wallet, txHash } = req.body;
-    // ── Anti-bot: verify wallet is a real registered user ─────────────────
+
     const joinerCheck = await pool.query(
       `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
       [wallet],
@@ -4782,11 +4788,9 @@ app.post(
         error: "Wallet not registered. Please connect your wallet first.",
       });
     }
-    // Block brand-new wallets from joining paid tournaments (bot detection)
     const joinerAge =
       Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
     if (joinerAge < 2 * 60 * 1000) {
-      // 2 minutes
       return res
         .status(429)
         .json({ error: "Please wait a moment before joining." });
@@ -4804,13 +4808,11 @@ app.post(
       if (tournament.status !== "open")
         return res.status(400).json({ error: "Tournament not open" });
 
-      // ── Idempotency: already registered? ─────────────────────────────────
       const existingPlayer = await pool.query(
         "SELECT id FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
         [req.params.id, wallet],
       );
       if (existingPlayer.rows.length > 0) {
-        // Already registered — return success (idempotent)
         return res.json({ ok: true, alreadyRegistered: true });
       }
 
@@ -4821,25 +4823,6 @@ app.post(
       if (parseInt(count.rows[0].count) >= tournament.max_players)
         return res.status(400).json({ error: "Tournament full" });
 
-      // ── Anti-bot: verify wallet is a real registered user ─────────────────
-      const joinerCheck = await pool.query(
-        `SELECT id, created_at FROM users WHERE LOWER(wallet)=LOWER($1)`,
-        [wallet],
-      );
-      if (!joinerCheck.rows.length) {
-        return res.status(403).json({
-          error: "Wallet not registered. Please connect your wallet first.",
-        });
-      }
-      const joinerAge =
-        Date.now() - new Date(joinerCheck.rows[0].created_at).getTime();
-      if (joinerAge < 2 * 60 * 1000) {
-        return res
-          .status(429)
-          .json({ error: "Please wait a moment before joining." });
-      }
-
-      // ── Rate limit: max 5 join attempts per minute per wallet ────────────
       const recentJoins = await pool.query(
         `SELECT COUNT(*) FROM tournament_join_attempts
        WHERE wallet=LOWER($1) AND attempted_at > NOW() - INTERVAL '1 minute'`,
@@ -4855,7 +4838,6 @@ app.post(
         [wallet],
       );
 
-      // ── Verify payment tx onchain (if txHash provided) ────────────────────
       if (txHash && /^0x[a-fA-F0-9]{64}$/.test(txHash)) {
         try {
           const isLitvmT = tournament.token_symbol === "zkLTC";
@@ -4880,14 +4862,12 @@ app.post(
             });
           }
 
-          // Log verified payment
           console.log(
             `✅ Payment verified: tournament=${req.params.id} ` +
               `wallet=${wallet} tx=${txHash} amount=${tournament.entry_fee} ` +
               `${tournament.token_symbol}`,
           );
         } catch (verifyErr) {
-          // If verification times out, log but continue — don't block registration
           console.warn(
             `TX verification timeout for ${txHash}: ${verifyErr.message}. ` +
               `Proceeding with registration.`,
@@ -4914,6 +4894,27 @@ app.post(
         .catch(() => {});
 
       const newCount = parseInt(count.rows[0].count) + 1;
+
+      // ✅ Single player-joined webhook, in scope, fires every time
+      if (process.env.BOT_WEBHOOK_URL) {
+        fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bot-secret": process.env.BOT_SECRET,
+          },
+          body: JSON.stringify({
+            type: "tournament_joined",
+            tournamentId: req.params.id,
+            name: tournament.name,
+            wallet,
+            currentPlayers: newCount,
+            maxPlayers: tournament.max_players,
+            tournamentType: tournament.tournament_type,
+          }),
+        }).catch(() => {});
+      }
+
       if (newCount >= tournament.max_players) {
         await pool.query(
           "UPDATE tournaments SET status='active', started_at=NOW(), current_round=1 WHERE id=$1",
@@ -4934,41 +4935,20 @@ app.post(
               "x-bot-secret": process.env.BOT_SECRET,
             },
             body: JSON.stringify({
-              type: "tournament_joined",
+              type: "round_started",
               tournamentId: req.params.id,
               name: tournament.name,
-              wallet,
-              currentPlayers: newCount,
-              maxPlayers: tournament.max_players,
-              tournamentType: tournament.tournament_type,
+              roundNumber: 1,
+              players: [], // fetch if you want the list here too
             }),
           }).catch(() => {});
         }
       }
+
       res.json({ ok: true });
     } catch (e) {
       console.error("Tournament join error:", e.message);
       res.status(500).json({ error: e.message });
-    }
-
-    // after the INSERT INTO tournament_players succeeds, before the auto-start check
-    if (process.env.BOT_WEBHOOK_URL) {
-      const playerCountNow = parseInt(count.rows[0].count) + 1;
-      fetch(`${process.env.BOT_WEBHOOK_URL}/game-activity`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bot-secret": process.env.BOT_SECRET,
-        },
-        body: JSON.stringify({
-          type: "tournament_joined",
-          tournamentId: req.params.id,
-          name: tournament.name,
-          wallet,
-          currentPlayers: playerCountNow,
-          maxPlayers: tournament.max_players,
-        }),
-      }).catch(() => {});
     }
   },
 );
