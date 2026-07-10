@@ -255,7 +255,7 @@ async function createArcGame(arcContract, arcProvider, agentAddress) {
 
       // ── Notify Discord bot ────────────────────────────────────────────
       const newGameId = Number(await arcContract.gameCounter());
-      notifyBot({
+      await notifyBot({
         type: "agent_room_created",
         gameId: newGameId,
         gameName: room.name,

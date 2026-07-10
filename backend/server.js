@@ -409,6 +409,20 @@ async function initDB() {
   );
 `);
 
+    // ── Standard (non-GenLayer) tournament round questions — server-authoritative ──
+    await pool.query(`
+  CREATE TABLE IF NOT EXISTS tournament_round_questions (
+    id              SERIAL PRIMARY KEY,
+    tournament_id   INT NOT NULL,
+    round_number    INT NOT NULL,
+    wallet          TEXT NOT NULL,
+    q_index         INT NOT NULL,
+    correct_answer  TEXT NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tournament_id, round_number, wallet, q_index)
+  );
+`);
+
     // ✅ ADD THIS — reviewed_by column was missing
     await pool
       .query(
@@ -4964,6 +4978,14 @@ app.post(
     const { wallet, answers, timeTaken } = req.body;
     if (!wallet || !Array.isArray(answers))
       return res.status(400).json({ error: "Invalid input" });
+
+    // ✅ Enforce wallet-session match — prevents submitting on behalf of another wallet
+    if (
+      req.user.wallet &&
+      wallet.toLowerCase() !== req.user.wallet.toLowerCase()
+    )
+      return res.status(403).json({ error: "Wallet mismatch" });
+
     try {
       const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
         req.params.id,
@@ -4990,23 +5012,64 @@ app.post(
       if (playerRes.rows[0].eliminated)
         return res.status(400).json({ error: "Eliminated" });
 
-      const existing = await pool.query(
-        "SELECT id FROM tournament_scores WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)",
-        [req.params.id, round.id, wallet],
-      );
-      if (existing.rows.length)
-        return res.status(400).json({ error: "Already submitted this round" });
+      const lockClient = await pool.connect();
+      let score;
+      try {
+        await lockClient.query("BEGIN");
 
-      const score = Math.min(
-        answers.filter((a) => a.correct === true).length * 100,
-        1000,
-      );
-      const cleanTime = Math.max(0, Math.min(600, parseInt(timeTaken) || 0));
+        const existing = await lockClient.query(
+          `SELECT id FROM tournament_scores
+           WHERE tournament_id=$1 AND round_id=$2 AND LOWER(wallet)=LOWER($3)
+           FOR UPDATE`,
+          [req.params.id, round.id, wallet],
+        );
+        if (existing.rows.length) {
+          await lockClient.query("ROLLBACK");
+          return res
+            .status(400)
+            .json({ error: "Already submitted this round" });
+        }
 
-      await pool.query(
-        "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken) VALUES ($1,$2,LOWER($3),$4,$5)",
-        [req.params.id, round.id, wallet, score, cleanTime],
-      );
+        // ✅ Server-authoritative answer key — never trust client-sent `correct`
+        const storedQs = await lockClient.query(
+          `SELECT q_index, correct_answer FROM tournament_round_questions
+           WHERE tournament_id=$1 AND round_number=$2 AND LOWER(wallet)=LOWER($3)`,
+          [req.params.id, tournament.current_round, wallet],
+        );
+
+        if (storedQs.rows.length === 0) {
+          await lockClient.query("ROLLBACK");
+          return res.status(400).json({
+            error:
+              "No questions on record for this round — refresh and replay.",
+          });
+        }
+
+        let correctCount = 0;
+        for (const stored of storedQs.rows) {
+          const userAnswer = answers.find(
+            (a) => Number(a.questionIndex) === Number(stored.q_index),
+          );
+          if (userAnswer && userAnswer.selected === stored.correct_answer) {
+            correctCount++;
+          }
+        }
+        score = Math.min(correctCount * 100, 1000);
+
+        const cleanTime = Math.max(0, Math.min(600, parseInt(timeTaken) || 0));
+
+        await lockClient.query(
+          "INSERT INTO tournament_scores (tournament_id, round_id, wallet, score, time_taken) VALUES ($1,$2,LOWER($3),$4,$5)",
+          [req.params.id, round.id, wallet, score, cleanTime],
+        );
+
+        await lockClient.query("COMMIT");
+      } catch (e) {
+        await lockClient.query("ROLLBACK");
+        throw e;
+      } finally {
+        lockClient.release();
+      }
       await pool.query(
         "UPDATE tournament_players SET total_score = total_score + $1 WHERE tournament_id=$2 AND LOWER(wallet)=LOWER($3)",
         [score, req.params.id, wallet],
@@ -5174,6 +5237,62 @@ app.post(
         roundNumber,
         roundFinished: false,
       });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
+app.post(
+  "/tournaments/:id/round-questions",
+  requireUsername,
+  async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: "Not logged in" });
+    const { wallet, roundNumber, correctAnswers } = req.body;
+
+    if (!wallet || !/^0x[a-fA-F0-9]{40}$/.test(wallet))
+      return res.status(400).json({ error: "Invalid wallet" });
+    if (
+      req.user.wallet &&
+      wallet.toLowerCase() !== req.user.wallet.toLowerCase()
+    )
+      return res.status(403).json({ error: "Wallet mismatch" });
+    if (!Array.isArray(correctAnswers) || correctAnswers.length === 0)
+      return res.status(400).json({ error: "Missing questions" });
+
+    try {
+      const t = await pool.query("SELECT * FROM tournaments WHERE id=$1", [
+        req.params.id,
+      ]);
+      if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+      const tournament = t.rows[0];
+      if (tournament.status !== "active")
+        return res.status(400).json({ error: "Tournament not active" });
+
+      const playerRes = await pool.query(
+        "SELECT * FROM tournament_players WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)",
+        [req.params.id, wallet],
+      );
+      if (!playerRes.rows.length)
+        return res.status(403).json({ error: "Not in tournament" });
+
+      const rn = parseInt(roundNumber);
+      if (rn !== tournament.current_round)
+        return res.status(400).json({ error: "Wrong round" });
+
+      // Only store once — ignore repeats/refreshes so a player can't overwrite
+      // the authoritative answer key after seeing questions once.
+      for (const qa of correctAnswers) {
+        await pool.query(
+          `INSERT INTO tournament_round_questions
+             (tournament_id, round_number, wallet, q_index, correct_answer)
+           VALUES ($1,$2,LOWER($3),$4,$5)
+           ON CONFLICT (tournament_id, round_number, wallet, q_index) DO NOTHING`,
+          [req.params.id, rn, wallet, qa.index, qa.correct],
+        );
+      }
+
+      res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
