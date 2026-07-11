@@ -8419,6 +8419,40 @@ async function playTournamentRound(tournamentId, roundNumber) {
       };
     }
 
+    // ✅ Store the answer key server-side BEFORE showing any question to the
+    // player. Skip serverVerified questions (GenLayer) — those are graded
+    // independently via /genlayer/verify and never expose `correct` here.
+    try {
+      const correctAnswers = rawQ
+        .filter((q) => !q.serverVerified)
+        .map((q) => ({ index: q.id, correct: q.correct }));
+
+      const rqRes = await fetch(
+        `${BACKEND}/tournaments/${tournamentId}/round-questions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            wallet: userAddress,
+            roundNumber,
+            correctAnswers,
+          }),
+        },
+      );
+      if (!rqRes.ok) {
+        const err = await rqRes.json().catch(() => ({}));
+        toast(
+          "Could not start round securely: " + (err.error || "server error"),
+          "error",
+        );
+        return;
+      }
+    } catch (e) {
+      toast("Could not register round questions. Try again.", "error");
+      return;
+    }
+
     hideToast();
     showTournamentQuiz(tournamentId, rawQ);
   } catch (e) {

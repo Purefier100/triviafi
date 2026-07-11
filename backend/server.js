@@ -5046,11 +5046,22 @@ app.post(
         }
 
         let correctCount = 0;
-        for (const stored of storedQs.rows) {
-          const userAnswer = answers.find(
-            (a) => Number(a.questionIndex) === Number(stored.q_index),
-          );
-          if (userAnswer && userAnswer.selected === stored.correct_answer) {
+        for (const userAnswer of answers) {
+          const qIdx = Number(userAnswer.questionIndex);
+
+          if (qIdx === 0 && !storedByIndex.has(0)) {
+            // ── This was the GenLayer-verified question (index 0). It was
+            // already graded server-side via /genlayer/verify at answer time,
+            // so we trust the client's `correct` flag ONLY for this index,
+            // since the actual grading already happened server-side.
+            if (userAnswer.correct === true) correctCount++;
+            continue;
+          }
+
+          // ── Standard question — grade against our own stored answer key,
+          // never trust the client's `correct` flag.
+          const correctAnswer = storedByIndex.get(qIdx);
+          if (correctAnswer && userAnswer.selected === correctAnswer) {
             correctCount++;
           }
         }
