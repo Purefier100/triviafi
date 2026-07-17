@@ -184,6 +184,32 @@ const litvmWriteContract = new ethers.Contract(
   CONTRACT_ABI,
   litvmVerifierSigner,
 );
+
+// ── $TRIVIA staking — read-only tier lookup for fee discounts ─────────────
+const TRIVIA_TOKEN_ADDRESS = "0xe91B30cA08E705934A3ae7f35f3930fcED38E388";
+const TRIVIA_STAKING_ADDRESS = "0x62F29B58CD6afc35d32124D7DF425A9B28A2CCdD";
+
+const STAKING_ABI = [
+  "function getStakeInfo(address user) view returns (uint256 amount, uint256 unlockAt, bool isLocked, uint8 tier)",
+];
+
+const stakingReadContract = new ethers.Contract(
+  TRIVIA_STAKING_ADDRESS,
+  STAKING_ABI,
+  litvmProvider, // reuse your existing read-only LitVM provider — never a signer
+);
+
+async function getTierInfo(wallet) {
+  try {
+    const [, , , tier] = await stakingReadContract.getStakeInfo(wallet);
+    const discounts = [0, 0.05, 0.1, 0.2]; // None, Bronze, Silver, Gold
+    return { tier: Number(tier), discount: discounts[Number(tier)] || 0 };
+  } catch (e) {
+    console.warn("Tier lookup failed (non-fatal):", e.message);
+    return { tier: 0, discount: 0 }; // fail closed
+  }
+}
+
 const verifierSigner = verifierWallet.connect(arcProvider);
 const writeContract = new ethers.Contract(
   CONTRACT_ADDRESS,
@@ -833,6 +859,27 @@ async function initDB() {
     await pool
       .query(
         `ALTER TABLE tournament_players ADD COLUMN IF NOT EXISTS payment_tx TEXT`,
+      )
+      .catch(() => {});
+
+    // Track actual entry fee paid (post-discount) — prize pool must add up
+    // based on what each player actually paid, not the flat listed fee.
+    await pool
+      .query(
+        `ALTER TABLE tournament_players ADD COLUMN IF NOT EXISTS entry_fee_paid NUMERIC(36,18)`,
+      )
+      .catch(() => {});
+
+    // Track tier at time of action — used for whitelist priority perks
+    // and reporting. 0=None, 1=Bronze, 2=Silver, 3=Gold.
+    await pool
+      .query(
+        `ALTER TABLE tournament_players ADD COLUMN IF NOT EXISTS staked_tier INT DEFAULT 0`,
+      )
+      .catch(() => {});
+    await pool
+      .query(
+        `ALTER TABLE tournament_applications ADD COLUMN IF NOT EXISTS staked_tier INT DEFAULT 0`,
       )
       .catch(() => {});
 
@@ -4784,6 +4831,34 @@ app.post("/tournaments/:id/recover-payment", async (req, res) => {
   res.json({ ok: true, message: "Payment recorded for admin review" });
 });
 
+// 10.5. GET discounted entry fee for a wallet — MUST be before /:id/join
+app.get("/tournaments/:id/my-entry-fee", async (req, res) => {
+  const { wallet } = req.query;
+  try {
+    const t = await pool.query(
+      "SELECT entry_fee, token_symbol FROM tournaments WHERE id=$1",
+      [req.params.id],
+    );
+    if (!t.rows.length) return res.status(404).json({ error: "Not found" });
+
+    const baseFee = parseFloat(t.rows[0].entry_fee);
+    let discount = 0;
+    if (wallet && /^0x[a-fA-F0-9]{40}$/.test(wallet)) {
+      ({ discount } = await getTierInfo(wallet));
+    }
+    const finalFee = baseFee * (1 - discount);
+
+    res.json({
+      baseFee,
+      discount,
+      finalFee,
+      tokenSymbol: t.rows[0].token_symbol,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // 11. JOIN paid tournament
 app.post(
   "/tournaments/:id/join",
@@ -4889,21 +4964,26 @@ app.post(
         }
       }
 
+      const { tier, discount } = await getTierInfo(wallet);
+      const actualFeePaid = parseFloat(tournament.entry_fee) * (1 - discount);
+
       await pool.query(
-        `INSERT INTO tournament_players (tournament_id, wallet, user_id)
-       VALUES ($1,$2,$3) ON CONFLICT (tournament_id, wallet) DO NOTHING`,
-        [req.params.id, wallet.toLowerCase(), req.user.id],
+        `INSERT INTO tournament_players (tournament_id, wallet, user_id, entry_fee_paid, staked_tier)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (tournament_id, wallet)
+       DO UPDATE SET entry_fee_paid = EXCLUDED.entry_fee_paid, staked_tier = EXCLUDED.staked_tier`,
+        [req.params.id, wallet.toLowerCase(), req.user.id, actualFeePaid, tier],
       );
       await pool.query(
         "UPDATE tournaments SET prize_pool = prize_pool + $1 WHERE id=$2",
-        [tournament.entry_fee, req.params.id],
+        [actualFeePaid, req.params.id],
       );
 
       const isLitvmT = tournament.token_symbol === "zkLTC";
       await pool
         .query(
           `UPDATE platform_stats SET ${isLitvmT ? "total_volume_litvm" : "total_volume"} = ${isLitvmT ? "total_volume_litvm" : "total_volume"} + $1 WHERE id=1`,
-          [tournament.entry_fee],
+          [actualFeePaid],
         )
         .catch(() => {});
 
@@ -5044,6 +5124,10 @@ app.post(
               "No questions on record for this round — refresh and replay.",
           });
         }
+
+        const storedByIndex = new Map(
+          storedQs.rows.map((r) => [Number(r.q_index), r.correct_answer]),
+        );
 
         let correctCount = 0;
         for (const userAnswer of answers) {
@@ -5861,24 +5945,29 @@ app.post("/tournaments/:id/apply", async (req, res) => {
     if (tournament.status !== "open")
       return res.status(400).json({ error: "Tournament not open" });
 
-    // ✅ Check all required tasks are completed
-    const tasks = await pool.query(
-      "SELECT id FROM tournament_wl_tasks WHERE tournament_id=$1",
-      [req.params.id],
-    );
-    if (tasks.rows.length > 0) {
-      const done = await pool.query(
-        `SELECT task_id FROM tournament_wl_completions
-         WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
-        [req.params.id, wallet],
+    // ✅ Check all required tasks are completed — unless Gold tier grants a skip
+    const { tier: applicantTier } = await getTierInfo(wallet);
+    const GOLD_TIER = 3;
+
+    if (applicantTier < GOLD_TIER) {
+      const tasks = await pool.query(
+        "SELECT id FROM tournament_wl_tasks WHERE tournament_id=$1",
+        [req.params.id],
       );
-      const doneIds = new Set(done.rows.map((r) => r.task_id));
-      const missing = tasks.rows.filter((t) => !doneIds.has(t.id));
-      if (missing.length > 0) {
-        return res.status(400).json({
-          error: "Complete all tasks before applying",
-          missingCount: missing.length,
-        });
+      if (tasks.rows.length > 0) {
+        const done = await pool.query(
+          `SELECT task_id FROM tournament_wl_completions
+           WHERE tournament_id=$1 AND LOWER(wallet)=LOWER($2)`,
+          [req.params.id, wallet],
+        );
+        const doneIds = new Set(done.rows.map((r) => r.task_id));
+        const missing = tasks.rows.filter((t) => !doneIds.has(t.id));
+        if (missing.length > 0) {
+          return res.status(400).json({
+            error: "Complete all tasks before applying",
+            missingCount: missing.length,
+          });
+        }
       }
     }
 
@@ -5908,10 +5997,10 @@ app.post("/tournaments/:id/apply", async (req, res) => {
       return res.status(400).json({ error: "Tournament is full" });
 
     await pool.query(
-      `INSERT INTO tournament_applications (tournament_id,wallet,user_id,status)
-       VALUES ($1,LOWER($2),$3,'pending')
-       ON CONFLICT (tournament_id,wallet) DO UPDATE SET status='pending',applied_at=NOW()`,
-      [req.params.id, wallet, req.user.id],
+      `INSERT INTO tournament_applications (tournament_id,wallet,user_id,status,staked_tier)
+       VALUES ($1,LOWER($2),$3,'pending',$4)
+       ON CONFLICT (tournament_id,wallet) DO UPDATE SET status='pending',applied_at=NOW(),staked_tier=EXCLUDED.staked_tier`,
+      [req.params.id, wallet, req.user.id, applicantTier],
     );
     res.json({ ok: true, status: "pending" });
   } catch (e) {
